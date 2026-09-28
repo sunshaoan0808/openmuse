@@ -82,7 +82,7 @@ export class ConversationAgent extends AbstractAgent {
           .catch((error) => {
             subscriber.next({
               type: EventType.RUN_ERROR,
-              message: error instanceof Error ? error.message : "Could not start the task",
+              message: error instanceof Error ? error.message : "无法启动任务",
             });
             subscriber.complete();
           });
@@ -117,7 +117,7 @@ export class ConversationAgent extends AbstractAgent {
             };
           } catch (error) {
             browserAbort.signal.throwIfAborted();
-            return { error: error instanceof Error ? error.message : "Could not search mail" };
+            return { error: error instanceof Error ? error.message : "无法搜索邮件" };
           }
         },
       }),
@@ -141,7 +141,7 @@ export class ConversationAgent extends AbstractAgent {
           } catch (error) {
             browserAbort.signal.throwIfAborted();
             return {
-              error: error instanceof Error ? error.message : "Could not read the email thread",
+              error: error instanceof Error ? error.message : "无法读取邮件会话",
             };
           }
         },
@@ -162,7 +162,7 @@ export class ConversationAgent extends AbstractAgent {
             );
           } catch (error) {
             browserAbort.signal.throwIfAborted();
-            return { error: error instanceof Error ? error.message : "Could not read the page" };
+            return { error: error instanceof Error ? error.message : "无法读取页面" };
           }
         },
       }),

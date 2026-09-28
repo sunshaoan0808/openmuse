@@ -272,7 +272,7 @@ function WorkspaceShell({
     ? activeTask.status === "waiting_approval"
       ? `Ready to review · ${activeTask.title}`
       : activeTask.status === "waiting_input"
-        ? `Needs your input · ${activeTask.title}`
+        ? `需要你的输入 · ${activeTask.title}`
         : activeTask.plan.find((step) => step.status === "running")?.title || activeTask.title
     : data?.tasks.some((task) => task.status === "queued")
       ? "正在接取下一个任务…"

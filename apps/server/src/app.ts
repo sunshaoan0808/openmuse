@@ -83,7 +83,7 @@ export async function createApp(
         error:
           error.name === "PdfError" || error.name === "GoogleApiError"
             ? error.message
-            : "Request failed. Check the server setup and try again.",
+            : "请求失败，请检查服务端配置后重试。",
       },
       502,
     );

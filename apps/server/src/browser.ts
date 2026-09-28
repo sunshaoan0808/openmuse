@@ -92,7 +92,7 @@ export class BrowserService {
       throw new AppError(
         typeof payload?.error?.message === "string"
           ? payload.error.message
-          : "Browser request failed",
+          : "浏览器请求失败",
         502,
       );
     }
@@ -123,7 +123,7 @@ export class BrowserService {
     await this.db.put(owner, "browsers", {
       id,
       url,
-      title: "New browser session",
+      title: "新建浏览会话",
       status: "idle",
       updatedAt: new Date().toISOString(),
     });
@@ -194,7 +194,7 @@ export class BrowserService {
     await this.db.insertIfAbsent(owner, "browsers", {
       id,
       url,
-      title: "New browser session",
+      title: "新建浏览会话",
       status: "idle",
       updatedAt: new Date().toISOString(),
     });

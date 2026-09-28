@@ -33,7 +33,7 @@ export function computerTools(
           await options.before?.();
           return await action(parameters.parse(args));
         } catch (error) {
-          return { error: error instanceof Error ? error.message : "Computer operation failed" };
+          return { error: error instanceof Error ? error.message : "电脑操作失败" };
         }
       },
     });

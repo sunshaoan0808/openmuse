@@ -89,7 +89,7 @@ export class AgentService {
             backgroundFailure("recover accepted idea", error);
             await this.notify(
               owner,
-              "Accepted idea needs attention",
+              "已采纳的灵感需要处理",
               "Open the idea again after making room for another task.",
               undefined,
               `idea-recovery:${value.id}`,
@@ -103,7 +103,7 @@ export class AgentService {
           await this.refreshIdeas(owner).catch(async () => {
             await this.notify(
               owner,
-              "Source refresh needs attention",
+              "来源刷新需要处理",
               "Reconnect the source or refresh Ideas to see the error.",
               undefined,
               `source-error:${Math.floor(Date.now() / 3600000)}`,
@@ -301,7 +301,7 @@ export class AgentService {
       kind: "status",
       date: date(),
       title: `Task ${status}`,
-      detail: "Changed by you",
+      detail: "由你修改",
     });
     return updated;
   }
@@ -763,7 +763,7 @@ export class AgentService {
         const failures = Number(task.state.failures ?? 0) + 1;
         // Each streak of failures (after a success or a resume) gets its own alerts.
         const failureStreak = Number(task.state.failureStreak ?? 0) + (failures === 1 ? 1 : 0);
-        const detail = error instanceof Error ? error.message : "Page check failed";
+        const detail = error instanceof Error ? error.message : "页面检查失败";
         const nextCheckAt = new Date(
           Date.now() + Math.min(60, 2 ** failures) * 60000,
         ).toISOString();
@@ -789,7 +789,7 @@ export class AgentService {
             resumingMonitor: false,
             failureStreak,
             notice: {
-              title: "Watch needs attention",
+              title: "监控需要处理",
               body: detail,
               key: `watch-error:${task.id}:${failureStreak}:${failures >= 5 ? "paused" : "retry"}`,
             },
@@ -815,7 +815,7 @@ export class AgentService {
           {
             id: task.id,
             kind: "user",
-            title: "Your transaction CSV",
+            title: "你的交易 CSV",
             excerpt: `${data.count} rows; ${data.period.from} through ${data.period.to}`,
           },
         ],
@@ -864,7 +864,7 @@ export class AgentService {
     } else if (task.status === "failed") {
       await this.notify(
         owner,
-        "Task needs attention",
+        "任务需要处理",
         task.error ?? task.title,
         task.id,
         `task-error:${task.id}:${task.attempts}`,
