@@ -38,7 +38,7 @@ import type {
   CalendarEvent,
   EmailDraft,
 } from "../../../packages/domain/src";
-import { API_URL } from "./api";
+import { apiUrl } from "./api";
 import { localDateTime, zonedInstant } from "./date-time";
 import {
   Button,
@@ -945,7 +945,7 @@ export function FilesScreen() {
         form.append("file", file.file, file.name);
         artifact = await api.request<Artifact>("/api/files", form);
       } else {
-        const result = await FileSystem.uploadAsync(`${API_URL}/api/files`, file.uri, {
+        const result = await FileSystem.uploadAsync(`${apiUrl()}/api/files`, file.uri, {
           httpMethod: "POST",
           uploadType: FileSystem.FileSystemUploadType.MULTIPART,
           fieldName: "file",
