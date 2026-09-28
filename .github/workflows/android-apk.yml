@@ -9,9 +9,13 @@ on:
         required: true
         default: "http://10.7.0.6:8787"
       build_type:
-        description: "Gradle task: assembleRelease (installable, debug-signed) or assembleDebug"
+        description: "Gradle task: assembleRelease (installable) or assembleDebug"
         required: true
         default: "assembleRelease"
+      abis:
+        description: "逗号分隔的 ABI（越少包越小；手机通常只需 arm64-v8a）"
+        required: true
+        default: "arm64-v8a"
 
 jobs:
   apk:
@@ -64,7 +68,9 @@ jobs:
           set -e
           export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           echo "org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" >> gradle.properties
+          echo "reactNativeArchitectures=${{ inputs.abis }}" >> gradle.properties
           echo "EXPO_PUBLIC_API_URL=$EXPO_PUBLIC_API_URL"
+          echo "ABIs=${{ inputs.abis }}"
           chmod +x gradlew
           ./gradlew ${{ inputs.build_type }} --no-daemon --stacktrace
 
