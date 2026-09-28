@@ -1,0 +1,77 @@
+name: Build Android APK
+
+# 手动触发；服务器地址是输入参数，不硬编码
+on:
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: "API base URL baked into the app (EXPO_PUBLIC_API_URL)"
+        required: true
+        default: "http://10.7.0.6:8787"
+      build_type:
+        description: "Gradle task: assembleRelease (installable, debug-signed) or assembleDebug"
+        required: true
+        default: "assembleRelease"
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      EXPO_PUBLIC_API_URL: ${{ inputs.api_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install NDK + build tools
+        run: |
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" \
+            "ndk;27.1.12297006" "cmake;3.22.1" > /dev/null
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Expo prebuild (android)
+        working-directory: apps/mobile
+        run: pnpm exec expo prebuild --platform android --clean --no-install
+
+      - name: Gradle build
+        working-directory: apps/mobile/android
+        run: |
+          echo "org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" >> gradle.properties
+          echo "EXPO_PUBLIC_API_URL=$EXPO_PUBLIC_API_URL"
+          chmod +x gradlew
+          ./gradlew ${{ inputs.build_type }} --no-daemon --stacktrace
+
+      - name: Collect APK
+        id: collect
+        run: |
+          set -e
+          find apps/mobile/android/app/build/outputs/apk -name "*.apk" -print
+          APK=$(find apps/mobile/android/app/build/outputs/apk -name "*.apk" | head -1)
+          mkdir -p out
+          cp "$APK" "out/openmuse-$(echo '${{ inputs.api_url }}' | tr -c 'A-Za-z0-9' '_').apk"
+          ls -lh out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openmuse-apk
+          path: out/*.apk
+          if-no-files-found: error
+          retention-days: 14
