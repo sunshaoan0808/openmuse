@@ -53,7 +53,7 @@ export function BackgroundUpdates() {
         >查看任务</Button>
         {updates.length > 1 && (
           <Button small onPress={() => open({ type: "notifications" })}>
-            {updates.length - 1} more updates
+            还有 {updates.length - 1} 条更新
           </Button>
         )}
       </View>

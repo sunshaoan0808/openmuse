@@ -420,7 +420,7 @@ export class ComputerService {
         ...base,
         status: "unconfigured",
         message:
-          "Enable the Docker computer on the server to use its terminal and workspace files.",
+          "请在服务端启用 Docker 电脑，以使用它的终端与工作区文件。",
       };
     try {
       return {
@@ -434,7 +434,7 @@ export class ComputerService {
         message:
           error instanceof AppError
             ? error.message
-            : "Computer inspection failed. Check Docker setup.",
+            : "电脑检查失败，请检查 Docker 配置。",
       };
     }
   }

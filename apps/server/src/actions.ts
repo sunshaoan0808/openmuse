@@ -182,7 +182,7 @@ export class ActionService {
       finished = {
         ...claimed,
         status: unknown ? "outcome_unknown" : "failed",
-        error: error instanceof Error ? error.message : "Execution failed",
+        error: error instanceof Error ? error.message : "执行失败",
       };
     }
     await this.db.put(owner, "actions", finished);

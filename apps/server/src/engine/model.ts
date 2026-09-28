@@ -66,7 +66,7 @@ export async function executeModelTask(
           try {
             return await execute(parameters.parse(args));
           } catch (error) {
-            const message = error instanceof Error ? error.message : "Tool failed";
+            const message = error instanceof Error ? error.message : "工具调用失败";
             await ctx.event("error", `${name} failed`, message);
             return { error: message };
           }
@@ -321,7 +321,7 @@ export async function executeModelTask(
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
       agent.abortRun();
-      reject(new Error("Model run timed out after five minutes"));
+      reject(new Error("模型运行超过五分钟已超时"));
     }, 300000);
     const abort = () => {
       clearTimeout(timeout);
