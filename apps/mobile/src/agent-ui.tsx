@@ -64,7 +64,7 @@ function stamp(value?: string) {
         hour: "numeric",
         minute: "2-digit",
       })
-    : "Not checked yet";
+    : "尚未检查";
 }
 function errorText(e: unknown) {
   return e instanceof Error ? e.message : String(e);
@@ -79,13 +79,11 @@ export function AgentStatus() {
     <View style={{ gap: 8 }}>
       <ErrorNotice error={error ? `Agent updates unavailable. ${error}` : ""} />
       {!!error && (
-        <Button small onPress={() => void refresh().catch(() => {})}>
-          Reconnect agent
-        </Button>
+        <Button small onPress={() => void refresh().catch(() => {})}>重新连接智能体</Button>
       )}
       {!data && !error && <ActivityIndicator color={colors.blueDark} />}
       {data && !data.worker.running && (
-        <Text style={s.small}>Worker is offline. Saved work will continue when it reconnects.</Text>
+        <Text style={s.small}>worker 离线，已保存的工作会在它重连后继续。</Text>
       )}
     </View>
   );
@@ -157,7 +155,7 @@ export function TaskCard({
         )}
         {waiting && (
           <Text style={[s.small, { color: colors.blueDark, fontWeight: "600" }]}>
-            {task.status === "waiting_approval" ? "Review requested" : "Your input is needed"}
+            {task.status === "waiting_approval" ? "需要复核" : "需要你的输入"}
           </Text>
         )}
       </Card>
@@ -181,18 +179,18 @@ export function ChatWork() {
 }
 export function AgentActivityScreen() {
   const { data } = useAgentWorkspace();
-  const [filter, setFilter] = useState("All");
+  const [filter, setFilter] = useState("全部");
   const tasks = [...(data?.tasks || [])]
     .filter(
       (task) =>
-        filter === "All" || (filter === "In progress" ? activeTask(task) : !activeTask(task)),
+        filter === "全部" || (filter === "进行中" ? activeTask(task) : !activeTask(task)),
     )
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return (
     <View style={{ gap: 20 }}>
       <AgentStatus />
       <View style={[s.row, { gap: 8 }]}>
-        {["All", "In progress", "Finished"].map((item) => (
+        {["全部", "进行中", "已完成"].map((item) => (
           <Button key={item} small primary={filter === item} onPress={() => setFilter(item)}>
             {item}
           </Button>
@@ -204,11 +202,11 @@ export function AgentActivityScreen() {
       {!tasks.length && (
         <Empty
           icon={ListChecks}
-          title="A place for the work"
-          detail="Delegate a task in Chat. Its plan, progress and results stay here."
+          title="放工作的地方"
+          detail="在聊天里派个任务，它的计划、进展和结果都会留在这里。"
         />
       )}
-      <SectionHeading title="Reviews & receipts" />
+      <SectionHeading title="复核与回执" />
       <ActivityScreen />
     </View>
   );
@@ -233,9 +231,7 @@ export function EvidenceList({ items }: { items: Evidence[] }) {
               onPress={() =>
                 void Linking.openURL(item.url || "").catch((e) => setError(errorText(e)))
               }
-            >
-              Open source
-            </Button>
+            >开源</Button>
           )}
           {item.kind === "mail" && workspace.mail.some((mail) => mail.id === item.id) && (
             <Button
@@ -244,9 +240,7 @@ export function EvidenceList({ items }: { items: Evidence[] }) {
                 const mail = workspace.mail.find((m) => m.id === item.id);
                 if (mail) open({ type: "mail", mail });
               }}
-            >
-              View email
-            </Button>
+            >查看邮件</Button>
           )}
           {item.kind === "file" && workspace.files.some((file) => file.id === item.id) && (
             <Button
@@ -255,9 +249,7 @@ export function EvidenceList({ items }: { items: Evidence[] }) {
                 const file = workspace.files.find((f) => f.id === item.id);
                 if (file) open({ type: "file", file });
               }}
-            >
-              View file
-            </Button>
+            >查看文件</Button>
           )}
         </View>
       ))}
@@ -333,11 +325,11 @@ export function TaskDetail({ taskId }: { taskId: string }) {
             (value) => typeof value !== "string" && typeof value !== "boolean",
           )
         )
-          throw new Error("Form fields must be a JSON object with text or true/false values.");
+          throw new Error("表单字段必须是一个 JSON 对象，值为文本或 true/false。");
         parsed = raw as Record<string, string | boolean>;
       }
       await act("input", {
-        answer: answer.trim() || "Provided the requested fields.",
+        answer: answer.trim() || "已提供所需字段。",
         fields: parsed,
       });
     } catch (e) {
@@ -351,7 +343,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
       await refreshWorkspace();
       const snapshot = await api.request<typeof workspace>("/api/workspace");
       const action = snapshot.actions.find((item) => item.id === task?.actionId);
-      if (!action) throw new Error("This review is not available yet. Refresh and try again.");
+      if (!action) throw new Error("这次复核还不可用，刷新后重试。");
       open({ type: "review", action });
     } catch (e) {
       setError(errorText(e));
@@ -371,9 +363,9 @@ export function TaskDetail({ taskId }: { taskId: string }) {
     .filter(Boolean);
   return (
     <Sheet
-      title={task?.title || "Task"}
+      title={task?.title || "任务"}
       subtitle={
-        task ? `${statusLabel(task.status)} · ${stamp(task.updatedAt)}` : "Loading saved progress…"
+        task ? `${statusLabel(task.status)} · ${stamp(task.updatedAt)}` : "正在加载已保存的进展…"
       }
       onClose={close}
     >
@@ -394,9 +386,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                 icon={Pause}
                 busy={busy}
                 onPress={() => void act("control", { action: "pause" })}
-              >
-                Pause
-              </Button>
+              >暂停</Button>
             )}
             {task.status === "paused" && (
               <Button
@@ -404,9 +394,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                 icon={Play}
                 busy={busy}
                 onPress={() => void act("control", { action: "resume" })}
-              >
-                Resume
-              </Button>
+              >继续</Button>
             )}
             {task.status === "failed" && (
               <Button
@@ -414,9 +402,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                 icon={RefreshCw}
                 busy={busy}
                 onPress={() => void act("control", { action: "retry" })}
-              >
-                Retry task
-              </Button>
+              >重试任务</Button>
             )}
             {activeTask(task) && (
               <Button
@@ -425,23 +411,19 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                 icon={X}
                 busy={busy}
                 onPress={() => void act("control", { action: "cancel" })}
-              >
-                Cancel task
-              </Button>
+              >取消任务</Button>
             )}
           </View>
           {task.status === "waiting_approval" && (
             <Card style={{ backgroundColor: colors.lavender, gap: 12 }}>
               <Text style={s.heading}>Ready for your review</Text>
-              <Text style={s.muted}>Review the exact action and account before it proceeds.</Text>
-              <Button primary busy={busy} onPress={() => void review()}>
-                Review action
-              </Button>
+              <Text style={s.muted}>在继续之前，复核具体操作与账号。</Text>
+              <Button primary busy={busy} onPress={() => void review()}>复核操作</Button>
             </Card>
           )}
           {task.status === "waiting_input" && (
             <Card style={{ backgroundColor: colors.sky, gap: 10 }}>
-              <Text style={s.heading}>{task.question || "A detail from you will help"}</Text>
+              <Text style={s.heading}>{task.question || "补充一点信息会更好"}</Text>
               {fieldNames.map((name) =>
                 missing.some(
                   (f) => typeof f === "object" && f && f.name === name && f.type === "checkbox",
@@ -465,26 +447,24 @@ export function TaskDetail({ taskId }: { taskId: string }) {
               )}
               {!fieldNames.length && (
                 <Field
-                  label="Your answer"
+                  label="你的回答"
                   value={answer}
                   onChangeText={setAnswer}
                   multiline
-                  placeholder="Add the missing details…"
+                  placeholder="补充缺少的信息…"
                 />
               )}
               {task.kind === "document" && !fieldNames.length && (
                 <>
-                  <Button small onPress={() => setShowFieldJson(!showFieldJson)}>
-                    Form field values
-                  </Button>
+                  <Button small onPress={() => setShowFieldJson(!showFieldJson)}>表单字段值</Button>
                   {showFieldJson && (
                     <Field
-                      label="Fields (JSON: field name to value)"
+                      label="字段（JSON：字段名到值）"
                       value={fieldJson}
                       onChangeText={setFieldJson}
                       multiline
                       autoCapitalize="none"
-                      placeholder={'{"full_name":"Your name","consent":true}'}
+                      placeholder={'{"full_name":"你的名字","consent":true}'}
                     />
                   )}
                 </>
@@ -494,14 +474,12 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                 busy={busy}
                 disabled={!answer.trim() && !Object.keys(fields).length && !fieldJson.trim()}
                 onPress={() => void submitInput()}
-              >
-                Continue task
-              </Button>
+              >继续任务</Button>
             </Card>
           )}
           {!!task.plan.length && (
             <Card style={{ gap: 15 }}>
-              <Text style={s.heading}>Plan</Text>
+              <Text style={s.heading}>计划</Text>
               {task.plan.map((step, index) => (
                 <View key={step.id} style={[s.row, { gap: 10, alignItems: "flex-start" }]}>
                   <Text
@@ -533,11 +511,11 @@ export function TaskDetail({ taskId }: { taskId: string }) {
           <ErrorNotice error={task.error ?? undefined} />
           {detail?.browsers?.map((browser) => (
             <Card key={browser.id} style={{ gap: 10 }}>
-              <Text style={s.heading}>{browser.title || "Agent browser"}</Text>
+              <Text style={s.heading}>{browser.title || "智能体浏览器"}</Text>
               <Text style={s.small}>{browser.url}</Text>
               {browser.status === "active" && browser.previewUrl && (
                 <Image
-                  accessibilityLabel="Agent browser preview"
+                  accessibilityLabel="智能体浏览器预览"
                   source={{ uri: api.url(browser.previewUrl) }}
                   style={{ width: "100%", aspectRatio: 1.6, borderRadius: 12 }}
                 />
@@ -561,8 +539,8 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                 }}
               >
                 {["running", "scheduled", "queued"].includes(task.status)
-                  ? "Pause and open browser"
-                  : "Open browser"}
+                  ? "暂停并打开浏览器"
+                  : "打开浏览器"}
               </Button>
             </Card>
           ))}
@@ -584,11 +562,11 @@ export function TaskDetail({ taskId }: { taskId: string }) {
           ))}
           {!!task.evidence.length && (
             <View style={{ gap: 14 }}>
-              <Text style={s.heading}>Sources</Text>
+              <Text style={s.heading}>来源</Text>
               <EvidenceList items={task.evidence} />
             </View>
           )}
-          <Text style={s.heading}>Timeline</Text>
+          <Text style={s.heading}>时间线</Text>
           {detail?.events.map((event) => (
             <View
               key={event.id}
@@ -604,7 +582,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
             </View>
           ))}
           {!detail?.events.length && (
-            <Text style={s.muted}>The worker will record each step here.</Text>
+            <Text style={s.muted}>worker 会把每一步记录在这里。</Text>
           )}
         </View>
       )}
@@ -680,7 +658,7 @@ export function ArtifactCard({ artifact }: { artifact: AgentArtifact }) {
         </View>
       ))}
       <Button small onPress={() => setExpanded(!expanded)}>
-        {expanded ? "Show summary" : "Explore full result"}
+        {expanded ? "显示摘要" : "查看完整结果"}
       </Button>
     </Card>
   );
@@ -699,9 +677,9 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
     try {
       await mutate("/goals", {
         title: goalTitle.trim(),
-        category: "Finances",
+        category: "财务",
         description: `Inspired by ${artifact.title}: ${artifact.summary}`,
-        milestones: ["Choose a savings target", "Review spending each week"],
+        milestones: ["选一个储蓄目标", "每周复盘支出"],
       });
       setGoalSaved(true);
     } catch (error) {
@@ -783,7 +761,7 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
                 >
                   {amount(artifact.data[key])}
                 </Text>
-                <Text style={{ color: "#7E8289", fontSize: 8, marginTop: 4 }}>source currency</Text>
+                <Text style={{ color: "#7E8289", fontSize: 8, marginTop: 4 }}>原始货币</Text>
               </View>
             ))}
           </View>
@@ -791,15 +769,15 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
         <View style={[s.row, { gap: 11, paddingHorizontal: 8, paddingTop: 13, paddingBottom: 4 }]}>
           <Text style={{ fontSize: 25 }}>💸</Text>
           <View style={{ flex: 1, gap: 2 }}>
-            <Text style={[s.text, { fontWeight: "600" }]}>Finance tracker</Text>
-            <Text style={s.small}>Spending, savings, and a plan for what’s next.</Text>
+            <Text style={[s.text, { fontWeight: "600" }]}>记账</Text>
+            <Text style={s.small}>支出、储蓄，以及接下来的计划。</Text>
           </View>
           <ChevronRight size={17} color={colors.muted} />
         </View>
       </Pressable>
       {details && (
         <View style={{ gap: 16, padding: 10 }}>
-          <Text style={s.label}>Where your money went</Text>
+          <Text style={s.label}>你的钱花在哪了</Text>
           {categories.map((category) => {
             const row = record(category);
             if (!row) return null;
@@ -822,18 +800,16 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
               </View>
             );
           })}
-          <Text style={s.small}>
-            Amounts use your source currency. This summary covers the imported dates.
-          </Text>
+          <Text style={s.small}>金额使用你的原始货币，此汇总覆盖已导入的日期范围。</Text>
           {goalSaved ? (
-            <Text style={s.text}>Your savings goal is saved in Goals.</Text>
+            <Text style={s.text}>你的储蓄目标已保存在「目标」。</Text>
           ) : (
             <View style={{ gap: 10 }}>
               <Field
-                label="Turn this into a savings goal"
+                label="把它变成储蓄目标"
                 value={goalTitle}
                 onChangeText={setGoalTitle}
-                placeholder="What would you like to save for?"
+                placeholder="你想为什么攒钱？"
               />
               <ErrorNotice error={goalError} />
               <Button
@@ -841,13 +817,11 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
                 busy={goalBusy}
                 disabled={!goalTitle.trim()}
                 onPress={() => void saveGoal()}
-              >
-                Create savings goal
-              </Button>
+              >新建储蓄目标</Button>
             </View>
           )}
           <Button small onPress={() => setExpanded(!expanded)}>
-            {expanded ? "Hide transactions" : "View transactions"}
+            {expanded ? "隐藏交易" : "查看交易"}
           </Button>
           {expanded &&
             transactions.slice(0, 100).map((transaction) => {
@@ -865,9 +839,7 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
               ) : null;
             })}
           {expanded && transactions.length > 100 && (
-            <Text style={s.small}>
-              Showing the first 100 transactions. The totals include every row.
-            </Text>
+            <Text style={s.small}>仅显示前 100 条交易，合计包含所有行。</Text>
           )}
         </View>
       )}
@@ -901,33 +873,33 @@ export function DelegateSheet() {
   }
   return (
     <Sheet
-      title="Hand over an outcome"
-      subtitle="OpenMuse saves a plan and keeps working on the server."
+      title="交办一件事"
+      subtitle="OpenMuse 会保存计划，并在服务器上继续干活。"
       onClose={close}
     >
       <View style={[s.row, { flexWrap: "wrap", gap: 8, marginBottom: 20 }]}>
         {(["plan", "document", "finance", "agent"] as const).map((item) => (
           <Button small primary={kind === item} key={item} onPress={() => setKind(item)}>
-            {item === "agent" ? "General task" : statusLabel(item)}
+            {item === "agent" ? "通用任务" : statusLabel(item)}
           </Button>
         ))}
       </View>
       <Field
-        label="What would you like done?"
+        label="你想让它完成什么？"
         value={prompt}
         onChangeText={setPrompt}
         multiline
         placeholder={
           kind === "document"
-            ? "Fill the attached form and prepare a reply for my review"
+            ? "填好附件里的表单，并准备一封回复待我复核"
             : kind === "finance"
-              ? "Summarize my spending and suggest a savings plan"
-              : "Make a practical plan for my week"
+              ? "汇总我的支出并建议一个储蓄计划"
+              : "帮我做个能落地的一周计划"
         }
       />
       {kind === "document" && (
         <View style={{ gap: 8, marginBottom: 18 }}>
-          <Text style={s.heading}>Choose the email with the PDF</Text>
+          <Text style={s.heading}>选择带 PDF 的那封邮件</Text>
           {workspace.mail
             .filter((mail) => mail.attachments.length)
             .map((mail) => (
@@ -939,16 +911,14 @@ export function DelegateSheet() {
               />
             ))}
           {!workspace.mail.some((mail) => mail.attachments.length) && (
-            <Text style={s.muted}>
-              Connect mail in Apps and select a message with a PDF attachment.
-            </Text>
+            <Text style={s.muted}>在「应用」里关联邮箱，然后选择一封带 PDF 附件的邮件。</Text>
           )}
         </View>
       )}
       {kind === "finance" && (
         <>
           <Field
-            label="Transaction CSV"
+            label="交易 CSV"
             value={csv}
             onChangeText={setCsv}
             multiline
@@ -962,21 +932,13 @@ export function DelegateSheet() {
                   "date,description,amount,category\n2026-09-01,Salary,-4200,Income\n2026-09-02,Groceries,84.50,Food\n2026-09-03,Subscription,19.99,Subscriptions\n2026-09-04,Coffee,6.50,Food",
                 )
               }
-            >
-              Try example transactions
-            </Button>
+            >试试示例交易</Button>
           )}
-          <Text style={[s.small, { marginVertical: 12 }]}>
-            Positive amounts are expenses; negative amounts are income. Imported data only. No bank
-            connection is implied.
-          </Text>
+          <Text style={[s.small, { marginVertical: 12 }]}>正数为支出，负数为收入。仅限已导入的数据，并不代表连接了银行。</Text>
         </>
       )}
       {kind === "agent" && !workspace.runtime.configured && (
-        <Text style={[s.muted, { marginBottom: 16 }]}>
-          General tasks and plans require a configured model. Document jobs, page watches and
-          spending summaries have guided workflows.
-        </Text>
+        <Text style={[s.muted, { marginBottom: 16 }]}>通用任务与计划需要先配置模型。文档处理、网页监控和支出汇总有引导式流程。</Text>
       )}
       <ErrorNotice error={error} />
       <Button
@@ -988,9 +950,7 @@ export function DelegateSheet() {
           (kind === "finance" && !csv.trim())
         }
         onPress={() => void submit()}
-      >
-        Delegate task
-      </Button>
+      >派发任务</Button>
     </Sheet>
   );
 }
@@ -1014,10 +974,8 @@ export function IdeasScreen() {
     <View style={{ gap: 20 }}>
       <AgentStatus />
       <View style={s.between}>
-        <Text style={s.small}>Inspired by your connected apps</Text>
-        <Button small icon={RefreshCw} busy={busy} onPress={() => void refreshIdeas()}>
-          Find ideas
-        </Button>
+        <Text style={s.small}>灵感来自你已连接的应用</Text>
+        <Button small icon={RefreshCw} busy={busy} onPress={() => void refreshIdeas()}>找灵感</Button>
       </View>
       <ErrorNotice error={error} />
       {ideas.map((idea) => (
@@ -1026,8 +984,8 @@ export function IdeasScreen() {
       {!ideas.length && (
         <Empty
           icon={Lightbulb}
-          title="Room for a good idea"
-          detail="Find ideas from the sources you have granted access to. Each suggestion includes its evidence."
+          title="给好点子留个位置"
+          detail="从你授权过的来源里找灵感，每条建议都会附上依据。"
         />
       )}
       {(data?.ideas || [])
@@ -1035,7 +993,7 @@ export function IdeasScreen() {
         .map((idea) => (
           <Card key={idea.id} style={{ gap: 7 }}>
             <Text style={s.heading}>{idea.title}</Text>
-            <Chip tint={colors.green}>Started</Chip>
+            <Chip tint={colors.green}>已开始</Chip>
             {!!idea.taskId && <TaskLink taskId={idea.taskId} />}
           </Card>
         ))}
@@ -1052,9 +1010,7 @@ function TaskLink({ taskId, onOpen }: { taskId: string; onOpen?: () => void }) {
         onOpen?.();
         open({ type: "task", taskId });
       }}
-    >
-      View task
-    </Button>
+    >查看任务</Button>
   );
 }
 function IdeaCard({ idea }: { idea: Idea }) {
@@ -1107,7 +1063,7 @@ function IdeaCard({ idea }: { idea: Idea }) {
           <EvidenceList items={idea.evidence} />
           {editing && (
             <Field
-              label="What should OpenMuse do?"
+              label="想让 OpenMuse 做什么？"
               value={prompt}
               onChangeText={setPrompt}
               multiline
@@ -1120,15 +1076,11 @@ function IdeaCard({ idea }: { idea: Idea }) {
               busy={busy}
               disabled={!prompt.trim()}
               onPress={() => void act("accept")}
-            >
-              Start this
-            </Button>
+            >开始这个</Button>
             <Button disabled={busy} onPress={() => setEditing(!editing)}>
-              {editing ? "Keep edits" : "Edit"}
+              {editing ? "保留修改" : "编辑"}
             </Button>
-            <Button disabled={busy} onPress={() => void act("dismiss")}>
-              Dismiss
-            </Button>
+            <Button disabled={busy} onPress={() => void act("dismiss")}>忽略</Button>
           </View>
         </View>
       )}
@@ -1160,11 +1112,9 @@ export function GoalsScreen() {
                 backgroundColor: "#24A46B",
               }}
             />
-            <Text style={[s.heading, { color: "#189A58" }]}>Tracking</Text>
+            <Text style={[s.heading, { color: "#189A58" }]}>跟踪中</Text>
           </View>
-          <Button small icon={Plus} onPress={() => setAdding("Tracking")}>
-            Track
-          </Button>
+          <Button small icon={Plus} onPress={() => setAdding("跟踪中")}>跟踪</Button>
         </View>
         {(showAll ? monitors : monitors.slice(0, 3)).map((item) => (
           <Pressable
@@ -1187,13 +1137,11 @@ export function GoalsScreen() {
           </Pressable>
         ))}
         {!monitors.length && (
-          <Text style={[s.muted, { paddingVertical: 10 }]}>
-            Ticket prices, a reservation, a page you’re watching.
-          </Text>
+          <Text style={[s.muted, { paddingVertical: 10 }]}>票价、订位，或是你正在盯着的页面。</Text>
         )}
         {monitors.length > 3 && (
           <Button small onPress={() => setShowAll(!showAll)}>
-            {showAll ? "Show less" : `Show ${monitors.length - 3} more`}
+            {showAll ? "收起" : `Show ${monitors.length - 3} more`}
           </Button>
         )}
       </View>
@@ -1210,7 +1158,7 @@ export function GoalsScreen() {
               backgroundColor: "#3D9BDE",
             }}
           />
-          <Text style={[s.heading, { color: colors.blueDark }]}>Goals</Text>
+          <Text style={[s.heading, { color: colors.blueDark }]}>目标</Text>
         </View>
         {data?.goals.map((item) => (
           <Pressable
@@ -1235,18 +1183,16 @@ export function GoalsScreen() {
           </Pressable>
         ))}
         {!data?.goals.length && (
-          <Text style={[s.muted, { paddingVertical: 10 }]}>
-            Big plans start with one small step.
-          </Text>
+          <Text style={[s.muted, { paddingVertical: 10 }]}>大计划都从一小步开始。</Text>
         )}
       </View>
       <View style={{ height: 1, backgroundColor: colors.line }} />
-      <Text style={s.heading}>Create a goal</Text>
+      <Text style={s.heading}>新建目标</Text>
       {[
-        { name: "Health", icon: Heart },
-        { name: "Relationships", icon: Users },
-        { name: "Finances", icon: CircleDollarSign },
-        { name: "Something else", icon: Target },
+        { name: "健康", icon: Heart },
+        { name: "关系", icon: Users },
+        { name: "财务", icon: CircleDollarSign },
+        { name: "其他", icon: Target },
       ].map((item) => (
         <Pressable
           key={item.name}
@@ -1262,10 +1208,10 @@ export function GoalsScreen() {
       ))}
       {adding && (
         <Sheet
-          title={adding === "Tracking" ? "Track something" : "Create a goal"}
+          title={adding === "跟踪中" ? "跟踪点什么" : "新建目标"}
           onClose={() => setAdding(undefined)}
         >
-          {adding === "Tracking" ? (
+          {adding === "跟踪中" ? (
             <MonitorForm onDone={() => setAdding(undefined)} />
           ) : (
             <GoalForm category={adding} onDone={() => setAdding(undefined)} />
@@ -1315,27 +1261,25 @@ function GoalForm({ onDone, category }: { onDone: () => void; category?: string 
   return (
     <Card>
       <Field
-        label="Your goal"
+        label="你的目标"
         value={title}
         onChangeText={setTitle}
-        placeholder="Build a three-month emergency fund"
+        placeholder="攒出一笔三个月的应急金"
       />
       <Field
-        label="What does success look like?"
+        label="怎样算成功？"
         value={description}
         onChangeText={setDescription}
         multiline
       />
       <Field
-        label="Milestones (one per line)"
+        label="里程碑（每行一个）"
         value={milestones}
         onChangeText={setMilestones}
         multiline
       />
       <ErrorNotice error={error} />
-      <Button primary disabled={!title.trim()} busy={busy} onPress={() => void save()}>
-        Create goal
-      </Button>
+      <Button primary disabled={!title.trim()} busy={busy} onPress={() => void save()}>新建目标</Button>
     </Card>
   );
 }
@@ -1409,16 +1353,12 @@ function GoalCard({ goal, onOpenTask }: { goal: Goal; onOpenTask?: () => void })
           busy={busy}
           onPress={() => void update({ status: goal.status === "active" ? "paused" : "active" })}
         >
-          {goal.status === "active" ? "Pause" : "Resume"}
+          {goal.status === "active" ? "暂停" : "继续"}
         </Button>
         {goal.status !== "completed" && (
-          <Button small busy={busy} onPress={() => void update({ status: "completed" })}>
-            Complete goal
-          </Button>
+          <Button small busy={busy} onPress={() => void update({ status: "completed" })}>完成目标</Button>
         )}
-        <Button small primary busy={busy} onPress={() => void plan()}>
-          Plan next steps
-        </Button>
+        <Button small primary busy={busy} onPress={() => void plan()}>规划下一步</Button>
       </View>
       {data?.tasks
         .filter((task) => task.goalId === goal.id)
@@ -1445,9 +1385,9 @@ function MonitorForm({ onDone }: { onDone: () => void }) {
     try {
       const minutes = Number(interval);
       if (!Number.isInteger(minutes) || minutes < 1 || minutes > 10080)
-        throw new Error("Use a check interval from 1 to 10080 minutes.");
+        throw new Error("检查间隔需在 1 到 10080 分钟之间。");
       if (!sample && !/^https?:\/\//i.test(url.trim()))
-        throw new Error("Enter an http or https address for a public page.");
+        throw new Error("输入公网页面的 http 或 https 地址。");
       await mutate("/monitors", {
         title: title.trim(),
         url: sample ? "sample://availability" : url.trim(),
@@ -1465,56 +1405,56 @@ function MonitorForm({ onDone }: { onDone: () => void }) {
   return (
     <Card>
       <Field
-        label="What are you watching?"
+        label="你在关注什么？"
         value={title}
         onChangeText={setTitle}
-        placeholder="A table at my favorite restaurant"
+        placeholder="帮我订常去餐厅的位子"
       />
       {workspace.mode === "sample" && (
         <CheckRow
           checked={sample}
-          label="Try the built-in availability page"
+          label="试试内置的可约时间页"
           onPress={() => setSample(!sample)}
         />
       )}
       {!sample && (
         <Field
-          label="Public page URL"
+          label="公开页面 URL"
           value={url}
           onChangeText={setUrl}
           autoCapitalize="none"
           placeholder="https://example.com/product"
         />
       )}
-      <Text style={[s.small, { marginBottom: 10 }]}>Notify me when</Text>
+      <Text style={[s.small, { marginBottom: 10 }]}>在以下情况通知我</Text>
       <View style={[s.row, { gap: 7, flexWrap: "wrap", marginBottom: 16 }]}>
         {(["change", "contains", "price_below"] as const).map((item) => (
           <Button small primary={condition === item} key={item} onPress={() => setCondition(item)}>
             {item === "change"
-              ? "Page changes"
+              ? "页面变更"
               : item === "contains"
-                ? "Text appears"
-                : "Price drops below"}
+                ? "出现文字"
+                : "价格低于"}
           </Button>
         ))}
       </View>
       {condition !== "change" && (
         <Field
-          label={condition === "contains" ? "Text to look for" : "Target price"}
+          label={condition === "contains" ? "要查找的文字" : "目标价格"}
           value={value}
           onChangeText={setValue}
         />
       )}
       <Field
-        label="Check every (minutes)"
+        label="检查间隔（分钟）"
         value={interval}
         onChangeText={setInterval}
         keyboardType="number-pad"
       />
       <Text style={[s.small, { marginBottom: 14 }]}>
         {sample
-          ? "Changes to this built-in page stay in your workspace."
-          : "OpenMuse checks this public page on the server and saves meaningful changes in Notifications."}
+          ? "对这个内置页面的修改只留在你的工作区。"
+          : "OpenMuse 会在服务器上检查这个公开页面，并把有意义的变更存进通知。"}
       </Text>
       <ErrorNotice error={error} />
       <Button
@@ -1524,9 +1464,7 @@ function MonitorForm({ onDone }: { onDone: () => void }) {
           !title.trim() || (!sample && !url.trim()) || (condition !== "change" && !value.trim())
         }
         onPress={() => void save()}
-      >
-        Start tracking
-      </Button>
+      >开始跟踪</Button>
     </Card>
   );
 }
@@ -1566,11 +1504,11 @@ function MonitorCard({ monitor, onOpenTask }: { monitor: Monitor; onOpenTask?: (
         <Chip tint={colors.sky}>{statusLabel(monitor.status)}</Chip>
       </View>
       <Text selectable style={s.small}>
-        {monitor.url.startsWith("sample:") ? "Built-in availability page" : monitor.url}
+        {monitor.url.startsWith("sample:") ? "内置可约时间页" : monitor.url}
       </Text>
       <Text style={s.text}>
         {monitor.condition === "change"
-          ? "Watch for a page change"
+          ? "监控页面变更"
           : monitor.condition === "contains"
             ? `Watch for “${monitor.value}”`
             : `Price below ${monitor.value}`}
@@ -1595,20 +1533,14 @@ function MonitorCard({ monitor, onOpenTask }: { monitor: Monitor; onOpenTask?: (
             busy={busy}
             onPress={() => void act(monitor.status === "active" ? "pause" : "resume")}
           >
-            {monitor.status === "active" ? "Pause" : "Resume"}
+            {monitor.status === "active" ? "暂停" : "继续"}
           </Button>
-          <Button small busy={busy} onPress={() => void act("check")}>
-            Check now
-          </Button>
-          <Button small danger busy={busy} onPress={() => void act("stop")}>
-            Stop tracking
-          </Button>
+          <Button small busy={busy} onPress={() => void act("check")}>立即检查</Button>
+          <Button small danger busy={busy} onPress={() => void act("stop")}>停止跟踪</Button>
         </View>
       )}
       {monitor.url.startsWith("sample:") && monitor.status !== "stopped" && (
-        <Button small busy={busy} onPress={() => void changeSample()}>
-          Change availability
-        </Button>
+        <Button small busy={busy} onPress={() => void changeSample()}>修改可约时间</Button>
       )}
       <TaskLink taskId={monitor.taskId} onOpen={onOpenTask} />
     </Card>
@@ -1628,8 +1560,8 @@ export function NotificationsSheet() {
   }
   return (
     <Sheet
-      title="Notifications"
-      subtitle="Results and decisions that need your attention."
+      title="通知"
+      subtitle="需要你处理的结果与决策。"
       onClose={close}
     >
       <View style={{ gap: 14 }}>
@@ -1641,20 +1573,20 @@ export function NotificationsSheet() {
           >
             <View style={s.between}>
               <Text style={s.heading}>{item.title}</Text>
-              {!item.read && <Chip>New</Chip>}
+              {!item.read && <Chip>新</Chip>}
             </View>
             <Text style={s.muted}>{item.body}</Text>
             <Text style={s.small}>{stamp(item.createdAt)}</Text>
             <Button small onPress={() => void read(item.id, item.taskId)}>
-              {item.taskId ? "View task" : item.read ? "Read" : "Mark read"}
+              {item.taskId ? "查看任务" : item.read ? "Read" : "标记已读"}
             </Button>
           </Card>
         ))}
         {!data?.notifications.length && (
           <Empty
             icon={Bell}
-            title="You're all caught up"
-            detail="Results, meaningful changes and requests for your input will appear here."
+            title="都处理完了"
+            detail="结果、有意义的变更和需要你输入的内容都会出现在这里。"
           />
         )}
       </View>
@@ -1701,26 +1633,26 @@ export function AppsScreen() {
   const shortcuts = [
     {
       section: "mail" as const,
-      title: "Mail",
-      detail: "Read messages and prepare replies",
+      title: "邮件",
+      detail: "读取邮件并准备回复",
       icon: Mail,
     },
     {
       section: "calendar" as const,
       title: "Calendar",
-      detail: "Events and reviewed invitations",
+      detail: "事件与已复核的邀请",
       icon: CalendarDays,
     },
     {
       section: "browser" as const,
-      title: "Agent computer",
-      detail: "Persistent browser sessions",
+      title: "智能体电脑",
+      detail: "持久浏览器会话",
       icon: Globe2,
     },
     {
       section: "files" as const,
-      title: "Files",
-      detail: "PDFs, forms and filled copies",
+      title: "文件",
+      detail: "PDF、表单与已填写的副本",
       icon: FileText,
     },
   ];
@@ -1728,13 +1660,13 @@ export function AppsScreen() {
     <View style={{ gap: 22 }}>
       <AgentStatus />
       <Field
-        label="Search apps"
+        label="搜索应用"
         value={query}
         onChangeText={setQuery}
-        placeholder="Search connectors"
+        placeholder="搜索连接器"
       />
       <ConnectionsScreen query={query} />
-      <Text style={s.heading}>On your computer</Text>
+      <Text style={s.heading}>在你的电脑上</Text>
       <Card style={{ paddingVertical: 3, backgroundColor: "#F4F5F6" }}>
         {shortcuts
           .filter((item) =>
@@ -1753,12 +1685,12 @@ export function AppsScreen() {
           ))}
       </Card>
       <Button onPress={() => setSettings(!settings)}>
-        {settings ? "Close agent settings" : "Personality & memory"}
+        {settings ? "关闭智能体设置" : "人格与记忆"}
       </Button>
       {settings && (
         <>
           <Card style={{ gap: 10 }}>
-            <SectionHeading title="Your agent" />
+            <SectionHeading title="你的智能体" />
             <View style={[s.row, { gap: 16, justifyContent: "center", marginBottom: 12 }]}>
               {(["sky", "sand", "lilac"] as const).map((item) => (
                 <Pressable
@@ -1777,7 +1709,7 @@ export function AppsScreen() {
                 </Pressable>
               ))}
             </View>
-            <Field label="Name" value={name} onChangeText={setName} />
+            <Field label="名称" value={name} onChangeText={setName} />
             <View style={[s.row, { gap: 8 }]}>
               {(["warm", "concise", "thoughtful"] as const).map((item) => (
                 <Button key={item} small primary={tone === item} onPress={() => setTone(item)}>
@@ -1786,45 +1718,38 @@ export function AppsScreen() {
               ))}
             </View>
             <CheckRow
-              label="Show background updates in chat"
+              label="在聊天中显示后台更新"
               checked={showChatUpdates}
               onPress={() => setShowChatUpdates(!showChatUpdates)}
             />
-            <Text style={s.small}>
-              Activity and notifications always keep the full record, including requests for
-              approval.
-            </Text>
+            <Text style={s.small}>动态与通知会保留完整记录，包括需要你批准的请求。</Text>
             <Button
               busy={busy}
               disabled={!name.trim()}
               onPress={() =>
                 void save("/identity", { name: name.trim(), tone, avatar, showChatUpdates })
               }
-            >
-              Save preferences
-            </Button>
+            >保存偏好</Button>
           </Card>
           <Card style={{ gap: 12 }}>
-            <SectionHeading title="Memory" />
-            <Text style={s.muted}>Context you can inspect, correct or forget.</Text>
+            <SectionHeading title="记忆" />
+            <Text style={s.muted}>你可以查看、修正或遗忘的上下文。</Text>
             {data?.memories.map((item) => (
               <MemoryRow key={item.id} memory={item} />
             ))}
             <Field
-              label="Remember something about me"
+              label="记住一些关于我的事"
               value={memory}
               onChangeText={setMemory}
-              placeholder="I prefer morning meetings"
+              placeholder="我更喜欢上午开会"
             />
             <Button
               busy={busy}
               disabled={!memory.trim()}
               onPress={() =>
-                void save("/memories", { text: memory.trim(), source: "User added in Apps" })
+                void save("/memories", { text: memory.trim(), source: "用户已在「应用」中添加" })
               }
-            >
-              Remember
-            </Button>
+            >记住</Button>
           </Card>
         </>
       )}
@@ -1855,7 +1780,7 @@ function MemoryRow({ memory }: { memory: AgentMemory }) {
       style={{ gap: 8, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: colors.line }}
     >
       {editing ? (
-        <Field label="Memory" value={text} onChangeText={setText} />
+        <Field label="记忆" value={text} onChangeText={setText} />
       ) : (
         <Text style={s.text}>{memory.text}</Text>
       )}
@@ -1864,17 +1789,11 @@ function MemoryRow({ memory }: { memory: AgentMemory }) {
       </Text>
       <View style={[s.row, { gap: 8 }]}>
         {editing ? (
-          <Button small busy={busy} disabled={!text.trim()} onPress={() => void act(false)}>
-            Save correction
-          </Button>
+          <Button small busy={busy} disabled={!text.trim()} onPress={() => void act(false)}>保存修正</Button>
         ) : (
-          <Button small onPress={() => setEditing(true)}>
-            Edit
-          </Button>
+          <Button small onPress={() => setEditing(true)}>编辑</Button>
         )}
-        <Button small danger busy={busy} onPress={() => void act(true)}>
-          Forget
-        </Button>
+        <Button small danger busy={busy} onPress={() => void act(true)}>遗忘</Button>
       </View>
       <ErrorNotice error={error} />
     </View>

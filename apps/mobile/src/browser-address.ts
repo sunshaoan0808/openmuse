@@ -17,8 +17,8 @@ export function browserAddress(value: string): string {
 
 export function browserSite(value: string): string {
   try {
-    return new URL(value).hostname.replace(/^www\./, "") || "Browser";
+    return new URL(value).hostname.replace(/^www\./, "") || "浏览器";
   } catch {
-    return "Browser";
+    return "浏览器";
   }
 }

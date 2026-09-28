@@ -43,28 +43,28 @@ import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from 
 import { type Detail, useWorkspace, WorkspaceContext } from "./src/workspace";
 
 const nav: { id: Section; label: string; icon: LucideIcon }[] = [
-  { id: "chat", label: "Chat", icon: MessageCircle },
-  { id: "activity", label: "Activity", icon: PanelsTopLeft },
-  { id: "ideas", label: "Ideas", icon: Lightbulb },
-  { id: "goals", label: "Goals", icon: SquareCheck },
-  { id: "apps", label: "Apps", icon: Shapes },
+  { id: "chat", label: "聊天", icon: MessageCircle },
+  { id: "activity", label: "动态", icon: PanelsTopLeft },
+  { id: "ideas", label: "灵感", icon: Lightbulb },
+  { id: "goals", label: "目标", icon: SquareCheck },
+  { id: "apps", label: "应用", icon: Shapes },
 ];
 const titles: Partial<Record<Section, { title: string; subtitle: string }>> = {
-  activity: { title: "Activity", subtitle: "Plans, progress, decisions and results." },
-  ideas: { title: "Ideas", subtitle: "Useful next steps, grounded in your world." },
+  activity: { title: "动态", subtitle: "计划、进展、决策与结果。" },
+  ideas: { title: "灵感", subtitle: "贴合你实际情况的下一步建议。" },
   goals: {
-    title: "Goals",
-    subtitle: "Longer-term goals and things to keep an eye on.",
+    title: "目标",
+    subtitle: "长期目标与需要留意的事。",
   },
   apps: {
-    title: "Apps",
-    subtitle: "Connections, capabilities and what your agent remembers.",
+    title: "应用",
+    subtitle: "连接、能力，以及智能体记住的东西。",
   },
-  connections: { title: "Apps", subtitle: "Connections and capabilities." },
-  mail: { title: "Mail", subtitle: "The conversations behind your work." },
-  calendar: { title: "Calendar", subtitle: "Time for what matters." },
-  browser: { title: "Browser", subtitle: "Your connected browsing sessions." },
-  files: { title: "Files", subtitle: "Documents, forms and filled copies." },
+  connections: { title: "应用", subtitle: "连接与能力。" },
+  mail: { title: "邮件", subtitle: "你工作背后的那些对话。" },
+  calendar: { title: "Calendar", subtitle: "把时间留给重要的事。" },
+  browser: { title: "浏览器", subtitle: "你已连接的浏览会话。" },
+  files: { title: "文件", subtitle: "文档、表单与已填写的副本。" },
 };
 export default function App() {
   const [token, setToken] = useState("");
@@ -116,17 +116,15 @@ export default function App() {
             <Mascot size={72} />
             <Text
               style={{ fontSize: 32, color: colors.text, letterSpacing: -1, fontWeight: "500" }}
-            >
-              Welcome to OpenMuse.
-            </Text>
-            <Text style={[s.muted, { textAlign: "center" }]}>A little room for your day.</Text>
+            >欢迎使用 OpenMuse。</Text>
+            <Text style={[s.muted, { textAlign: "center" }]}>给你的一天留点空间。</Text>
             {busy ? (
               <ActivityIndicator color={colors.blueDark} />
             ) : (
               <Card style={{ width: "100%" }}>
                 <ErrorNotice error={error} />
                 <Field
-                  label="Server address"
+                  label="服务器地址"
                   value={server}
                   onChangeText={setServer}
                   autoCapitalize="none"
@@ -135,19 +133,14 @@ export default function App() {
                   placeholder={defaultApiUrl()}
                 />
                 <Field
-                  label="Workspace access key"
+                  label="工作区访问密钥"
                   value={accessKey}
                   onChangeText={setAccessKey}
                   secureTextEntry
-                  placeholder="Required for a live workspace"
+                  placeholder="实时工作区必填"
                 />
-                <Button primary onPress={() => void connect(accessKey || undefined, server)}>
-                  Open workspace
-                </Button>
-                <Text style={[s.small, { marginTop: 15 }]}>
-                  Type the address of your OpenMuse server (for example http://10.7.0.6:8787). It is
-                  remembered on this device. Local workspaces open without a key.
-                </Text>
+                <Button primary onPress={() => void connect(accessKey || undefined, server)}>打开工作区</Button>
+                <Text style={[s.small, { marginTop: 15 }]}>填你的 OpenMuse 服务器地址（例如 http://10.7.0.6:8787）。它会记在这台设备上。本地工作区无需密钥。</Text>
               </Card>
             )}
           </View>
@@ -210,14 +203,12 @@ function WorkspaceApp({ token }: { token: string }) {
         {error ? (
           <>
             <ErrorNotice error={error} />
-            <Button onPress={() => void refresh().catch((e) => setError(String(e)))}>
-              Try again
-            </Button>
+            <Button onPress={() => void refresh().catch((e) => setError(String(e)))}>重试</Button>
           </>
         ) : (
           <>
             <ActivityIndicator color={colors.blueDark} />
-            <Text style={s.muted}>Opening your workspace…</Text>
+            <Text style={s.muted}>正在打开工作区…</Text>
           </>
         )}
       </SafeAreaView>
@@ -284,8 +275,8 @@ function WorkspaceShell({
         ? `Needs your input · ${activeTask.title}`
         : activeTask.plan.find((step) => step.status === "running")?.title || activeTask.title
     : data?.tasks.some((task) => task.status === "queued")
-      ? "Picking up your next task…"
-      : "Here when you need me";
+      ? "正在接取下一个任务…"
+      : "需要我就叫我";
   const title = titles[section] || titles.apps;
   const Screen =
     section === "mail"
@@ -319,7 +310,7 @@ function WorkspaceShell({
             <View style={{ position: "absolute", left: 0, top: 16 }}>
               <IconButton
                 icon={Menu}
-                label="Open conversations and menu"
+                label="打开会话与菜单"
                 onPress={() => setThreadsOpen(true)}
               />
             </View>
@@ -389,9 +380,7 @@ function WorkspaceShell({
                     small
                     style={{ alignSelf: "flex-start", marginBottom: 18 }}
                     onPress={() => navigate("apps")}
-                  >
-                    Back to Apps
-                  </Button>
+                  >返回应用</Button>
                 )}
                 <Text style={[s.title, { fontSize: 25, marginBottom: 22 }]}>{title?.title}</Text>
                 <ErrorNotice error={error} />
@@ -410,14 +399,12 @@ function WorkspaceShell({
                 <>
                   <ErrorNotice error={threadsError} />
                   {threadsError ? (
-                    <Button onPress={retryThreads}>Retry main chat</Button>
+                    <Button onPress={retryThreads}>重试主聊天</Button>
                   ) : threadsLoading ? (
                     <ActivityIndicator color={colors.blueDark} />
                   ) : null}
                   {!threadsLoading && selection.id !== mainId && (
-                    <Text style={[s.small, { textAlign: "center", marginBottom: 8 }]}>
-                      Side chat
-                    </Text>
+                    <Text style={[s.small, { textAlign: "center", marginBottom: 8 }]}>侧边聊天</Text>
                   )}
                   {visited.map((thread) => (
                     <View
@@ -508,7 +495,7 @@ function WorkspaceShell({
               <Text style={{ color: "#FFF", fontSize: 13, flexShrink: 1 }}>{toast}</Text>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Dismiss notification"
+                accessibilityLabel="忽略通知"
                 onPress={clearToast}
               >
                 <X size={16} color="#FFF" />

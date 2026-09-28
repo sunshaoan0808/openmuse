@@ -105,9 +105,7 @@ export function TaskThreadCard({ task }: { task: AgentTask }) {
       ))}
       <ErrorNotice error={error} />
       {!!error && (
-        <Button small onPress={() => setAttempt((value) => value + 1)}>
-          Reload task results
-        </Button>
+        <Button small onPress={() => setAttempt((value) => value + 1)}>重新加载任务结果</Button>
       )}
     </View>
   );
