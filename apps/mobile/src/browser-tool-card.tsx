@@ -24,11 +24,11 @@ function resultValue(result: unknown) {
 }
 
 function siteLabel(url: unknown) {
-  if (typeof url !== "string") return "Opening a page";
+  if (typeof url !== "string") return "正在打开页面";
   try {
     return new URL(url).hostname.replace(/^www\./, "");
   } catch {
-    return "Opening a page";
+    return "正在打开页面";
   }
 }
 
@@ -89,7 +89,7 @@ export function BrowserToolCard({
   const failure = toolError.success
     ? toolError.data.error
     : !loading && !visited
-      ? "The browser did not return a page. Try your request again."
+      ? "浏览器没有返回页面，请重试。"
       : "";
   return (
     <Card
@@ -100,21 +100,21 @@ export function BrowserToolCard({
           <Globe2 size={21} color={colors.blueDark} />
         </View>
         <View style={{ flex: 1, gap: 1 }}>
-          <Text style={[s.text, { fontWeight: "600" }]}>Browser</Text>
+          <Text style={[s.text, { fontWeight: "600" }]}>浏览器</Text>
           <Text numberOfLines={1} style={[s.small, { fontSize: 12 }]}>
             {working
-              ? "Reading the page…"
+              ? "正在读取页面…"
               : loading
-                ? "Browsing paused"
+                ? "浏览已暂停"
                 : failure
-                  ? "Couldn’t read the page"
+                  ? "读不了这个页面"
                   : siteLabel(visited?.url)}
           </Text>
         </View>
         {working ? (
           <ActivityIndicator size="small" color={colors.blueDark} />
         ) : visited ? (
-          <Check size={17} color="#47896C" accessibilityLabel="Page read" />
+          <Check size={17} color="#47896C" accessibilityLabel="已读取页面" />
         ) : null}
       </View>
       {preview ? (
@@ -142,14 +142,14 @@ export function BrowserToolCard({
           ) : visited ? (
             <Text style={s.small}>
               {browser && browser.url !== visited.url
-                ? "Page visited. The browser has moved on."
+                ? "页面已访问，浏览器已经走开了。"
                 : browser?.status === "closed"
-                  ? "Session saved. Take control to reopen it."
+                  ? "会话已保存，接管即可重新打开。"
                   : browser?.status === "error"
-                    ? "Session needs attention. Take control to reconnect."
+                    ? "会话需要处理，接管即可重新连接。"
                     : previewFailed
-                      ? "Preview unavailable. You can still take control."
-                      : "Connecting to the saved session…"}
+                      ? "预览不可用，你仍然可以接管。"
+                      : "正在连接已保存的会话…"}
             </Text>
           ) : null}
         </View>
@@ -161,14 +161,10 @@ export function BrowserToolCard({
           disabled={!browser || running}
           onPress={() => browser && open({ type: "browser", browser })}
           style={{ backgroundColor: "#F9F9FA", minHeight: 38, paddingVertical: 8 }}
-        >
-          Take control
-        </Button>
+        >接管</Button>
       )}
       {!!error && (
-        <Button small icon={RotateCw} onPress={() => setRetry((attempt) => attempt + 1)}>
-          Reconnect preview
-        </Button>
+        <Button small icon={RotateCw} onPress={() => setRetry((attempt) => attempt + 1)}>重新连接预览</Button>
       )}
     </Card>
   );

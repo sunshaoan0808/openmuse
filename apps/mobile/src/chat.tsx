@@ -43,7 +43,7 @@ export function WorkspaceTools() {
   });
   useRenderTool({
     name: "search_mail",
-    description: "Show the agent checking the mailbox",
+    description: "演示智能体检查邮箱",
     parameters: displayParameters,
     render: ({ result, status }) => (
       <MailToolCard search result={result} loading={status !== "complete"} />
@@ -51,7 +51,7 @@ export function WorkspaceTools() {
   });
   useRenderTool({
     name: "read_mail_thread",
-    description: "Show the email the agent read",
+    description: "展示智能体读过的邮件",
     parameters: displayParameters,
     render: ({ result, status }) => (
       <MailToolCard result={result} loading={status !== "complete"} />
@@ -59,7 +59,7 @@ export function WorkspaceTools() {
   });
   useRenderTool({
     name: "browse_web",
-    description: "Follow the agent as it reads a webpage",
+    description: "看智能体怎么读一个网页",
     parameters: displayParameters,
     render: ({ args, result, status }) => (
       <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
@@ -67,42 +67,42 @@ export function WorkspaceTools() {
   });
   useRenderTool({
     name: "delegate_task",
-    description: "Display delegated work",
+    description: "展示已派发的工作",
     parameters: displayParameters,
     render: ({ result, status }) => (
-      <ServerToolCard name="Task" result={result} loading={status !== "complete"} />
+      <ServerToolCard name="任务" result={result} loading={status !== "complete"} />
     ),
   });
   useRenderTool({
     name: "agent_status",
-    description: "Display saved agent progress",
+    description: "展示已保存的智能体进展",
     parameters: displayParameters,
     render: ({ result, status }) => (
-      <ServerToolCard name="Agent progress" result={result} loading={status !== "complete"} />
+      <ServerToolCard name="智能体进展" result={result} loading={status !== "complete"} />
     ),
   });
   useRenderTool({
     name: "create_goal",
-    description: "Display a saved goal",
+    description: "展示已保存的目标",
     parameters: displayParameters,
     render: ({ result, status }) => (
-      <ServerToolCard name="Goal" result={result} loading={status !== "complete"} />
+      <ServerToolCard name="目标" result={result} loading={status !== "complete"} />
     ),
   });
   useRenderTool({
     name: "watch_page",
-    description: "Display a saved page watch",
+    description: "展示已保存的网页监控",
     parameters: displayParameters,
     render: ({ result, status }) => (
-      <ServerToolCard name="Tracking" result={result} loading={status !== "complete"} />
+      <ServerToolCard name="跟踪中" result={result} loading={status !== "complete"} />
     ),
   });
   useRenderTool({
     name: "remember_fact",
-    description: "Display saved personal context",
+    description: "展示已保存的个人上下文",
     parameters: displayParameters,
     render: ({ result, status }) => (
-      <ServerToolCard name="Memory" result={result} loading={status !== "complete"} />
+      <ServerToolCard name="记忆" result={result} loading={status !== "complete"} />
     ),
   });
   return null;
@@ -144,16 +144,16 @@ function ServerToolCard({
         <ErrorNotice error={parsed.data.error} />
       ) : (
         <Text style={s.muted}>
-          {loading ? "Waiting for the server." : "Open the workspace to see the saved result."}
+          {loading ? "正在等待服务器。" : "打开工作区查看已保存的结果。"}
         </Text>
       )}
       <Button
         small
         onPress={() =>
           navigate(
-            name === "Goal" || name === "Tracking"
+            name === "目标" || name === "跟踪中"
               ? "goals"
-              : name === "Memory"
+              : name === "记忆"
                 ? "apps"
                 : "activity",
           )
@@ -247,7 +247,7 @@ export function ChatScreen({
   const run = useCallback(
     async (message?: QueuedMessage) => {
       if (runLock.current || agent.isRunning || !isReady || !loaded)
-        throw new Error("The conversation is not ready yet.");
+        throw new Error("会话还没准备好。");
       runLock.current = true;
       setBusy(true);
       setError("");
@@ -360,9 +360,7 @@ export function ChatScreen({
         {!!historyError && (
           <>
             <ErrorNotice error={historyError} />
-            <Button onPress={() => setHistoryAttempt((attempt) => attempt + 1)}>
-              Retry loading conversation
-            </Button>
+            <Button onPress={() => setHistoryAttempt((attempt) => attempt + 1)}>重试加载对话</Button>
           </>
         )}
         {!visible.length ? (
@@ -384,24 +382,19 @@ export function ChatScreen({
                 textAlign: "center",
                 maxWidth: 350,
               }}
-            >
-              A little help. A lot more room for life.
-            </Text>
-            <Text style={[s.muted, { maxWidth: 320, textAlign: "center", lineHeight: 23 }]}>
-              Tell me what’s on your mind. I can make a plan, work with your apps, and use my
-              computer to help.
-            </Text>
+            >有人搭把手，生活多出很多空间。</Text>
+            <Text style={[s.muted, { maxWidth: 320, textAlign: "center", lineHeight: 23 }]}>说说你在想什么。我可以做计划、操作你的应用，也能用我的电脑帮忙。</Text>
             <View style={{ width: "100%", maxWidth: 360, marginTop: 14, gap: 8 }}>
               {[
                 {
-                  text: "Find cool things on Hacker News",
-                  action: () => enqueue("Check out Hacker News for cool stuff"),
+                  text: "在 Hacker News 上找点好东西",
+                  action: () => enqueue("逛逛 Hacker News 找点好东西"),
                 },
                 {
                   text: "Summarize copilotkit.ai",
                   action: () => enqueue("Summarize copilotkit.ai"),
                 },
-                { text: "Keep an eye on a website", action: () => navigate("goals") },
+                { text: "盯着某个网站", action: () => navigate("goals") },
               ].map((item) => (
                 <Button key={item.text} onPress={item.action}>
                   {item.text}
@@ -475,7 +468,7 @@ export function ChatScreen({
                 style={{ alignSelf: "flex-start", marginTop: 6 }}
                 onPress={() => setShowResults(!showResults)}
               >
-                {showResults ? "Hide recent results" : "Recent results"}
+                {showResults ? "隐藏最近结果" : "最近结果"}
               </Button>
             )}
             {showResults && (
@@ -512,7 +505,7 @@ export function ChatScreen({
         {(!richThreads || selection.id === mainId) && <BackgroundUpdates />}
         {(busy || agent.isRunning) && (
           <View
-            accessibilityLabel="Agent is working"
+            accessibilityLabel="智能体正在工作"
             style={[
               s.row,
               {
@@ -552,9 +545,7 @@ export function ChatScreen({
                 })
                 .catch((e) => setError(e instanceof Error ? e.message : String(e)));
             }}
-          >
-            Retry response
-          </Button>
+          >重试回复</Button>
         )}
       </ScrollView>
       {awayFromLatest && (
@@ -567,9 +558,7 @@ export function ChatScreen({
             setAwayFromLatest(false);
             list.current?.scrollToEnd({ animated: true });
           }}
-        >
-          Latest messages
-        </Button>
+        >最新消息</Button>
       )}
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ErrorNotice error={saveError} />
@@ -580,14 +569,12 @@ export function ChatScreen({
             onPress={() => {
               void saveHistory().catch((e) => setSaveError(String(e)));
             }}
-          >
-            Retry saving conversation
-          </Button>
+          >重试保存对话</Button>
         )}
         {!!outbox.pending.length && (
           <View style={{ padding: 12, gap: 6 }}>
             <Text style={s.small}>
-              {outbox.paused ? "Messages on hold" : "Up next"} · Keep the app open until sent
+              {outbox.paused ? "消息已暂缓" : "接下来"} · Keep the app open until sent
             </Text>
             {outbox.pending.map((message) => (
               <View key={message.id} style={[s.row, { gap: 8 }]}>
@@ -613,15 +600,13 @@ export function ChatScreen({
                   queue.resume();
                   flush();
                 }}
-              >
-                Send queued messages
-              </Button>
+              >发送排队中的消息</Button>
             )}
           </View>
         )}
         {picking && (
           <Card style={{ marginBottom: 12, padding: 15 }}>
-            <Text style={s.heading}>Add a document</Text>
+            <Text style={s.heading}>添加文档</Text>
             <ScrollView style={{ maxHeight: 230 }} keyboardShouldPersistTaps="handled">
               {w.files.length ? (
                 w.files.map((f) => (
@@ -639,16 +624,14 @@ export function ChatScreen({
                   />
                 ))
               ) : (
-                <Text style={s.muted}>Import a PDF in Files to use it in a conversation.</Text>
+                <Text style={s.muted}>在「文件」里导入 PDF，即可在对话中使用。</Text>
               )}
             </ScrollView>
             <Button
               small
               onPress={() => setPicking(false)}
               style={{ alignSelf: "flex-end", marginTop: 8 }}
-            >
-              Done
-            </Button>
+            >完成</Button>
           </Card>
         )}
         <View
@@ -702,7 +685,7 @@ export function ChatScreen({
           <View style={[s.row, { gap: 7, alignItems: "flex-end" }]}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Attach a document"
+              accessibilityLabel="附加文档"
               accessibilityState={{ expanded: picking }}
               onPress={() => setPicking(!picking)}
               style={({ pressed }) => ({
@@ -719,7 +702,7 @@ export function ChatScreen({
               </Text>
             </Pressable>
             <TextInput
-              accessibilityLabel="Message OpenMuse"
+              accessibilityLabel="给 OpenMuse 发消息"
               value={draft}
               onChangeText={setDraft}
               onContentSizeChange={(event) =>
@@ -730,9 +713,9 @@ export function ChatScreen({
                   ? "Connecting…"
                   : !loaded
                     ? historyError
-                      ? "Conversation unavailable"
-                      : "Loading conversation…"
-                    : "Message…"
+                      ? "会话不可用"
+                      : "正在加载会话…"
+                    : "发消息…"
               }
               placeholderTextColor="#949B9F"
               selectionColor={colors.blueDark}
@@ -768,7 +751,7 @@ export function ChatScreen({
             />
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={replying ? "Stop reply" : "Send message"}
+              accessibilityLabel={replying ? "停止回复" : "发送消息"}
               disabled={!replying && (!draft.trim() || !loaded || !isReady)}
               onPress={replying ? () => void stop() : send}
               style={({ pressed }) => ({

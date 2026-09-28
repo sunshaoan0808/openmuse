@@ -30,11 +30,11 @@ export function BackgroundUpdates() {
       <View style={[s.between, { gap: 12 }]}>
         <View style={[s.row, { gap: 7 }]}>
           <Bell size={14} color={colors.blueDark} />
-          <Text style={s.small}>An update for you</Text>
+          <Text style={s.small}>给你一条更新</Text>
         </View>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Dismiss background update"
+          accessibilityLabel="忽略后台更新"
           disabled={busy}
           onPress={() => void dismiss()}
           hitSlop={10}
@@ -50,9 +50,7 @@ export function BackgroundUpdates() {
           small
           icon={ArrowRight}
           onPress={() => update.taskId && open({ type: "task", taskId: update.taskId })}
-        >
-          View task
-        </Button>
+        >查看任务</Button>
         {updates.length > 1 && (
           <Button small onPress={() => open({ type: "notifications" })}>
             {updates.length - 1} more updates

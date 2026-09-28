@@ -26,7 +26,7 @@ import { useWorkspace } from "./workspace";
 const mono = Platform.OS === "ios" ? "Menlo" : "monospace";
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
+export function LinuxWorkspace({ tab }: { tab: "Terminal" | "文件" }) {
   const { api } = useWorkspace();
   const [snapshot, setSnapshot] = useState<ComputerSnapshot>();
   const [error, setError] = useState("");
@@ -125,16 +125,16 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
         <View style={[s.row, { gap: 12 }]}>
           <Terminal size={24} color={colors.blueDark} />
           <View style={{ flex: 1, gap: 4 }}>
-            <Text style={s.heading}>Your Linux workspace</Text>
+            <Text style={s.heading}>你的 Linux 工作区</Text>
             <Text style={s.muted}>
               {running
-                ? "Running · files persist when stopped"
+                ? "运行中 · 停止后文件会保留"
                 : snapshot?.status === "stopped"
-                  ? "Stopped · your files are saved"
+                  ? "已停止 · 你的文件已保存"
                   : snapshot?.status === "unconfigured"
-                    ? "Set up the computer to get started"
+                    ? "先配置电脑再开始"
                     : snapshot?.status === "error"
-                      ? "Connection needs attention"
+                      ? "连接需要处理"
                       : "Connecting…"}
             </Text>
           </View>
@@ -144,13 +144,9 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
         {snapshot?.enabled && (
           <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
             {running ? (
-              <Button icon={Power} busy={busy} onPress={() => void control("stop")}>
-                Stop computer
-              </Button>
+              <Button icon={Power} busy={busy} onPress={() => void control("stop")}>停止电脑</Button>
             ) : (
-              <Button primary icon={Play} busy={busy} onPress={() => void control("start")}>
-                Start computer
-              </Button>
+              <Button primary icon={Play} busy={busy} onPress={() => void control("start")}>启动电脑</Button>
             )}
             <Button
               icon={RefreshCw}
@@ -160,9 +156,7 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
                   .then(() => setError(""))
                   .catch((e) => setError(message(e)))
               }
-            >
-              Refresh
-            </Button>
+            >刷新</Button>
           </View>
         )}
       </Card>
@@ -174,20 +168,16 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
               .then(() => setError(""))
               .catch((e) => setError(message(e)))
           }
-        >
-          Retry connection
-        </Button>
+        >重试连接</Button>
       )}
       {snapshot?.enabled && (
         <>
           <View style={{ display: tab === "Terminal" ? "flex" : "none", gap: 16 }}>
             {editingCommand || command.length > 0 || snapshot.commands.length === 0 ? (
               <View style={{ borderRadius: 22, backgroundColor: "#F1F3F4", padding: 18, gap: 8 }}>
-                <Text style={{ color: colors.muted, fontSize: 12, fontFamily: mono }}>
-                  TERMINAL
-                </Text>
+                <Text style={{ color: colors.muted, fontSize: 12, fontFamily: mono }}>终端</Text>
                 <Field
-                  label="Working directory"
+                  label="工作目录"
                   value={cwd}
                   onChangeText={setCwd}
                   autoCapitalize="none"
@@ -195,7 +185,7 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
                   style={{ fontFamily: mono }}
                 />
                 <Field
-                  label="Command"
+                  label="命令 "
                   value={command}
                   onChangeText={setCommand}
                   placeholder="pwd"
@@ -214,9 +204,7 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
                     onPress={() =>
                       setCommand((text) => text.replace(/[‘’]/g, "'").replace(/[“”]/g, '"'))
                     }
-                  >
-                    Use straight quotes
-                  </Button>
+                  >请使用直引号</Button>
                 )}
                 <Button
                   primary
@@ -224,12 +212,8 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
                   busy={!!commandRunning}
                   disabled={!running || !command.trim() || busy}
                   onPress={() => void run()}
-                >
-                  Run command
-                </Button>
-                <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 18 }}>
-                  Runs on your computer. Network access is off. Use Browser for the web.
-                </Text>
+                >运行命令</Button>
+                <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 18 }}>在你的电脑上运行，网络访问已关闭。上网请用「浏览器」。</Text>
               </View>
             ) : (
               <Button
@@ -237,20 +221,16 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
                 icon={Terminal}
                 disabled={!running || busy || !!commandRunning}
                 onPress={() => setEditingCommand(true)}
-              >
-                New command
-              </Button>
+              >新命令</Button>
             )}
             {!!commandRunning && (
-              <Text style={s.muted}>
-                Working… The result will appear here. Stop the computer to end running commands.
-              </Text>
+              <Text style={s.muted}>运行中…结果会显示在这里。停止电脑可结束正在运行的命令。</Text>
             )}
             {snapshot.commands.length === 0 ? (
               <Empty
                 icon={Terminal}
-                title="Ready for your first command"
-                detail="Run scripts, work with files, or ask your agent to create something here."
+                title="可以执行第一条命令了"
+                detail="在这里跑脚本、处理文件，或让智能体生成点东西。"
               />
             ) : (
               [...snapshot.commands]
@@ -260,12 +240,12 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "Files" }) {
             )}
             {snapshot.commands.length > 5 && (
               <Button small onPress={() => setShowHistory(!showHistory)}>
-                {showHistory ? "Show recent commands" : "Earlier commands"}
+                {showHistory ? "显示最近命令" : "更早的命令"}
               </Button>
             )}
           </View>
-          <View style={{ display: tab === "Files" ? "flex" : "none" }}>
-            <ComputerFiles running={!!running} active={tab === "Files"} />
+          <View style={{ display: tab === "文件" ? "flex" : "none" }}>
+            <ComputerFiles running={!!running} active={tab === "文件"} />
           </View>
         </>
       )}
@@ -320,18 +300,16 @@ function CommandReceipt({ run }: { run: ComputerCommand }) {
             </Text>
           )}
           {!run.stdout && !run.stderr && run.status !== "running" && (
-            <Text style={s.small}>No output</Text>
+            <Text style={s.small}>没有输出</Text>
           )}
           {run.truncated && (
-            <Text style={s.small}>
-              Output reached the display limit. Write large results to a file.
-            </Text>
+            <Text style={s.small}>输出已达显示上限，大结果请写入文件。</Text>
           )}
         </>
       )}
       {!!(run.stdout || run.stderr) && (
         <Button small onPress={() => setExpanded(!expanded)}>
-          {expanded ? "Hide output" : "Show output"}
+          {expanded ? "隐藏输出" : "显示输出"}
         </Button>
       )}
     </Card>
@@ -410,7 +388,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
         path: `${path}/${file.name.replace(/[\\/]/g, "_")}`,
       });
       setImporting(false);
-      setNotice("Document copied to your computer.");
+      setNotice("文档已复制到你的电脑。");
       setRetry((value) => value + 1);
     } catch (e) {
       setError(message(e));
@@ -446,7 +424,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
             ? { ...current, saved: sent.text, savedPath: sent.path }
             : current,
         );
-      setNotice("File saved to your computer.");
+      setNotice("文件已保存到你的电脑。");
       setRetry((value) => value + 1);
     } catch (e) {
       setError(message(e));
@@ -471,7 +449,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
   return (
     <View style={{ gap: 12 }}>
       <View style={s.between}>
-        <Text style={s.heading}>Workspace files</Text>
+        <Text style={s.heading}>工作区文件</Text>
         {(busy || loading) && <ActivityIndicator color={colors.blueDark} />}
       </View>
       <Text selectable style={[s.small, { fontFamily: mono }]}>
@@ -480,12 +458,12 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
       <ErrorNotice error={error} />
       {!!notice && <Text style={[s.small, { color: "#248258" }]}>{notice}</Text>}
       {!running && (
-        <Text style={s.muted}>Start the computer to browse or edit its saved files.</Text>
+        <Text style={s.muted}>启动电脑即可浏览或编辑它保存的文件。</Text>
       )}
       {editor ? (
         <>
           <Field
-            label="File path"
+            label="文件路径"
             value={editor.path}
             onChangeText={(value) => setEditor({ ...editor, path: value })}
             autoCorrect={false}
@@ -493,7 +471,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
             style={{ fontFamily: mono }}
           />
           <Field
-            label="File contents"
+            label="文件内容"
             value={editor.text}
             onChangeText={(value) => setEditor({ ...editor, text: value })}
             multiline
@@ -511,9 +489,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
               busy={busy}
               disabled={!running || !editor.path.trim()}
               onPress={() => void save()}
-            >
-              Save file
-            </Button>
+            >保存文件</Button>
             <Button
               disabled={busy}
               icon={ArrowLeft}
@@ -522,7 +498,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
                 setNotice("");
               }}
             >
-              {dirty ? "Discard edits" : "Back to files"}
+              {dirty ? "放弃修改" : "返回文件"}
             </Button>
           </View>
         </>
@@ -552,40 +528,32 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
                   savedPath: "",
                 });
               }}
-            >
-              New file
-            </Button>
+            >新建文件</Button>
             <Button
               small
               disabled={!running || busy}
               icon={FolderPlus}
               onPress={() => setFolder("")}
-            >
-              New folder
-            </Button>
+            >新建文件夹</Button>
             <Button
               small
               disabled={!running || busy}
               icon={RefreshCw}
               onPress={() => setRetry(retry + 1)}
-            >
-              Refresh files
-            </Button>
+            >刷新文件</Button>
             <Button
               small
               disabled={!running || busy}
               icon={Upload}
               onPress={() => setImporting(!importing)}
             >
-              {importing ? "Hide documents" : "Copy a document here"}
+              {importing ? "隐藏文档" : "把文档复制到这里"}
             </Button>
           </View>
           {importing && (
             <Card>
-              <Text style={s.heading}>Choose a saved PDF</Text>
-              <Text style={[s.small, { marginTop: 6 }]}>
-                Copies into this folder. A file with the same name will be replaced.
-              </Text>
+              <Text style={s.heading}>选择一个已保存的 PDF</Text>
+              <Text style={[s.small, { marginTop: 6 }]}>复制到此文件夹，同名文件会被替换。</Text>
               {workspace.files.map((file) => (
                 <LinkRow
                   key={file.id}
@@ -595,14 +563,14 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
                 />
               ))}
               {!workspace.files.length && (
-                <Text style={s.muted}>Add a document from mail or Files first.</Text>
+                <Text style={s.muted}>先从邮件或「文件」里添加一个文档。</Text>
               )}
             </Card>
           )}
           {folder !== undefined && (
             <Card style={{ gap: 8 }}>
               <Field
-                label="Folder name"
+                label="文件夹名称"
                 value={folder}
                 onChangeText={setFolder}
                 autoCapitalize="none"
@@ -614,12 +582,8 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
                   disabled={!running || !folder.trim()}
                   busy={busy}
                   onPress={() => void mkdir()}
-                >
-                  Create folder
-                </Button>
-                <Button disabled={busy} onPress={() => setFolder(undefined)}>
-                  Cancel
-                </Button>
+                >新建文件夹</Button>
+                <Button disabled={busy} onPress={() => setFolder(undefined)}>取消</Button>
               </View>
             </Card>
           )}
@@ -634,7 +598,7 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
                   entry.type === "directory"
                     ? "Folder"
                     : entry.type === "symlink"
-                      ? "Symbolic link"
+                      ? "符号链接"
                       : `${Math.max(1, Math.ceil(entry.size / 1024))} KB`
                 }
                 onPress={() => {
@@ -655,8 +619,8 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
             directory.entries.length === 0 && (
               <Empty
                 icon={Folder}
-                title="A little space to create"
-                detail="Add a file here, or ask your agent to make one in its workspace."
+                title="留一点创作空间"
+                detail="把文件加到这里，或让你的智能体在工作区里生成一个。"
               />
             )}
         </>

@@ -297,7 +297,7 @@ export function Sheet({
               <Text style={s.title}>{title}</Text>
               {!!subtitle && <Text style={s.muted}>{subtitle}</Text>}
             </View>
-            <IconButton icon={X} label="Close details" onPress={onClose} />
+            <IconButton icon={X} label="关闭详情" onPress={onClose} />
           </View>
           <ScrollView
             keyboardShouldPersistTaps="handled"
@@ -413,7 +413,7 @@ export function Mascot({
     lilac: "#F1ECF9",
   }[variant];
   return (
-    <View accessibilityLabel="OpenMuse capybara" style={{ width: size, height: size }}>
+    <View accessibilityLabel="OpenMuse 水豚" style={{ width: size, height: size }}>
       <View
         style={{
           position: "absolute",
@@ -449,7 +449,7 @@ export function timeLabel(value: string, timeZone?: string) {
 export function relativeDate(value: string) {
   const diff = Date.now() - new Date(value).getTime();
   return diff < 60_000
-    ? "Just now"
+    ? "刚刚"
     : diff < 3600_000
       ? `${Math.floor(diff / 60_000)}m ago`
       : diff < 86400_000
@@ -459,6 +459,6 @@ export function relativeDate(value: string) {
 
 export function resultSummary(value: string) {
   return /^Saved to (?:sample|local) sent mail(?: · .+)?$/.test(value)
-    ? "Reply saved in your local Sent mail."
+    ? "回复已存入本地「已发送」。"
     : value;
 }
