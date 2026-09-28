@@ -36,13 +36,20 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
-
-      - name: Install NDK + build tools
+      # ubuntu-latest 自带 Android SDK + cmdline-tools；不再用 android-actions/setup-android
+      # （v3 会去装已废弃的 "tools" 包并当场失败）
+      - name: Android SDK — 安装平台/构建工具/NDK
         run: |
-          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" \
-            "ndk;27.1.12297006" "cmake;3.22.1" > /dev/null
+          set -e
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           echo "ANDROID_HOME=$ANDROID_HOME"
+          SDKM="$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin 2>/dev/null | head -1)"
+          export PATH="$SDKM:$ANDROID_HOME/platform-tools:$PATH"
+          which sdkmanager
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" \
+            "ndk;27.1.12297006" "cmake;3.22.1" 2>&1 | tail -3
+          echo "sdk dirs:"; ls "$ANDROID_HOME"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -51,9 +58,11 @@ jobs:
         working-directory: apps/mobile
         run: pnpm exec expo prebuild --platform android --clean --no-install
 
-      - name: Gradle build
+      - name: Gradle 构建
         working-directory: apps/mobile/android
         run: |
+          set -e
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           echo "org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" >> gradle.properties
           echo "EXPO_PUBLIC_API_URL=$EXPO_PUBLIC_API_URL"
           chmod +x gradlew
