@@ -28,7 +28,7 @@ export function makeRuntime(
   config: Config,
   service: AgentService,
   auth: Auth,
-  intelligence: CopilotKitIntelligence,
+  intelligence: CopilotKitIntelligence | undefined,
 ) {
   const agents: AgentsFactory = async ({ request }) => ({
     default:
@@ -49,14 +49,25 @@ export function makeRuntime(
               await auth.owner(request.headers.get("authorization") ?? undefined),
             ),
   });
-  const runtime = new CopilotRuntime({
-    agents,
-    intelligence,
-    identifyUser: async (request) => ({
-      id: await auth.owner(request.headers.get("authorization") ?? undefined),
-      name: "OpenMuse user",
-    }),
-    generateThreadNames: false,
-  });
+  // 两条分支对应官方两种运行时模式：
+  //  - 有 Intelligence → CopilotIntelligenceRuntimeOptions（云或自家垫片，持久线程 + 实时通道）
+  //  - 无 Intelligence → CopilotSseRuntimeOptions（标准 AG-UI/SSE + 本地线程端点）
+  const runtime = intelligence
+    ? new CopilotRuntime({
+        agents,
+        intelligence,
+        identifyUser: async (request: Request) => ({
+          id: await auth.owner(request.headers.get("authorization") ?? undefined),
+          name: "OpenMuse user",
+        }),
+        generateThreadNames: false,
+      })
+    : new CopilotRuntime({
+        agents,
+        identifyUser: async (request: Request) => ({
+          id: await auth.owner(request.headers.get("authorization") ?? undefined),
+          name: "OpenMuse user",
+        }),
+      });
   return createCopilotHonoHandler({ runtime, basePath: "/api/copilotkit" });
 }
