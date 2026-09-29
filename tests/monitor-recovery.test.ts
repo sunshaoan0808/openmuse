@@ -274,7 +274,7 @@ test("a resume during outcome publication is not paused again by the failure rec
       state: {
         ...task.state,
         failures: 5,
-        notice: { title: "Watch needs attention", body: "Page unavailable", key: "race-paused" },
+        notice: { title: "监控需要处理", body: "Page unavailable", key: "race-paused" },
       },
     },
   );

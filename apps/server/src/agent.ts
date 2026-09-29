@@ -10,6 +10,7 @@ import {
 import type { Auth } from "./auth.ts";
 import type { Config } from "./config.ts";
 import { ConversationAgent } from "./engine/conversation.ts";
+import { createMastraChatAgent } from "./engine/mastra-engine.ts";
 import type { AgentService } from "./engine/service.ts";
 
 export function agentConfigured(config: Config) {
@@ -25,6 +26,12 @@ export function agentConfigured(config: Config) {
         ))
   );
 }
+/** 从请求头解析 owner（与 identifyUser 同源），供引擎工厂使用。 */
+function ownerFrom(request: Request): string {
+  const header = request.headers.get("authorization") ?? "";
+  return header ? header.slice(-8) : "local-user";
+}
+
 export function makeRuntime(
   config: Config,
   service: AgentService,
@@ -33,8 +40,19 @@ export function makeRuntime(
   runner?: AgentRunner,
 ) {
   const agents: AgentsFactory = async ({ request }) => ({
-    default:
-      config.agentBackend === "sample"
+    default: config.agentEngine === "mastra"
+      ? (() => {
+          const mastra = createMastraChatAgent(
+            config,
+            ownerFrom(request),
+          );
+          if (!mastra)
+            throw new Error(
+              "AGENT_ENGINE=mastra 需要 MODEL（如 openai/vendor/model）与 OPENAI_BASE_URL",
+            );
+          return mastra;
+        })()
+      : config.agentBackend === "sample"
         ? new ConversationAgent(
             config,
             service,

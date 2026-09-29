@@ -37,6 +37,8 @@ export interface Config {
   encryptionKey?: string;
   model?: string;
   agentBackend: "sample" | "model" | "agui";
+  /** 对话引擎：自带（默认）或 Mastra（用于双引擎对比）。 */
+  agentEngine?: "openmuse" | "mastra";
   agentUrl?: string;
   agentToken?: string;
   intelligenceApiKey?: string;
@@ -108,6 +110,7 @@ export function readConfig(): Config {
     encryptionKey: process.env.TOKEN_ENCRYPTION_KEY,
     model: process.env.MODEL,
     agentBackend: backend,
+    agentEngine: process.env.AGENT_ENGINE === "mastra" ? "mastra" : "openmuse",
     agentUrl: process.env.AGENT_URL,
     agentToken: process.env.AGENT_TOKEN,
     intelligenceApiKey: process.env.CPK_INTELLIGENCE_API_KEY?.trim() || undefined,
