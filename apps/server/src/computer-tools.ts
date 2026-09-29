@@ -1,5 +1,5 @@
-import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
+import type { NeutralTool } from "./engine/tool-kit.ts";
 import {
   type ComputerService,
   computerCommandSchema,
@@ -23,20 +23,19 @@ export function computerTools(
     description: string,
     parameters: T,
     action: (args: z.output<T>) => Promise<unknown>,
-  ) =>
-    defineTool({
-      name,
-      description,
-      parameters,
-      execute: async (args) => {
-        try {
-          await options.before?.();
-          return await action(parameters.parse(args));
-        } catch (error) {
-          return { error: error instanceof Error ? error.message : "电脑操作失败" };
-        }
-      },
-    });
+  ): NeutralTool<T> => ({
+    name,
+    description,
+    parameters,
+    execute: async (args) => {
+      try {
+        await options.before?.();
+        return await action(parameters.parse(args));
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "电脑操作失败" };
+      }
+    },
+  });
   return [
     tool(
       "computer_status",
