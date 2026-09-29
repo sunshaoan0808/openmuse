@@ -560,7 +560,9 @@ export function ChatScreen({
           }}
         >最新消息</Button>
       )}
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
         <ErrorNotice error={saveError} />
         {!!saveError && (
           <Button
