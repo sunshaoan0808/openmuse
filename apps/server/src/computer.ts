@@ -201,7 +201,7 @@ export class ComputerService {
   private enabled() {
     if (!this.config.computerEnabled)
       throw new AppError(
-        "Computer is not configured. Enable COMPUTER_ENABLED and build the local computer image.",
+        "电脑未配置。请启用 COMPUTER_ENABLED 并构建本地电脑镜像。",
         503,
       );
   }

@@ -319,10 +319,11 @@ export async function executeModelTask(
   let text = "";
   let runError: string | undefined;
   await new Promise<void>((resolve, reject) => {
+    const timeoutMs = Number(process.env.MODEL_TIMEOUT_MS ?? 900000);
     const timeout = setTimeout(() => {
       agent.abortRun();
-      reject(new Error("模型运行超过五分钟已超时"));
-    }, 300000);
+      reject(new Error(`模型运行超过 ${Math.round(timeoutMs / 60000)} 分钟已超时`));
+    }, timeoutMs);
     const abort = () => {
       clearTimeout(timeout);
       agent.abortRun();
