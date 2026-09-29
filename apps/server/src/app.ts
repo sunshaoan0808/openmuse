@@ -12,7 +12,11 @@ import { createAuth } from "./auth.ts";
 import { BrowserService } from "./browser.ts";
 import { ComputerService, type DockerRunner } from "./computer.ts";
 import { computerRoutes } from "./computer-routes.ts";
-import { assertApiDeploymentConfig, type Config } from "./config.ts";
+import {
+  assertApiDeploymentConfig,
+  type Config,
+  intelligenceConfigured,
+} from "./config.ts";
 import type { Store } from "./db.ts";
 import { agentRoutes } from "./engine/routes.ts";
 import { AgentService } from "./engine/service.ts";
@@ -42,7 +46,13 @@ export async function createApp(
   const browser = new BrowserService(db, config, auth, files);
   const computer = new ComputerService(db, config, options.docker);
   const agent = new AgentService(db, config, workspace, files, actions, browser, computer);
-  const intelligence = new CopilotKitIntelligence({ apiKey: config.intelligenceApiKey });
+  const intelligence = intelligenceConfigured(config)
+    ? new CopilotKitIntelligence({
+        apiKey: config.intelligenceApiKey ?? "local-shim",
+        ...(config.intelligenceApiUrl ? { apiUrl: config.intelligenceApiUrl } : {}),
+        ...(config.intelligenceWsUrl ? { wsUrl: config.intelligenceWsUrl } : {}),
+      })
+    : undefined;
   const runtime = makeRuntime(config, agent, auth, intelligence);
   const app = new Hono<{ Variables: { owner: string } }>();
   const origins = new Set([...config.allowedOrigins, new URL(config.publicUrl).origin]);
@@ -204,6 +214,8 @@ export async function createApp(
     );
   });
   app.get("/api/main-thread", async (c) => {
+    // 本地会话模式：不需要平台线程，直接用固定线程号
+    if (!intelligence) return c.json({ threadId: "local-main", existing: true });
     const owner = c.get("owner");
     await db.insertIfAbsent(owner, "conversation-settings", {
       id: "main",
@@ -352,7 +364,7 @@ export async function createApp(
         }
       }
       threadId ??= c.req.path.match(/\/threads\/([0-9a-fA-F-]{36})/)?.[1];
-      if (threadId && THREAD_ID_RE.test(threadId) && !knownThreads.has(threadId)) {
+      if (intelligence && threadId && THREAD_ID_RE.test(threadId) && !knownThreads.has(threadId)) {
         await intelligence.getOrCreateThread({
           threadId,
           userId: c.get("owner"),

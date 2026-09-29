@@ -40,6 +40,8 @@ export interface Config {
   agentUrl?: string;
   agentToken?: string;
   intelligenceApiKey?: string;
+  intelligenceApiUrl?: string;
+  intelligenceWsUrl?: string;
   googleClientId?: string;
   googleClientSecret?: string;
   googleRedirectUri: string;
@@ -63,14 +65,17 @@ export function required(name: string, message: string, value = process.env[name
   return value.trim();
 }
 
-export function assertApiDeploymentConfig(
-  config: Config,
-): asserts config is Config & { intelligenceApiKey: string } {
-  required(
-    "CPK_INTELLIGENCE_API_KEY",
-    intelligenceKeyRequiredMessage,
-    config.intelligenceApiKey ?? "",
-  );
+export function assertApiDeploymentConfig(config: Config): void {
+  // 自家垫片要求 API 与实时平面成对配置：只设一个会让另一半静默连到官方托管平台并挂住。
+  if (Boolean(config.intelligenceApiUrl) !== Boolean(config.intelligenceWsUrl))
+    throw new Error(
+      "INTELLIGENCE_API_URL and INTELLIGENCE_WS_URL must be set together",
+    );
+}
+
+/** Intelligence 是否启用：官方 key 或自家垫片地址任一存在即为启用。 */
+export function intelligenceConfigured(config: Config): boolean {
+  return Boolean(config.intelligenceApiKey ?? config.intelligenceApiUrl);
 }
 
 // Provider SDKs retry transient failures before the response starts, with
@@ -105,7 +110,9 @@ export function readConfig(): Config {
     agentBackend: backend,
     agentUrl: process.env.AGENT_URL,
     agentToken: process.env.AGENT_TOKEN,
-    intelligenceApiKey: required("CPK_INTELLIGENCE_API_KEY", intelligenceKeyRequiredMessage),
+    intelligenceApiKey: process.env.CPK_INTELLIGENCE_API_KEY?.trim() || undefined,
+    intelligenceApiUrl: process.env.INTELLIGENCE_API_URL?.trim() || undefined,
+    intelligenceWsUrl: process.env.INTELLIGENCE_WS_URL?.trim() || undefined,
     googleClientId: process.env.GOOGLE_CLIENT_ID,
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
     googleRedirectUri: `${publicUrl}/api/google/callback`,
