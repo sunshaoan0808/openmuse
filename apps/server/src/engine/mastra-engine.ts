@@ -117,7 +117,14 @@ export function createMastraChatAgent(
   const baseRun = mastraAgent.run.bind(mastraAgent);
   mastraAgent.run = ((input: Parameters<typeof baseRun>[0]) =>
     reportStepLimit(
-      splitTextAtToolCalls(baseRun(input)),
+      splitTextAtToolCalls(
+        baseRun({
+          ...input,
+          // 与自带引擎同策略：客户端声明的工具只认 open_workspace，其余一律忽略
+          // （自带引擎在 conversation.ts 里就是这么过滤的；桥默认会把客户端工具全透传）
+          tools: (input.tools ?? []).filter((tool) => tool.name === "open_workspace"),
+        }),
+      ),
       10,
       "我达到了本轮步数上限还没收尾。回复“继续”，我接着做。",
     )) as typeof mastraAgent.run;

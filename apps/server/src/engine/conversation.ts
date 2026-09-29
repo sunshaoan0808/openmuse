@@ -110,7 +110,7 @@ export class ConversationAgent extends AbstractAgent {
       model: this.config.model ?? "openai/unconfigured",
       maxSteps: 10,
       stepLimitNote:
-        "I reached my step limit for this reply before finishing. Say “continue” and I’ll pick up where I left off.",
+        "我达到了本轮步数上限还没收尾。回复“继续”，我接着做。",
       tools,
       prompt: chatInstructions(),
     });
