@@ -189,7 +189,7 @@ export class BrowserService {
         sessionId: randomUUID(),
       })) ??
       (await this.db.get<ChatBrowser>(owner, "chat-browsers", threadId));
-    if (!association) throw new AppError("Could not reserve the chat browser session", 500);
+    if (!association) throw new AppError("无法占用聊天用的浏览器会话", 500);
     const id = association.sessionId;
     await this.db.insertIfAbsent(owner, "browsers", {
       id,
