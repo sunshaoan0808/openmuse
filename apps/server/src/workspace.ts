@@ -325,7 +325,10 @@ export class WorkspaceService {
         configured: agentConfigured(this.config),
         openbotConfigured: false,
         // 有 Intelligence（官方或自家垫片）才有富线程；否则 App 走本地 /api/conversation
-        richThreads: intelligenceConfigured(this.config),
+        // 富线程（多会话侧栏/历史水合）在两种模式下都可用：Intelligence 模式走云，
+        // SSE 模式走运行时自带的本地线程端点（/threads 列表、/threads/:id/messages、/state）。
+        // 唯一缺口是本地端点默认内存存储——持久化由 DurableAgentRunner 补齐（见 A 路线）。
+        richThreads: true,
       },
     };
   }
