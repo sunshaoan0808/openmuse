@@ -33,7 +33,8 @@ export function createMastraChatAgent(
   const requestKey = randomUUID();
   const key = (name: string, value: unknown) =>
     `${requestKey}:${name}:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
-  const signal = new AbortController().signal;
+  const runAbort = new AbortController();
+  const signal = runAbort.signal;
   const baseURL = process.env.OPENAI_BASE_URL;
   const modelId = (config.model ?? "").replace(/^openai\//, "");
   if (!baseURL || !modelId) return undefined;
@@ -85,17 +86,34 @@ export function createMastraChatAgent(
   // 而 Mastra 默认步数较小，多步工具任务会提前停。这里在实例上包一层 stream 注入该选项，
   // 不改 node_modules、不动桥的私有实现。
   const stream = agent.stream.bind(agent);
-  agent.stream = ((messages: never, options?: never) =>
-    stream(messages, {
-      ...((options ?? {}) as object),
+  agent.stream = ((messages: never, options?: never) => {
+    const opts = (options ?? {}) as { requestContext?: { get?: (k: string) => unknown } };
+    // App 传来的上下文（自带引擎拼进系统提示词；Mastra 的 instructions 不支持函数，就在这里补一条系统消息）
+    const agui = opts.requestContext?.get?.("ag-ui") as { context?: { description?: string; value?: unknown }[] } | undefined;
+    const extra = (agui?.context ?? [])
+      .filter((c) => c && (c.description || c.value))
+      .map((c) => `${c.description ?? "Context"}:\n${typeof c.value === "string" ? c.value : JSON.stringify(c.value)}`)
+      .join("\n");
+    const withContext = extra && Array.isArray(messages)
+      ? [{ role: "system", content: `## Context from the application\n${extra}` }, ...messages]
+      : messages;
+    return stream(withContext as never, {
+      ...opts,
       maxSteps: 10,
       // 与自带引擎的 MODEL_MAX_RETRIES 对齐（AI SDK 侧的重试次数）
       maxRetries: MODEL_MAX_RETRIES,
-    } as never)) as typeof agent.stream;
+      abortSignal: runAbort.signal,
+    } as never);
+  }) as typeof agent.stream;
   const mastraAgent = new MastraAgent({ agent, resourceId: ctx.owner });
   // 复用自带引擎的两层事件后处理，补齐 Mastra 桥不做的事：
   //  - splitTextAtToolCalls：工具调用前后的文本各起一条消息（否则整轮共用一个 messageId）
   //  - reportStepLimit：步数用尽而非模型收尾时补一句说明，避免"静默结束"
+  const baseAbort = mastraAgent.abortRun.bind(mastraAgent);
+  mastraAgent.abortRun = () => {
+    runAbort.abort();
+    baseAbort();
+  };
   const baseRun = mastraAgent.run.bind(mastraAgent);
   mastraAgent.run = ((input: Parameters<typeof baseRun>[0]) =>
     reportStepLimit(
