@@ -36,9 +36,11 @@ export function validateSessionId(id: unknown): string {
 export async function createBrowserManager(options: {
   dataDir: string;
   maxSessions?: number;
+  /** 保留的会话/profile 记录上限；到顶时淘汰最老的非运行会话 */
+  maxProfiles?: number;
   idleTimeoutMs?: number;
 }) {
-  const { dataDir, maxSessions = 3, idleTimeoutMs = 30 * 60_000 } = options;
+  const { dataDir, maxSessions = 3, maxProfiles = 20, idleTimeoutMs = 30 * 60_000 } = options;
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
   const sessions = new Map<string, Session>();
   const running = new Map<string, Running>();
@@ -167,10 +169,22 @@ export async function createBrowserManager(options: {
         `Close an active session before opening another (limit ${maxSessions}).`,
         409,
       );
-    if (!sessions.has(id) && sessions.size >= 20)
+    if (!sessions.has(id) && sessions.size >= maxProfiles) {
+      // 记录数到顶时淘汰最老的一条非运行中会话（连同它的 profile 目录），而不是直接报错。
+      // 自带引擎按线程建会话（observeForThread），正常使用就会攒满 20 条；不淘汰等于浏览功能
+      // 整体失效——表现为模型说"读不到页面"。运行中的会话不淘汰，只回收空闲的。
+      const victim = [...sessions.values()]
+        .filter((session) => session.status !== "active" && !running.has(session.id))
+        .sort((a, b) => (a.updatedAt < b.updatedAt ? -1 : 1))[0];
+      if (victim) {
+        sessions.delete(victim.id);
+        await rm(directory(victim.id), { recursive: true, force: true });
+      }
+    }
+    if (!sessions.has(id) && sessions.size >= maxProfiles)
       throw new WorkerError(
         "PROFILE_LIMIT",
-        "The worker has reached its 20 saved-profile limit.",
+        `The worker has reached its ${maxProfiles} saved-profile limit.`,
         409,
       );
     const previous = sessions.get(id);
