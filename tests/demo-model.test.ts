@@ -150,7 +150,7 @@ test("demo reports missing or failed browser evidence without inventing a summar
     ]),
   );
   assert.ok("content" in reply);
-  assert.match(reply.content ?? "", /could not read/);
+  assert.match(reply.content ?? "", /could not read|无法读取/);
   assert.ok(!("toolCalls" in reply));
 });
 
