@@ -3,11 +3,14 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { Agent } from "@mastra/core/agent";
 import { MastraAgent } from "@ag-ui/mastra";
 import { computerTools } from "../computer-tools.ts";
+import { MODEL_MAX_RETRIES } from "../config.ts";
 import type { Config } from "../config.ts";
 import { chatInstructions } from "./chat-prompt.ts";
+import { reportStepLimit, splitTextAtToolCalls, stateTools } from "./tanstack-agent.ts";
 import { chatTools } from "./chat-tools.ts";
 import { forMastra } from "./mastra-tools.ts";
 import type { AgentService } from "./service.ts";
+import type { NeutralTool } from "./tool-kit.ts";
 
 /**
  * C 路线的第二引擎：Mastra（与 OpenMuse 自带引擎并存、实战对比）。
@@ -57,6 +60,17 @@ export function createMastraChatAgent(
       key,
       signal,
     }),
+    // App 状态工具：与自带引擎同名同义（自带引擎在 tanstackAgent 内部自动挂这两个）。
+    // 客户端按工具名把结果转成 STATE_SNAPSHOT / STATE_DELTA，所以工具在、名字对，状态功能即对等。
+    ...stateTools.map(
+      (tool) =>
+        ({
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+          execute: (args: unknown) => (tool.execute as (a: unknown) => Promise<unknown>)(args),
+        }) as NeutralTool,
+    ),
   ]);
   const agent = new Agent({
     id: "openmuse-mastra",
@@ -72,6 +86,22 @@ export function createMastraChatAgent(
   // 不改 node_modules、不动桥的私有实现。
   const stream = agent.stream.bind(agent);
   agent.stream = ((messages: never, options?: never) =>
-    stream(messages, { ...((options ?? {}) as object), maxSteps: 10 } as never)) as typeof agent.stream;
-  return new MastraAgent({ agent, resourceId: ctx.owner });
+    stream(messages, {
+      ...((options ?? {}) as object),
+      maxSteps: 10,
+      // 与自带引擎的 MODEL_MAX_RETRIES 对齐（AI SDK 侧的重试次数）
+      maxRetries: MODEL_MAX_RETRIES,
+    } as never)) as typeof agent.stream;
+  const mastraAgent = new MastraAgent({ agent, resourceId: ctx.owner });
+  // 复用自带引擎的两层事件后处理，补齐 Mastra 桥不做的事：
+  //  - splitTextAtToolCalls：工具调用前后的文本各起一条消息（否则整轮共用一个 messageId）
+  //  - reportStepLimit：步数用尽而非模型收尾时补一句说明，避免"静默结束"
+  const baseRun = mastraAgent.run.bind(mastraAgent);
+  mastraAgent.run = ((input: Parameters<typeof baseRun>[0]) =>
+    reportStepLimit(
+      splitTextAtToolCalls(baseRun(input)),
+      10,
+      "我达到了本轮步数上限还没收尾。回复“继续”，我接着做。",
+    )) as typeof mastraAgent.run;
+  return mastraAgent;
 }

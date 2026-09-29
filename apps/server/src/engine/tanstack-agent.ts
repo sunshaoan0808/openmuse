@@ -67,7 +67,7 @@ export function unknownProvider(
 
 // The classic BuiltInAgent always offers these two state tools. The converter turns their
 // results into STATE_SNAPSHOT / STATE_DELTA events.
-const stateTools = [
+export const stateTools = [
   defineTool({
     name: "AGUISendStateSnapshot",
     description: "Replace the entire application state with a new snapshot",
@@ -184,7 +184,7 @@ export function reportStepLimit(events: Observable<BaseEvent>, maxSteps: number,
 // ponytail: the TanStack converter in @copilotkit/runtime 1.70.1 uses one message ID for the
 // whole run. Remove this when it starts a new ID for each step, like the classic mode does.
 // Text after a tool call gets a new message ID, so each step's text is a separate message.
-function splitTextAtToolCalls(events: Observable<BaseEvent>) {
+export function splitTextAtToolCalls(events: Observable<BaseEvent>) {
   let messageId: string | undefined;
   let afterToolCall = false;
   return events.pipe(
