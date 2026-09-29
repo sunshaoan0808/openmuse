@@ -12,6 +12,7 @@ import {
 } from "../../../../packages/domain/src/agent.ts";
 import { computerTools } from "../computer-tools.ts";
 import { chatInstructions } from "./chat-prompt.ts";
+import { mcpTools } from "./mcp-tools.ts";
 import { chatTools } from "./chat-tools.ts";
 import { forAgUi } from "./tool-kit.ts";
 import type { Config } from "../config.ts";
@@ -95,6 +96,7 @@ export class ConversationAgent extends AbstractAgent {
     const browserAbort = new AbortController();
     const tools = [
       ...forAgUi(computerTools(this.service.computer, this.service.files, this.owner, `chat:${requestKey}`)),
+      ...forAgUi(mcpTools()),
       ...forAgUi(
         chatTools({
           service: this.service,

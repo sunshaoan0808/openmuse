@@ -24,3 +24,12 @@ const shutdown = () => {
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+
+// MCP：启动时连接配置里的服务器并缓存工具（失败不影响启动），之后定期刷新。
+// 工具通过 mcpTools() 同步取用，两个引擎（自带 / Mastra）都会带上。
+void (async () => {
+  const { startMcp, refreshMcpTools } = await import("./engine/mcp-tools.ts");
+  await startMcp();
+  const timer = setInterval(() => void refreshMcpTools().catch(() => {}), 10 * 60_000);
+  timer.unref?.();
+})();
