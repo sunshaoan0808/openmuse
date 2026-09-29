@@ -8,6 +8,7 @@ import { z } from "zod";
 import { emailDraftSchema, proposalSchema } from "../../../packages/domain/src/index.ts";
 import { ActionService } from "./actions.ts";
 import { agentConfigured, makeRuntime } from "./agent.ts";
+import { DurableAgentRunner } from "./engine/durable-runner.ts";
 import { createAuth } from "./auth.ts";
 import { BrowserService } from "./browser.ts";
 import { ComputerService, type DockerRunner } from "./computer.ts";
@@ -53,7 +54,7 @@ export async function createApp(
         ...(config.intelligenceWsUrl ? { wsUrl: config.intelligenceWsUrl } : {}),
       })
     : undefined;
-  const runtime = makeRuntime(config, agent, auth, intelligence);
+  const runtime = makeRuntime(config, agent, auth, intelligence, new DurableAgentRunner(db));
   const app = new Hono<{ Variables: { owner: string } }>();
   const origins = new Set([...config.allowedOrigins, new URL(config.publicUrl).origin]);
   app.use("*", async (c, next) => {

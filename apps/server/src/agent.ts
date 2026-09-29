@@ -1,5 +1,6 @@
 import "./config.ts";
 import { HttpAgent } from "@ag-ui/client";
+import type { AgentRunner } from "@copilotkit/runtime/v2";
 import {
   type AgentsFactory,
   type CopilotKitIntelligence,
@@ -29,6 +30,7 @@ export function makeRuntime(
   service: AgentService,
   auth: Auth,
   intelligence: CopilotKitIntelligence | undefined,
+  runner?: AgentRunner,
 ) {
   const agents: AgentsFactory = async ({ request }) => ({
     default:
@@ -64,6 +66,7 @@ export function makeRuntime(
       })
     : new CopilotRuntime({
         agents,
+        ...(runner ? { runner } : {}),
         identifyUser: async (request: Request) => ({
           id: await auth.owner(request.headers.get("authorization") ?? undefined),
           name: "OpenMuse user",
