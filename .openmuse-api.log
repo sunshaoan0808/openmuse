@@ -1,0 +1,18 @@
+$ tsx watch apps/server/src/index.ts
+OpenMuse live API ready at https://openmuse.claw.ssan.me
+4:08:23 PM [tsx] change in ./apps/server/src/app.ts Restarting...
+OpenMuse live API ready at https://openmuse.claw.ssan.me
+4:09:15 PM [tsx] change in ./apps/server/src/actions.ts Restarting...
+OpenMuse live API ready at https://openmuse.claw.ssan.me
+4:10:26 PM [tsx] change in ./apps/server/src/browser.ts Restarting...
+OpenMuse live API ready at https://openmuse.claw.ssan.me
+{
+  status: 404,
+  body: '{"error":{"code":"THREAD_NOT_FOUND","message":"Thread not found.","category":"not_found","retryable":false},"requestId":"72dced30-1d84-46cc-a16c-c9c88ee1b66f","traceId":"cd1096aaff46cf57af8beb3b16a00e8c"}',
+  path: '/api/threads/67342ad2-6759-4dff-a5d2-b4c7fd8cc217?userId=local-user'
+} Intelligence platform request failed
+Agent execution failed: Error: 451 HTTP 451 — empty body
+    at convertTanStackStream (/home/ubuntu/openmuse/node_modules/.pnpm/@copilotkit+runtime@1.70.1_@anthropic-ai+sdk@0.97.1_zod@4.6.5__@cfworker+json-schema@4._109c03b485543a26404f2509b2b156d3/node_modules/@copilotkit/runtime/src/agent/converters/tanstack.ts:436:13)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (/home/ubuntu/openmuse/node_modules/.pnpm/@copilotkit+runtime@1.70.1_@anthropic-ai+sdk@0.97.1_zod@4.6.5__@cfworker+json-schema@4._109c03b485543a26404f2509b2b156d3/node_modules/@copilotkit/runtime/dist/agent/index.mjs:947:23)
+[ELIFECYCLE] Command failed.

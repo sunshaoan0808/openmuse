@@ -39,13 +39,15 @@ export function makeRuntime(
   intelligence: CopilotKitIntelligence | undefined,
   runner?: AgentRunner,
 ) {
-  const agents: AgentsFactory = async ({ request }) => ({
+  const agents: AgentsFactory = async ({ request }) => {
+    const owner = await auth.owner(request.headers.get("authorization") ?? undefined);
+    return {
     default: config.agentEngine === "mastra"
       ? (() => {
-          const mastra = createMastraChatAgent(
-            config,
-            ownerFrom(request),
-          );
+          const mastra = createMastraChatAgent(config, {
+            service,
+            owner: owner,
+          });
           if (!mastra)
             throw new Error(
               "AGENT_ENGINE=mastra 需要 MODEL（如 openai/vendor/model）与 OPENAI_BASE_URL",
@@ -56,7 +58,7 @@ export function makeRuntime(
         ? new ConversationAgent(
             config,
             service,
-            await auth.owner(request.headers.get("authorization") ?? undefined),
+            owner,
           )
         : config.agentBackend === "agui"
           ? new HttpAgent({
@@ -66,9 +68,10 @@ export function makeRuntime(
           : new ConversationAgent(
               config,
               service,
-              await auth.owner(request.headers.get("authorization") ?? undefined),
+              owner,
             ),
-  });
+    };
+  };
   // 两条分支对应官方两种运行时模式：
   //  - 有 Intelligence → CopilotIntelligenceRuntimeOptions（云或自家垫片，持久线程 + 实时通道）
   //  - 无 Intelligence → CopilotSseRuntimeOptions（标准 AG-UI/SSE + 本地线程端点）

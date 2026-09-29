@@ -1,0 +1,15 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch();
+const p = await b.newPage();
+const errs = [];
+p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text().slice(0, 160)); });
+await p.goto('http://127.0.0.1:8081', { waitUntil: 'domcontentloaded', timeout: 120000 });
+await p.waitForTimeout(20000);
+const text = await p.evaluate(() => document.body.innerText);
+console.log('=== 页面可见文本（前 1200 字）===');
+console.log(text.slice(0, 1200));
+const zh = (text.match(/[\u4e00-\u9fff]/g) || []).length;
+console.log(`\n=== 统计 ===\n  汉字数: ${zh}\n  总字符: ${text.length}`);
+console.log(`  控制台错误: ${errs.length}`);
+errs.slice(0, 5).forEach((e) => console.log('    - ' + e));
+await b.close();
