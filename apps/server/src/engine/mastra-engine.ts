@@ -105,7 +105,13 @@ export function createMastraChatAgent(
       abortSignal: runAbort.signal,
     } as never);
   }) as typeof agent.stream;
-  const mastraAgent = new MastraAgent({ agent, resourceId: ctx.owner });
+  const mastraAgent = new MastraAgent({
+    agent,
+    resourceId: ctx.owner,
+    // 模型（nemotron）在 AI SDK 工具调用路径上偶尔把参数碎片泄进文本流（如 【{"cursor":0,"loc":0}】）。
+    // 打开后桥会用模型处理过的最终文本替换流式片段，代价是逐字流式可能退化——先用环境变量开关做 A/B。
+    ...(process.env.MASTRA_PROCESSED_TEXT === "1" ? { useProcessedFinalText: true } : {}),
+  });
   // 复用自带引擎的两层事件后处理，补齐 Mastra 桥不做的事：
   //  - splitTextAtToolCalls：工具调用前后的文本各起一条消息（否则整轮共用一个 messageId）
   //  - reportStepLimit：步数用尽而非模型收尾时补一句说明，避免"静默结束"
