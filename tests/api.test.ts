@@ -135,7 +135,7 @@ test("missing browser setup is explicit rather than a fictional browser session"
     body: JSON.stringify({ url: "https://example.com" }),
   });
   assert.equal(response.status, 503);
-  assert.match((await response.json()).error, /not configured/);
+  assert.match((await response.json()).error, /not configured|未配置/);
 });
 test("calendar ranges and complete sample mail threads survive navigation", async () => {
   await app.request("/api/google/connect", {

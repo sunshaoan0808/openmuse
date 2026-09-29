@@ -17,7 +17,7 @@ test("disabled computer reports setup without invoking Docker", async () => {
   const f = fixture();
   const service = new ComputerService(db, { ...config, computerEnabled: false }, f.runner);
   assert.equal((await service.snapshot("owner")).status, "unconfigured");
-  await assert.rejects(service.execute("owner", { command: "pwd" }), /not configured/);
+  await assert.rejects(service.execute("owner", { command: "pwd" }), /not configured|电脑未配置/);
   assert.equal(f.calls.length, 0);
 });
 
