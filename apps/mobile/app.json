@@ -21,6 +21,22 @@
     },
     "plugins": [
       "expo-document-picker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "OpenMuse 需要读取你的照片，才能把你选的图片交给智能体。",
+          "cameraPermission": "OpenMuse 需要使用相机，才能拍照后交给智能体。",
+          "microphonePermission": "OpenMuse 需要使用麦克风，才能把你说的话转成文字。"
+        }
+      ],
+      "expo-notifications",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "OpenMuse 需要使用麦克风，才能把你说的话转成文字。",
+          "speechRecognitionPermission": "OpenMuse 需要语音识别权限，才能把你的语音转成文字。"
+        }
+      ],
       "@config-plugins/react-native-blob-util",
       "@config-plugins/react-native-pdf",
       "./plugins/with-window-soft-input-mode"

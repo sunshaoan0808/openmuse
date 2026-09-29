@@ -10,7 +10,8 @@ import {
   Settings2,
 } from "lucide-react-native";
 import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
+import { SkeletonRows } from "./skeleton";
 import { Button, colors, ErrorNotice, Field, LinkRow, Sheet, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -140,11 +141,7 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
         {enabled && loading ? (
           <>
             <ErrorNotice error={mainError} />
-            {mainError ? (
-              <Button onPress={retry}>重试主聊天</Button>
-            ) : (
-              <ActivityIndicator color={colors.blueDark} />
-            )}
+            {mainError ? <Button onPress={retry}>重试主聊天</Button> : <SkeletonRows count={3} />}
           </>
         ) : enabled ? (
           <>
@@ -171,7 +168,7 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                 {archived ? "只看进行中" : "Archived"}
               </Button>
             </View>
-            {threads.isLoading && <ActivityIndicator color={colors.blueDark} />}
+            {threads.isLoading && <SkeletonRows count={2} />}
             <ErrorNotice error={error || threads.error?.message} />
             {threads.error && (
               <Button small onPress={threads.refetchThreads}>重试会话</Button>

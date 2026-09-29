@@ -51,6 +51,7 @@ import {
   IconButton,
   LinkRow,
   Mascot,
+  MeasureCard,
   relativeDate,
   resultSummary,
   SectionHeading,
@@ -273,9 +274,9 @@ export function TodayScreen() {
           />
           {w.mail.length ? (
             w.mail.slice(0, 3).map((m, i) => (
-              <Pressable
+              <MeasureCard
                 key={m.id}
-                onPress={() => open({ type: "mail", mail: m })}
+                label={m.sender}
                 style={[
                   s.row,
                   {
@@ -285,6 +286,19 @@ export function TodayScreen() {
                     borderTopColor: colors.line,
                   },
                 ]}
+                onPress={(rect) =>
+                  open({
+                    type: "mail",
+                    mail: m,
+                    hero: {
+                      rect,
+                      title: m.sender,
+                      subtitle: m.subject,
+                      icon: Mail,
+                      tint: colors.lavender,
+                    },
+                  })
+                }
               >
                 <Avatar name={m.sender} index={i} />
                 <View style={{ flex: 1, gap: 3 }}>
@@ -304,7 +318,7 @@ export function TodayScreen() {
                     style={{ width: 5, height: 5, borderRadius: 4, backgroundColor: "#78ABD0" }}
                   />
                 )}
-              </Pressable>
+              </MeasureCard>
             ))
           ) : (
             <Empty
@@ -521,13 +535,26 @@ export function MailScreen() {
           )
         ) : items.length ? (
           items.map((m, i) => (
-            <Pressable
+            <MeasureCard
               key={m.id}
-              onPress={() => open({ type: "mail", mail: m })}
+              label={m.sender}
               style={[
                 s.row,
                 { gap: 15, paddingVertical: 20, borderTopWidth: 1, borderTopColor: colors.line },
               ]}
+              onPress={(rect) =>
+                open({
+                  type: "mail",
+                  mail: m,
+                  hero: {
+                    rect,
+                    title: m.sender,
+                    subtitle: m.subject,
+                    icon: Mail,
+                    tint: colors.lavender,
+                  },
+                })
+              }
             >
               <Avatar name={m.sender} index={i} />
               <View style={{ flex: 1, gap: 5 }}>
@@ -553,7 +580,7 @@ export function MailScreen() {
                   style={{ width: 6, height: 6, borderRadius: 4, backgroundColor: "#83B5D3" }}
                 />
               )}
-            </Pressable>
+            </MeasureCard>
           ))
         ) : (
           <Empty
@@ -857,15 +884,28 @@ export function BrowserScreen() {
         <SectionHeading title="浏览器会话" />
         {w.browsers.length ? (
           w.browsers.map((b) => (
-            <Pressable
+            <MeasureCard
               key={b.id}
-              onPress={() => open({ type: "browser", browser: b })}
+              label={b.title || "Browser session"}
               style={{
                 borderTopWidth: 1,
                 borderTopColor: colors.line,
                 paddingVertical: 20,
                 gap: 12,
               }}
+              onPress={(rect) =>
+                open({
+                  type: "browser",
+                  browser: b,
+                  hero: {
+                    rect,
+                    title: b.title || "Browser session",
+                    subtitle: b.url,
+                    icon: Globe2,
+                    tint: colors.sky,
+                  },
+                })
+              }
             >
               <View style={[s.row, { gap: 14 }]}>
                 <View style={s.iconBox}>
@@ -892,7 +932,7 @@ export function BrowserScreen() {
                   }}
                 />
               )}
-            </Pressable>
+            </MeasureCard>
           ))
         ) : (
           <Empty
@@ -905,6 +945,9 @@ export function BrowserScreen() {
     </View>
   );
 }
+function fileFormatLabel(name: string) {
+  return /\.([a-z0-9]+)$/i.exec(name.trim())?.[1]?.toUpperCase() ?? "FILE";
+}
 export function FilesScreen() {
   const { workspace: w, api, refresh, open } = useWorkspace();
   const [busy, setBusy] = useState(false);
@@ -914,7 +957,13 @@ export function FilesScreen() {
     setBusy(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: "application/pdf",
+        // PDF 与 Office 文档都能导入；Web 端与 Android 端都按 MIME 过滤
+        type: [
+          "application/pdf",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ],
         copyToCacheDirectory: true,
       });
       if (result.canceled) return;
@@ -931,12 +980,12 @@ export function FilesScreen() {
           httpMethod: "POST",
           uploadType: FileSystem.FileSystemUploadType.MULTIPART,
           fieldName: "file",
-          mimeType: "application/pdf",
+          mimeType: file.mimeType || "application/octet-stream",
           headers: { Authorization: `Bearer ${api.token}` },
         });
         const payload = JSON.parse(result.body);
         if (result.status < 200 || result.status >= 300)
-          throw new Error(payload.error || "无法导入这个 PDF。");
+          throw new Error(payload.error || "无法导入这个文件。");
         artifact = payload;
       }
       await refresh();
@@ -951,15 +1000,29 @@ export function FilesScreen() {
     <View style={{ gap: 20 }}>
       <View style={s.between}>
         <Text style={[s.muted, { flex: 1, marginRight: 15 }]}>文档，以及一点干活的空间。</Text>
-        <Button primary icon={Upload} busy={busy} onPress={() => void upload()}>导入 PDF</Button>
+        <Button primary icon={Upload} busy={busy} onPress={() => void upload()}>导入文档</Button>
       </View>
       <ErrorNotice error={error} />
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 18 }}>
         {w.files.map((f) => (
-          <Pressable
+          <MeasureCard
             key={f.id}
-            onPress={() => open({ type: "file", file: f })}
+            label={f.name}
             style={{ flexGrow: 1, flexBasis: 250, maxWidth: 430 }}
+            onPress={(rect) =>
+              open({
+                type: "file",
+                file: f,
+                // 共享元素过渡的来源：这张卡片在屏幕上的位置
+                hero: {
+                  rect,
+                  title: f.name,
+                  subtitle: `${f.pageCount} ${f.pageCount === 1 ? "page" : "pages"} · ${Math.max(1, Math.round(f.size / 1024))} KB`,
+                  icon: FileText,
+                  tint: colors.sky,
+                },
+              })
+            }
           >
             <Card style={{ padding: 0, overflow: "hidden" }}>
               <View
@@ -1000,7 +1063,7 @@ export function FilesScreen() {
                   ))}
                 </View>
                 <View style={{ position: "absolute", bottom: 12, right: 14 }}>
-                  <Chip>PDF</Chip>
+                  <Chip>{fileFormatLabel(f.name)}</Chip>
                 </View>
               </View>
               <View style={{ padding: 21, gap: 6 }}>
@@ -1017,7 +1080,7 @@ export function FilesScreen() {
                 </View>
               </View>
             </Card>
-          </Pressable>
+          </MeasureCard>
         ))}
       </View>
       {!w.files.length && (

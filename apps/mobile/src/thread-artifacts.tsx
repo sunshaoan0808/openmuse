@@ -1,21 +1,32 @@
 import { ChevronRight, FileText } from "lucide-react-native";
 import { useEffect, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import type { Artifact, BrowserSession } from "../../../packages/domain/src";
 import type { AgentArtifact, AgentTask } from "../../../packages/domain/src/agent";
 import { ArtifactCard, TaskCard } from "./agent-ui";
 import { BrowserThreadCard } from "./computer";
-import { Button, Card, colors, ErrorNotice, s } from "./ui";
+import { Button, Card, colors, ErrorNotice, MeasureCard, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 export function FileThreadCard({ file }: { file: Artifact }) {
   const { open } = useWorkspace();
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Open PDF: ${file.name}`}
-      onPress={() => open({ type: "file", file })}
+    <MeasureCard
+      label={`Open PDF: ${file.name}`}
       style={{ width: "100%", maxWidth: 440 }}
+      onPress={(rect) =>
+        open({
+          type: "file",
+          file,
+          hero: {
+            rect,
+            title: file.name,
+            subtitle: `${file.pageCount} ${file.pageCount === 1 ? "page" : "pages"}`,
+            icon: FileText,
+            tint: colors.sky,
+          },
+        })
+      }
     >
       <Card style={{ padding: 18, backgroundColor: "#F0F1F2", gap: 18 }}>
         <View style={{ borderRadius: 12, padding: 22, backgroundColor: "#FFF", gap: 14 }}>
@@ -56,7 +67,7 @@ export function FileThreadCard({ file }: { file: Artifact }) {
           <ChevronRight size={18} color={colors.muted} />
         </View>
       </Card>
-    </Pressable>
+    </MeasureCard>
   );
 }
 /** Hydrates task-linked artifacts by ID on replay; signed URLs are never stored in messages. */

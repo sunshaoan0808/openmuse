@@ -46,6 +46,7 @@ import {
   Field,
   LinkRow,
   Mascot,
+  MeasureCard,
   resultSummary,
   SectionHeading,
   Sheet,
@@ -102,12 +103,22 @@ export function TaskCard({
   const next = task.plan.find((step) => ["running", "waiting"].includes(step.status));
   const waiting = ["waiting_input", "waiting_approval"].includes(task.status);
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Open task: ${task.title}`}
-      onPress={() => {
+    <MeasureCard
+      label={`Open task: ${task.title}`}
+      onPress={(rect) => {
         onOpen?.();
-        open({ type: "task", taskId: task.id });
+        open({
+          type: "task",
+          taskId: task.id,
+          // 共享元素过渡：从这张任务卡飞进详情
+          hero: {
+            rect,
+            title: task.title,
+            subtitle: `${statusLabel(task.status)}${task.plan.length ? ` · ${done}/${task.plan.length} steps` : ""}`,
+            icon: ListChecks,
+            tint: waiting ? colors.orange : colors.sky,
+          },
+        });
       }}
     >
       <Card
@@ -159,7 +170,7 @@ export function TaskCard({
           </Text>
         )}
       </Card>
-    </Pressable>
+    </MeasureCard>
   );
 }
 export function ChatWork() {

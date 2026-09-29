@@ -38,6 +38,8 @@ import { browserAddress, browserSite } from "./browser-address";
 import { ComputerSheet } from "./computer";
 import DateTimeEditor from "./DateTimeEditor";
 import { localDateTime, zonedInstant } from "./date-time";
+import type { HeroCard } from "./motion";
+import OfficeReader from "./OfficeReader";
 import PdfReader from "./PdfReader";
 import {
   Button,
@@ -63,13 +65,13 @@ export function Details({ detail }: { detail: Detail }) {
   if (detail.type === "task") return <TaskDetail taskId={detail.taskId} />;
   if (detail.type === "delegate") return <DelegateSheet />;
   if (detail.type === "notifications") return <NotificationsSheet />;
-  if (detail.type === "mail") return <MailDetail mail={detail.mail} />;
+  if (detail.type === "mail") return <MailDetail mail={detail.mail} hero={detail.hero} />;
   if (detail.type === "email") return <EmailEditor draft={detail.draft} />;
   if (detail.type === "event")
     return <EventEditor event={detail.event} draft={detail.draft} neighbors={detail.neighbors} />;
-  if (detail.type === "file") return <FileDetail file={detail.file} />;
+  if (detail.type === "file") return <FileDetail file={detail.file} hero={detail.hero} />;
   if (detail.type === "review") return <ReviewDetail initial={detail.action} />;
-  if (detail.type === "browser") return <BrowserDetail initial={detail.browser} />;
+  if (detail.type === "browser") return <BrowserDetail initial={detail.browser} hero={detail.hero} />;
   return (
     <Sheet title="你的工作区" subtitle="什么都放得下的小空间。" onClose={close}>
       {[
@@ -93,7 +95,7 @@ export function Details({ detail }: { detail: Detail }) {
     </Sheet>
   );
 }
-function MailDetail({ mail: m }: { mail: Mail }) {
+function MailDetail({ mail: m, hero }: { mail: Mail; hero?: HeroCard }) {
   const { workspace: w, api, refresh, open, close } = useWorkspace();
   const [error, setError] = useState("");
   const [importing, setImporting] = useState("");
@@ -137,6 +139,7 @@ function MailDetail({ mail: m }: { mail: Mail }) {
       title={m.subject}
       subtitle={`${thread.length} message${thread.length === 1 ? "" : "s"} in this conversation`}
       onClose={close}
+      hero={hero}
     >
       {loading && (
         <View style={[s.row, { gap: 10, paddingBottom: 20 }]}>
@@ -716,7 +719,10 @@ function ReviewLine({ label, value }: { label: string; value: string }) {
     </View>
   );
 }
-function FileDetail({ file: f }: { file: Artifact }) {
+function isPdf(file: Artifact) {
+  return file.mimeType === "application/pdf" || /\.pdf$/i.test(file.name.trim());
+}
+function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
   const { api, refresh, open, close } = useWorkspace();
   const [values, setValues] = useState<Record<string, string | boolean>>(() =>
     Object.fromEntries(
@@ -768,8 +774,14 @@ function FileDetail({ file: f }: { file: Artifact }) {
       subtitle={`${f.pageCount} pages · ${Math.max(1, Math.round(f.size / 1024))} KB · ${f.source}`}
       onClose={close}
       wide
+      hero={hero}
     >
-      <PdfReader url={url} token={api.token} pageCount={f.pageCount} />
+      {isPdf(f) ? (
+        <PdfReader url={url} token={api.token} pageCount={f.pageCount} />
+      ) : (
+        // Word / Excel / PowerPoint 走离线渲染（pptx 会降级为“用外部应用打开”）
+        <OfficeReader url={url} token={api.token} name={f.name} size={f.size} />
+      )}
       <View style={[s.row, { gap: 10, marginVertical: 18, flexWrap: "wrap" }]}>
         <Button icon={Download} onPress={() => void share()}>
           {Platform.OS === "web" ? "打开 / 下载" : "保存或分享"}
@@ -815,7 +827,7 @@ function FileDetail({ file: f }: { file: Artifact }) {
     </Sheet>
   );
 }
-function BrowserDetail({ initial }: { initial: BrowserSession }) {
+function BrowserDetail({ initial, hero }: { initial: BrowserSession; hero?: HeroCard }) {
   const { workspace: w, api, refresh, close, notify } = useWorkspace();
   const [local, setLocal] = useState(initial);
   const [url, setUrl] = useState(initial.url);
@@ -898,6 +910,7 @@ function BrowserDetail({ initial }: { initial: BrowserSession }) {
       subtitle={`${browser.status} · updated ${timeLabel(browser.updatedAt)}`}
       onClose={close}
       wide
+      hero={hero}
     >
       <View style={[s.row, { gap: 10, marginBottom: 16 }]}>
         <View style={{ flex: 1 }}>

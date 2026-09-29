@@ -34,6 +34,7 @@ import {
 } from "./src/agent-ui";
 import { AgentWorkspaceProvider, useAgentWorkspace } from "./src/agent-workspace";
 import { apiUrl, createSession, defaultApiUrl, loadApiUrl, MuseApi, saveApiUrl } from "./src/api";
+import { hapticTap } from "./src/haptics";
 import { ChatScreen, WorkspaceTools } from "./src/chat";
 import { ComputerEntry } from "./src/computer";
 import { ComputerDraftProvider } from "./src/computer-drafts";
@@ -462,7 +463,10 @@ function WorkspaceShell({
                     accessibilityRole="tab"
                     accessibilityLabel={item.label}
                     accessibilityState={{ selected: active }}
-                    onPress={() => navigate(item.id)}
+                    onPress={() => {
+                      hapticTap();
+                      navigate(item.id);
+                    }}
                     style={{
                       flex: 1,
                       height: 47,
