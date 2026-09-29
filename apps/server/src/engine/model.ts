@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { AgentTask } from "../../../../packages/domain/src/agent.ts";
 import { emailDraftSchema, eventDraftSchema } from "../../../../packages/domain/src/index.ts";
 import { computerInstructions, computerTools } from "../computer-tools.ts";
+import { forAgUi } from "./tool-kit.ts";
 import type { AgentService } from "./service.ts";
 import { tanstackAgent } from "./tanstack-agent.ts";
 import type { TaskContext } from "./worker.ts";
@@ -84,13 +85,15 @@ export async function executeModelTask(
     return result;
   };
   const tools = [
-    ...computerTools(service.computer, service.files, owner, `task:${task.id}`, {
-      signal: ctx.signal,
-      before: async () => {
-        if (outcome) throw new Error("Task is waiting or finished; do not perform more actions");
-        await ctx.guard();
-      },
-    }),
+    ...forAgUi(
+      computerTools(service.computer, service.files, owner, `task:${task.id}`, {
+        signal: ctx.signal,
+        before: async () => {
+          if (outcome) throw new Error("Task is waiting or finished; do not perform more actions");
+          await ctx.guard();
+        },
+      }),
+    ),
     tool(
       "set_plan",
       "Make a concrete plan for the delegated outcome",
