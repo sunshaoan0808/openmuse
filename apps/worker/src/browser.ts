@@ -152,6 +152,15 @@ export async function createBrowserManager(options: {
   async function createSession(id: string, url: string) {
     await validatePublicUrl(url);
     if (running.has(id)) return navigate(id, url);
+    if (running.size >= maxSessions) {
+      // 会话是按线程创建的（observeForThread），多轮对话很容易撞上限；此前直接报错会让浏览
+      // 功能整体瘫痪（表现为模型"读不到页面"）。到顶时先回收一个"空闲且最久未活动"的会话：
+      // 只看 pending 为空（没有在飞的请求/下载）的实例，按内存里的 touched 取最老的一个。
+      const idle = [...running.entries()]
+        .filter(([, instance]) => instance.pending.size === 0)
+        .sort(([, a], [, b]) => a.touched - b.touched)[0];
+      if (idle) await closeSession(idle[0]);
+    }
     if (running.size >= maxSessions)
       throw new WorkerError(
         "SESSION_LIMIT",
