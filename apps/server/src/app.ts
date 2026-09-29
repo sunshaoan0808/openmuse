@@ -19,6 +19,7 @@ import { AgentService } from "./engine/service.ts";
 import { AppError } from "./errors.ts";
 import { Files } from "./files.ts";
 import { GoogleAuth } from "./google-auth.ts";
+import { backgroundFailure } from "./log.ts";
 import { WorkspaceService } from "./workspace.ts";
 
 export async function createApp(
@@ -326,12 +327,43 @@ export async function createApp(
     await browser.input(c.get("owner"), c.req.param("id"), await c.req.json());
     return c.json({ ok: true });
   });
+  // 新会话的 threadId 由客户端本地生成，平台上并不存在；运行时直接去取线程会 404
+  // THREAD_NOT_FOUND，用户看到的就是"发了消息没有任何回复"。这里先 get-or-create 建好平台
+  // 线程再交给运行时。已建过的记在内存里，避免每个请求都多打一次平台。
+  const knownThreads = new Set<string>();
+  const THREAD_ID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
   app.all("/api/copilotkit/*", async (c) => {
     if (!agentConfigured(config))
       throw new AppError(
         "Configure a model and provider API key, or a valid AG-UI endpoint, to start chat",
         503,
       );
+    try {
+      let threadId: string | undefined;
+      if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+        const text = await c.req.raw.clone().text();
+        if (text) {
+          try {
+            const body = JSON.parse(text) as { threadId?: unknown };
+            if (typeof body.threadId === "string") threadId = body.threadId;
+          } catch {
+            // 非 JSON 请求体，忽略
+          }
+        }
+      }
+      threadId ??= c.req.path.match(/\/threads\/([0-9a-fA-F-]{36})/)?.[1];
+      if (threadId && THREAD_ID_RE.test(threadId) && !knownThreads.has(threadId)) {
+        await intelligence.getOrCreateThread({
+          threadId,
+          userId: c.get("owner"),
+          agentId: "default",
+        });
+        knownThreads.add(threadId);
+      }
+    } catch (error) {
+      // 不阻断请求：让运行时按原路径如实报错，日志里留下原因
+      backgroundFailure("copilotkit-thread-precreate", error);
+    }
     const response = await runtime.fetch(c.req.raw);
     // Runtime 1.70 emits SSE strings; a WHATWG Response body requires byte chunks.
     const encoder = new TextEncoder();
