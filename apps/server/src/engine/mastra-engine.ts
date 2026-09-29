@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createOpenAI } from "@ai-sdk/openai";
+import { type BaseEvent, EventType } from "@ag-ui/core";
+import { catchError, of } from "rxjs";
 import { Agent } from "@mastra/core/agent";
 import { MastraAgent } from "@ag-ui/mastra";
 import { computerTools } from "../computer-tools.ts";
@@ -23,6 +25,20 @@ import type { NeutralTool } from "./tool-kit.ts";
  * - 审批链（AG-UI 的 TOOL_CALL_* 事件流）仍是自带引擎独有：Mastra 侧的工具直接执行；
  * - 系统提示词与自带引擎**共用一份**（`chat-prompt.ts`），从此不会两边漂移。
  */
+
+/**
+ * 把模型层的原始报错翻成用户能看懂的中文提示。
+ *
+ * 网关（zen，10.7.0.1:9527）在尖峰时会返回 5xx / "Service temporarily overloaded"，
+ * 桥会把原始英文错误直接作为 RUN_ERROR 抛给界面；Mastra 的调用选项里并没有 maxRetries
+ * （AgentConfig 与桥都不认这个字段），所以这里只做"说人话"，不做自动重试。
+ */
+function friendlyError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (/overloaded|ECONNRESET|ETIMEDOUT|socket hang up|fetch failed|50[0-9] /i.test(raw))
+    return `模型网关暂时过载，请稍后重试。（原错误：${raw.slice(0, 120)}）`;
+  return raw.slice(0, 300);
+}
 
 /** 每请求构造一个 AG-UI 兼容的 Mastra agent；缺配置返回 undefined。 */
 export function createMastraChatAgent(
@@ -133,6 +149,10 @@ export function createMastraChatAgent(
       ),
       10,
       "我达到了本轮步数上限还没收尾。回复“继续”，我接着做。",
+    ).pipe(
+      catchError((error) =>
+        of({ type: EventType.RUN_ERROR, message: friendlyError(error) } as BaseEvent),
+      ),
     )) as typeof mastraAgent.run;
   return mastraAgent;
 }
