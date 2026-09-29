@@ -23,6 +23,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { useAndroidKeyboardInset } from "./src/use-android-keyboard-inset";
 import type { Section, Workspace } from "../../packages/domain/src";
 import {
   AgentActivityScreen,
@@ -67,6 +68,8 @@ const titles: Partial<Record<Section, { title: string; subtitle: string }>> = {
   files: { title: "文件", subtitle: "文档、表单与已填写的副本。" },
 };
 export default function App() {
+  // edge-to-edge 下 Android 不执行 adjustResize，键盘会盖住输入区；在根上补内边距统一解决
+  const keyboardInset = useAndroidKeyboardInset();
   const [token, setToken] = useState("");
   const [accessKey, setAccessKey] = useState("");
   const [server, setServer] = useState(apiUrl());
@@ -95,7 +98,8 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <StatusBar style="dark" />
-      {token ? (
+      <View style={{ flex: 1, paddingBottom: keyboardInset }}>
+        {token ? (
         <CopilotKitProvider
           runtimeUrl={`${server}/api/copilotkit`}
           headers={{ Authorization: `Bearer ${token}` }}
@@ -146,6 +150,7 @@ export default function App() {
           </View>
         </SafeAreaView>
       )}
+      </View>
     </SafeAreaProvider>
   );
 }
