@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createOpenAI } from "@ai-sdk/openai";
 import { type BaseEvent, EventType } from "@ag-ui/core";
-import { catchError, of } from "rxjs";
+import { Observable } from "rxjs";
 import { Agent } from "@mastra/core/agent";
 import { MastraAgent } from "@ag-ui/mastra";
 import { computerTools } from "../computer-tools.ts";
@@ -33,6 +33,8 @@ import type { NeutralTool } from "./tool-kit.ts";
  * 桥会把原始英文错误直接作为 RUN_ERROR 抛给界面；Mastra 的调用选项里并没有 maxRetries
  * （AgentConfig 与桥都不认这个字段），所以这里只做"说人话"，不做自动重试。
  */
+const MAX_RUN_ATTEMPTS = 3;
+
 function friendlyError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   if (/overloaded|ECONNRESET|ETIMEDOUT|socket hang up|fetch failed|50[0-9] /i.test(raw))
@@ -121,38 +123,78 @@ export function createMastraChatAgent(
       abortSignal: runAbort.signal,
     } as never);
   }) as typeof agent.stream;
-  const mastraAgent = new MastraAgent({
-    agent,
-    resourceId: ctx.owner,
-    // 模型（nemotron）在 AI SDK 工具调用路径上偶尔把参数碎片泄进文本流（如 【{"cursor":0,"loc":0}】）。
-    // 打开后桥会用模型处理过的最终文本替换流式片段，代价是逐字流式可能退化——先用环境变量开关做 A/B。
-    ...(process.env.MASTRA_PROCESSED_TEXT === "1" ? { useProcessedFinalText: true } : {}),
-  });
-  // 复用自带引擎的两层事件后处理，补齐 Mastra 桥不做的事：
-  //  - splitTextAtToolCalls：工具调用前后的文本各起一条消息（否则整轮共用一个 messageId）
-  //  - reportStepLimit：步数用尽而非模型收尾时补一句说明，避免"静默结束"
-  const baseAbort = mastraAgent.abortRun.bind(mastraAgent);
-  mastraAgent.abortRun = () => {
-    runAbort.abort();
-    baseAbort();
+  // 关键：框架每个请求都会 agent.clone()，而桥的 clone() 是 `new MastraAgent(this.config)`，
+  // 在实例上直接挂的包装会在克隆时全部丢失（表现为这些增强"看似生效实则空转"）。
+  // 所以包装统一放在 patch() 里，并对每个克隆体递归重贴。
+  // 网关（OpenRouter 免费层）在高峰会返回过载类错误；AI SDK 的 maxRetries 不被桥转发，
+  // 所以在这里做"整轮重试"：仅当本轮还没产生任何内容或工具调用时才重试。
+  const retryable = (error: unknown) =>
+    /overloaded|ECONNRESET|ETIMEDOUT|socket hang up|fetch failed|API call failed|\b(429|500|502|503|504)\b/i.test(
+      error instanceof Error ? error.message : String(error),
+    );
+
+  const patch = (target: MastraAgent): MastraAgent => {
+    // 取消信号：桥只取消它自己的 controller，把取消也传导给工具
+    const baseAbort = target.abortRun.bind(target);
+    target.abortRun = () => {
+      runAbort.abort();
+      baseAbort();
+    };
+
+    const baseRun = target.run.bind(target);
+    target.run = ((input: Parameters<typeof baseRun>[0]) => {
+      const attempt = (n: number): Observable<BaseEvent> =>
+        new Observable<BaseEvent>((subscriber) => {
+          let produced = false;
+          const sub = splitTextAtToolCalls(
+            baseRun({
+              ...input,
+              // 与自带引擎同策略：客户端声明的工具只认 open_workspace，其余一律忽略
+              tools: (input.tools ?? []).filter((tool) => tool.name === "open_workspace"),
+            }),
+          ).subscribe({
+            next: (event) => {
+              if (event.type === EventType.RUN_STARTED) {
+                // 重试时不再重复发 RUN_STARTED（客户端会把同一 run 当成重新开始）
+                if (n > 1) return;
+              } else {
+                produced = true;
+              }
+              subscriber.next(event);
+            },
+            error: (error) => {
+              if (!produced && n < MAX_RUN_ATTEMPTS && retryable(error)) {
+                const message = error instanceof Error ? error.message : String(error);
+                console.warn(`[mastra] 模型调用失败，第 ${n} 次重试（上限 ${MAX_RUN_ATTEMPTS - 1}）：${message}`);
+                setTimeout(() => {
+                  if (!subscriber.closed) attempt(n + 1).subscribe(subscriber);
+                }, 900 * n);
+                return;
+              }
+              subscriber.next({ type: EventType.RUN_ERROR, message: friendlyError(error) } as BaseEvent);
+              subscriber.complete();
+            },
+            complete: () => subscriber.complete(),
+          });
+          return () => sub.unsubscribe();
+        });
+      return reportStepLimit(attempt(1), 10, "我达到了本轮步数上限还没收尾。回复“继续”，我接着做。");
+    }) as typeof target.run;
+
+    // 克隆体也要带上同样的包装（否则下个请求退回裸桥）
+    const baseClone = target.clone.bind(target);
+    target.clone = (() => patch(baseClone())) as typeof target.clone;
+    return target;
   };
-  const baseRun = mastraAgent.run.bind(mastraAgent);
-  mastraAgent.run = ((input: Parameters<typeof baseRun>[0]) =>
-    reportStepLimit(
-      splitTextAtToolCalls(
-        baseRun({
-          ...input,
-          // 与自带引擎同策略：客户端声明的工具只认 open_workspace，其余一律忽略
-          // （自带引擎在 conversation.ts 里就是这么过滤的；桥默认会把客户端工具全透传）
-          tools: (input.tools ?? []).filter((tool) => tool.name === "open_workspace"),
-        }),
-      ),
-      10,
-      "我达到了本轮步数上限还没收尾。回复“继续”，我接着做。",
-    ).pipe(
-      catchError((error) =>
-        of({ type: EventType.RUN_ERROR, message: friendlyError(error) } as BaseEvent),
-      ),
-    )) as typeof mastraAgent.run;
+
+  const mastraAgent = patch(
+    new MastraAgent({
+      agent,
+      resourceId: ctx.owner,
+      // 模型（nemotron）在 AI SDK 工具调用路径上偶尔把参数碎片泄进文本流（如 【{"cursor":0,"loc":0}】）。
+      // 打开后桥会用模型处理过的最终文本替换流式片段，代价是逐字流式可能退化——先用环境变量开关做 A/B。
+      ...(process.env.MASTRA_PROCESSED_TEXT === "1" ? { useProcessedFinalText: true } : {}),
+    }),
+  );
   return mastraAgent;
 }
