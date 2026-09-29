@@ -8,6 +8,7 @@ import { computerTools } from "../computer-tools.ts";
 import { MODEL_MAX_RETRIES } from "../config.ts";
 import type { Config } from "../config.ts";
 import { chatInstructions } from "./chat-prompt.ts";
+import { mcpTools } from "./mcp-tools.ts";
 import { reportStepLimit, splitTextAtToolCalls, stateTools } from "./tanstack-agent.ts";
 import { chatTools } from "./chat-tools.ts";
 import { forMastra } from "./mastra-tools.ts";
@@ -79,6 +80,8 @@ export function createMastraChatAgent(
       key,
       signal,
     }),
+    // MCP 服务器上的工具（配置见 MCP_SERVERS；同步读缓存，连接由 startMcp 维护）
+    ...mcpTools(),
     // App 状态工具：与自带引擎同名同义（自带引擎在 tanstackAgent 内部自动挂这两个）。
     // 客户端按工具名把结果转成 STATE_SNAPSHOT / STATE_DELTA，所以工具在、名字对，状态功能即对等。
     ...stateTools.map(

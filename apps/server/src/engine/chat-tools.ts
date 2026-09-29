@@ -138,6 +138,79 @@ export function chatTools(ctx: ChatToolContext): NeutralTool[] {
         execute: async (args) => ctx.service.createMonitor(ctx.owner, args, ctx.key("watch", args)),
       }),
       tool({
+        name: "read_image",
+        description:
+          "看一张已上传到工作区的图片并回答问题（图片理解）。用户发来图片或提到某个图片文件时用它。file 传文件名或文件 id。",
+        parameters: z.object({
+          file: z.string().min(1).max(200).describe("工作区里的图片文件名或文件 id"),
+          question: z
+            .string()
+            .max(500)
+            .optional()
+            .describe("想从图片里了解什么；默认描述图片内容并抄出图中文字"),
+        }),
+        execute: async ({ file, question }) => {
+          const files = await ctx.service.files.list(ctx.owner);
+          const images = files.filter((f) => f.mimeType?.startsWith("image/"));
+          const target =
+            files.find((f) => f.id === file) ??
+            images.find((f) => f.name === file) ??
+            images.find((f) => f.name.includes(file));
+          if (!target)
+            return {
+              error: `没找到「${file}」。工作区现有图片：${images.map((f) => f.name).join("、") || "（暂无）"}`,
+            };
+          if (!target.mimeType?.startsWith("image/"))
+            return { error: `「${target.name}」不是图片（${target.mimeType}）` };
+
+          const base = process.env.OPENAI_BASE_URL?.replace(/\/+$/, "");
+          if (!base) return { error: "未配置 OPENAI_BASE_URL，无法做图片理解" };
+          const model = process.env.VISION_MODEL ?? "meta/llama-3.2-11b-vision-instruct";
+          const bytes = await ctx.service.files.bytes(ctx.owner, target.id);
+          try {
+            const res = await fetch(`${base}/chat/completions`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(process.env.OPENAI_API_KEY ? { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } : {}),
+              },
+              body: JSON.stringify({
+                model,
+                messages: [
+                  {
+                    role: "user",
+                    content: [
+                      {
+                        type: "text",
+                        text:
+                          question?.trim() ||
+                          "详细描述这张图片的内容；如果有文字，把关键文字一并列出。",
+                      },
+                      {
+                        type: "image_url",
+                        image_url: { url: `data:${target.mimeType};base64,${Buffer.from(bytes).toString("base64")}` },
+                      },
+                    ],
+                  },
+                ],
+                max_tokens: 800,
+              }),
+              signal: ctx.signal,
+            });
+            if (!res.ok)
+              return { error: `视觉模型调用失败：HTTP ${res.status} ${(await res.text()).slice(0, 200)}` };
+            const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+            return {
+              file: target.name,
+              model,
+              answer: data?.choices?.[0]?.message?.content ?? "（模型没有返回内容）",
+            };
+          } catch (error) {
+            return { error: `图片理解失败：${error instanceof Error ? error.message : String(error)}` };
+          }
+        },
+      }),
+      tool({
         name: "remember_fact",
         description: "Remember a preference explicitly supplied or confirmed by the user",
         parameters: z.object({ text: z.string().min(1).max(2000) }),
