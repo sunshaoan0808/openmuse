@@ -208,6 +208,13 @@ export function TaskCard({
               {taskStatusLabel(task.status)}
               {task.plan.length ? ` · ${done}/${task.plan.length} 步` : ""}
             </Text>
+            {/* 照 Muse 的任务列表：行里直接显示"它刚做了什么"，而不是只有状态 */}
+            {!!task.lastStep && (
+              <Text numberOfLines={1} style={[s.small, { color: colors.blueDark }]}>
+                {task.lastStep.title}
+                {task.lastStep.detail ? ` · ${task.lastStep.detail}` : ""}
+              </Text>
+            )}
           </View>
           <ChevronRight size={17} color={colors.muted} />
         </View>

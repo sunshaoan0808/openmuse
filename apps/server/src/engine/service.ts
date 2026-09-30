@@ -137,8 +137,30 @@ export class AgentService {
         this.db.get<AgentIdentity>(owner, "agent-settings", "identity"),
       ]);
     const heartbeat = await this.db.get<{ lastTickAt: string }>("system", "worker-status", "tasks");
+    // 每个任务带上"最近一步"：任务列表要像 Muse 那样，行里直接显示它刚做了什么
+    const runEvents = await this.db.list<RunEvent>(owner, "run-events");
+    const latestStep = new Map<string, RunEvent>();
+    for (const event of runEvents) {
+      if (!event.taskId) continue;
+      const current = latestStep.get(event.taskId);
+      if (!current || event.date > current.date) latestStep.set(event.taskId, event);
+    }
+    const tasksWithSteps = tasks.map((task) => {
+      const step = latestStep.get(task.id);
+      return step
+        ? {
+            ...task,
+            lastStep: {
+              kind: step.kind,
+              title: step.title,
+              detail: step.detail ?? "",
+              date: step.date,
+            },
+          }
+        : task;
+    });
     return {
-      tasks,
+      tasks: tasksWithSteps,
       goals,
       monitors,
       ideas,

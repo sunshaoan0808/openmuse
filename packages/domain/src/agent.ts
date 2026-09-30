@@ -46,6 +46,8 @@ export interface AgentTask {
   error?: string | null;
   question?: string;
   artifactIds: string[];
+  /** 快照里附带：任务最近完成的一步（列表行显示"它刚做了什么"，照 Muse 的列表）。 */
+  lastStep?: { kind: string; title: string; detail?: string; date: string };
 }
 export interface RunEvent {
   id: string;
