@@ -603,6 +603,12 @@ export function ChatScreen({
     if (!loaded || !isReady || runLock.current || agent.isRunning) return;
     void queue.flush(runQueued).catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, [agent, isReady, loaded, queue, runQueued]);
+  // 会话就绪后把上次没发出去的补发出去（配合 api.ts 的重试：网络恢复即自动续上）
+  useEffect(() => {
+    if (!loaded || !isReady || runLock.current || agent.isRunning) return;
+    if (!queue.getSnapshot().pending.length) return;
+    flush();
+  }, [loaded, isReady, agent, queue, flush]);
   const enqueue = useCallback(
     (text: string) => {
       queue.enqueue({ id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text });
