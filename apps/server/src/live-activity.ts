@@ -160,3 +160,19 @@ export function withActivity<
     return wrapped as T;
   });
 }
+
+/** 工具报错里最常见的几种网络原因，翻成人话（时间线/详情里直接显示）。 */
+const ERROR_TEXT: [RegExp, string][] = [
+  [/could not be resolved|ENOTFOUND|name resolution/i, "域名无法解析"],
+  [/timed out|ETIMEDOUT|timeout/i, "连接超时"],
+  [/connection refused|ECONNREFUSED/i, "连接被拒绝"],
+  [/certificate|TLS|SSL/i, "证书校验失败"],
+  [/404|not found/i, "页面不存在"],
+  [/403|forbidden|blocked/i, "被目标站点拒绝"],
+  [/reset|ECONNRESET|interrupted/i, "连接被中断"],
+];
+
+export function friendlyToolError(message: string): string {
+  for (const [pattern, text] of ERROR_TEXT) if (pattern.test(message)) return text;
+  return message;
+}

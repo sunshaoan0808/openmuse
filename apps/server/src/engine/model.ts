@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { AgentTask } from "../../../../packages/domain/src/agent.ts";
 import { emailDraftSchema, eventDraftSchema } from "../../../../packages/domain/src/index.ts";
 import { computerInstructions, computerTools } from "../computer-tools.ts";
-import { activityFor, recordActivity, stepEventFor } from "../live-activity.ts";
+import { activityFor, friendlyToolError, recordActivity, stepEventFor } from "../live-activity.ts";
 import type { AgentService } from "./service.ts";
 import { tanstackAgent } from "./tanstack-agent.ts";
 import { forAgUi } from "./tool-kit.ts";
@@ -73,7 +73,11 @@ export async function executeModelTask(
             return await execute(parameters.parse(args));
           } catch (error) {
             const message = error instanceof Error ? error.message : "工具调用失败";
-            await ctx.event("error", `${stepEventFor(name, args, name).title}失败`, message);
+            await ctx.event(
+              "error",
+              `${stepEventFor(name, args, name).title}失败`,
+              friendlyToolError(message),
+            );
             return { error: message };
           }
         }),
