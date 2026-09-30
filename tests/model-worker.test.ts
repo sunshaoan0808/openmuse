@@ -150,8 +150,8 @@ test("the model worker keeps the text a model replies with when it calls no tool
     const task = await server.agent.createTask("owner", { prompt: "Plan my week" });
     await server.agent.worker.tick();
     const result = await server.agent.detail("owner", task.id);
-    assert.equal(result.task.status, "waiting_input");
-    assert.match(String(result.task.state.lastUpdate), /Find cool stuff on Hacker News/);
+    assert.equal(result.task.status, "succeeded");
+    assert.match(String(result.task.result), /Find cool stuff on Hacker News/);
     assert.ok(
       result.events.some(
         (event) =>
