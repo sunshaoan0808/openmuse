@@ -235,11 +235,11 @@ export function IconButton({
       onPress={onPress}
       style={[
         {
-          width: 44,
-          height: 44,
+          width: 36,
+          height: 36,
           alignItems: "center",
           justifyContent: "center",
-          borderRadius: 22,
+          borderRadius: 18,
           backgroundColor: glass
             ? pressed
               ? "rgba(255,255,255,0.75)"
@@ -260,7 +260,7 @@ export function IconButton({
         { transform: [{ scale }] },
       ]}
     >
-      <Icon size={20} strokeWidth={1.8} color={colors.text} />
+      <Icon size={17} strokeWidth={1.8} color={colors.text} />
     </AnimatedPressable>
   );
 }

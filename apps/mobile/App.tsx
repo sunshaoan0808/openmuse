@@ -326,12 +326,12 @@ function WorkspaceShell({
               left: 0,
               right: 0,
               zIndex: 6,
-              height: desktop ? 146 : 122,
-              paddingTop: desktop ? 14 : 2,
+              height: desktop ? 124 : 104,
+              paddingTop: desktop ? 12 : 2,
               paddingHorizontal: 20,
             }}
           >
-            <View style={{ position: "absolute", left: 0, top: 16 }}>
+            <View style={{ position: "absolute", left: 0, top: 13 }}>
               <IconButton
                 glass
                 icon={Menu}
@@ -350,7 +350,7 @@ function WorkspaceShell({
                   opacity: pressed ? 0.65 : 1,
                 })}
               >
-                <Mascot size={desktop ? 58 : 49} variant={data?.identity.avatar} />
+                <Mascot size={desktop ? 46 : 38} variant={data?.identity.avatar} />
                 <Text
                   style={{
                     fontSize: 16,
@@ -370,7 +370,7 @@ function WorkspaceShell({
               </Pressable>
               {section === "chat" && <ComputerEntry />}
             </View>
-            <View style={{ position: "absolute", right: 0, top: 19 }}>
+            <View style={{ position: "absolute", right: 0, top: 16 }}>
               {/* 照 Muse：右侧是一个带文字的胶囊，而不是光秃秃一个图标 */}
               <Pressable
                 accessibilityRole="button"
@@ -380,8 +380,8 @@ function WorkspaceShell({
                   flexDirection: "row",
                   alignItems: "center",
                   gap: 6,
-                  height: 38,
-                  paddingHorizontal: 15,
+                  height: 34,
+                  paddingHorizontal: 14,
                   borderRadius: 19,
                   backgroundColor: pressed ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.5)",
                   borderWidth: 1,
@@ -395,7 +395,7 @@ function WorkspaceShell({
               </Pressable>
             </View>
           </BlurView>
-          <View style={{ flex: 1, minHeight: 0, paddingTop: desktop ? 104 : 88 }}>
+          <View style={{ flex: 1, minHeight: 0, paddingTop: desktop ? 92 : 74 }}>
             {section !== "chat" && (
               <ScrollView
                 key={section}
@@ -463,21 +463,12 @@ function WorkspaceShell({
               alignItems: "center",
             }}
           >
+            {/* 照 Muse：底部就是几个图标铺在底色上，不套整块白底容器 */}
             <View
               style={{
                 flexDirection: "row",
                 width: "100%",
                 maxWidth: 370,
-                padding: 5,
-                backgroundColor: "#FFF",
-                borderRadius: 40,
-                shadowColor: "#132631",
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.07,
-                shadowRadius: 18,
-                elevation: 3,
-                borderWidth: 1,
-                borderColor: "#F8F8F8",
               }}
             >
               {nav.map((item) => {
@@ -494,14 +485,14 @@ function WorkspaceShell({
                     }}
                     style={{
                       flex: 1,
-                      height: 47,
+                      height: 44,
                       alignItems: "center",
                       justifyContent: "center",
                       backgroundColor: active ? "#F0F1F2" : "transparent",
                       borderRadius: 28,
                     }}
                   >
-                    <item.icon size={23} strokeWidth={1.8} color={colors.text} />
+                    <item.icon size={22} strokeWidth={1.7} color={colors.text} />
                   </Pressable>
                 );
               })}
