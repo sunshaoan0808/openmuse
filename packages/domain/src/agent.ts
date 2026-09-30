@@ -131,6 +131,15 @@ export interface AgentWorkspace {
   notifications: AgentNotification[];
   identity: AgentIdentity;
   worker: { running: boolean; lastTickAt?: string };
+  /** 智能体此刻在干什么（App 动态页显示实时状态）；太久没更新则为空。 */
+  live?: {
+    id: string;
+    tool: string;
+    text: string;
+    detail: string;
+    threadId?: string;
+    at: string;
+  } | null;
 }
 export const createTaskSchema = z.object({
   title: z.string().trim().min(1).max(160).optional(),

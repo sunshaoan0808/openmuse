@@ -170,3 +170,56 @@ export function browserActionLabel(action: string, detail?: string) {
   if (!detail) return verb;
   return `${verb}「${detail}」`;
 }
+
+/**
+ * 工具名 → 当前动作（与服务端 live-activity 同一套说法）。
+ * 用于聊天里"智能体正在干活"那一行，以及动态页的实时状态。
+ */
+const AGENT_ACTIONS: Record<string, string> = {
+  search_web: "正在搜索网页",
+  read_pages: "正在读网页",
+  browse_web: "正在打开网页",
+  page_elements: "正在看页面结构",
+  page_act: "正在操作网页",
+  look_page: "正在看页面截图",
+  read_image: "正在看图",
+  read_mail_thread: "正在读邮件",
+  search_mail: "正在翻邮件",
+  delegate_task: "正在派活给后台",
+  watch_page: "正在设置网页监控",
+  create_goal: "正在定目标",
+  remember_fact: "正在记下这条",
+  agent_status: "正在看自己的状态",
+  present_choices: "正在整理选项",
+};
+
+export function agentActionLabel(tool: string) {
+  return AGENT_ACTIONS[tool] ?? `正在使用 ${tool}`;
+}
+
+/** 从工具参数里挑最能说明"在干什么"的那个值（查询词/网址/动作），压平并截断。 */
+export function actionDetail(args: unknown, limit = 60) {
+  if (!args || typeof args !== "object") return "";
+  const record = args as Record<string, unknown>;
+  for (const key of ["query", "url", "urls", "action", "message", "title", "text", "prompt"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      const text = value.replace(/\s+/g, " ").trim();
+      return text.length > limit ? `${text.slice(0, limit).trimEnd()}…` : text;
+    }
+    if (Array.isArray(value) && value.length) return `${value.length} 个地址`;
+  }
+  return "";
+}
+
+/** 相对时间："刚刚 / N 秒前 / N 分钟前"，用于实时状态的心跳感。 */
+export function relativeTime(iso: string, now = Date.now()) {
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return "";
+  const seconds = Math.max(0, Math.round((now - at) / 1000));
+  if (seconds < 5) return "刚刚";
+  if (seconds < 60) return `${seconds} 秒前`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} 分钟前`;
+  return `${Math.round(minutes / 60)} 小时前`;
+}

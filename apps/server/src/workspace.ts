@@ -13,7 +13,7 @@ import { GoogleClient } from "../../../packages/integrations/src/google.ts";
 import { createSamplePdf } from "../../../packages/integrations/src/pdf.ts";
 import type { ActionService } from "./actions.ts";
 import { agentConfigured } from "./agent.ts";
-import type { Config } from "./config.ts";
+import { type Config, intelligenceConfigured } from "./config.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
 import type { Files } from "./files.ts";
@@ -323,11 +323,11 @@ export class WorkspaceService {
         provider: this.config.agentBackend === "sample" ? "sample" : "model",
         configured: agentConfigured(this.config),
         openbotConfigured: false,
-        // 有 Intelligence（官方或自家垫片）才有富线程；否则 App 走本地 /api/conversation
-        // 富线程（多会话侧栏/历史水合）在两种模式下都可用：Intelligence 模式走云，
-        // SSE 模式走运行时自带的本地线程端点（/threads 列表、/threads/:id/messages、/state）。
-        // 唯一缺口是本地端点默认内存存储——持久化由 DurableAgentRunner 补齐（见 A 路线）。
-        richThreads: true,
+        // CopilotKit 的富线程接口（列表/改名/归档）只有接了 Intelligence 才存在；没接还报 true，
+        // App 会启用那套 UI 并在改名/归档时抛 "Thread mutations are not available"。
+        // 没接时改走我们自己的已保存会话：/api/threads + /api/conversation?threadId=（见 app.ts）。
+        richThreads: intelligenceConfigured(this.config),
+        savedThreads: true,
       },
     };
   }

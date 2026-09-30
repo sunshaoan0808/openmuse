@@ -53,7 +53,7 @@ import {
 } from "./image-attachment";
 import { confirmedJevSelection, displayJevUserMessage, latestJevPanelId } from "./jev-actions";
 import { JevInteractionContext, JevToolCard } from "./jev-tool-card";
-import { actionKindLabel, proposalStatusLabel } from "./labels";
+import { actionDetail, actionKindLabel, agentActionLabel, proposalStatusLabel } from "./labels";
 import { MailToolCard } from "./mail-tool-card";
 import { type HeroRect, usePressScale, usePulse } from "./motion";
 import { SearchToolCard } from "./search-tool-card";
@@ -386,9 +386,9 @@ export function ChatScreen({
 }) {
   const { api, open, workspace: w, refresh, navigate } = useWorkspace();
   const { data: agentWorkspace, refresh: refreshAgent } = useAgentWorkspace();
-  const { enabled: richThreads, mainId, claimPrompt } = useMuseThread();
+  const { enabled: savedThreads, mainId, claimPrompt } = useMuseThread();
   const selection = thread || { id: "local", existing: false };
-  const threadId = richThreads ? selection.id : "local-main";
+  const threadId = savedThreads ? selection.id : "local-main";
   const agentId = `openmuse-${threadId}`;
   const { agent, isReady } = useAgent({ agentId, runtimeAgentId: "default", threadId });
   const { copilotkit } = useCopilotKit();
@@ -403,10 +403,10 @@ export function ChatScreen({
             action.status === "awaiting_review" &&
             (action.threadId
               ? action.threadId === threadId
-              : !richThreads || selection.id === mainId),
+              : !savedThreads || selection.id === mainId),
         )
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [w.actions, threadId, richThreads, mainId, selection.id],
+    [w.actions, threadId, savedThreads, mainId, selection.id],
   );
   useEffect(() => {
     const previous = seenPending.current;
@@ -463,24 +463,13 @@ export function ChatScreen({
     let active = true;
     setHistoryError("");
     setLoaded(false);
-    const replay = agent.subscribe({
-      onMessagesChanged: ({ messages }) => {
-        if (active && richThreads && messages.length) setLoaded(true);
-      },
-    });
+    // 历史按会话存在我们自己的服务端（/api/conversation?threadId=…）
     async function hydrate() {
       try {
-        if (richThreads) {
-          if (selection.existing)
-            await runConversationTurn(
-              agentId,
-              () => copilotkit.connectAgent({ agent }),
-              (onError) => copilotkit.subscribe({ onError }),
-            );
-        } else {
-          const { messages } = await api.request<{ messages: Message[] }>("/api/conversation");
-          if (active) agent.setMessages(messages);
-        }
+        const { messages } = await api.request<{ messages: Message[] }>(
+          `/api/conversation?threadId=${encodeURIComponent(threadId)}`,
+        );
+        if (active) agent.setMessages(messages);
         if (active) setLoaded(true);
       } catch (e) {
         if (active) {
@@ -494,14 +483,40 @@ export function ChatScreen({
     void hydrate();
     return () => {
       active = false;
-      replay.unsubscribe();
-      if (richThreads) void agent.detachActiveRun().catch(() => {});
     };
-  }, [agent, agentId, api, copilotkit, isReady, historyAttempt, richThreads, selection.existing]);
+  }, [agent, api, isReady, historyAttempt, threadId]);
+  // 正在跑、还没结果的工具调用：聊天里显示"当前在干什么"
+  const inFlight = useMemo(() => {
+    const messages = agent.messages;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role !== "assistant" || !message.toolCalls?.length) continue;
+      for (const call of message.toolCalls) {
+        const answered = messages.some(
+          (item) => item.role === "tool" && item.toolCallId === call.id,
+        );
+        if (!answered) {
+          let args: unknown;
+          try {
+            args = JSON.parse(call.function?.arguments || "{}");
+          } catch {
+            args = undefined;
+          }
+          return { name: call.function?.name ?? "", detail: actionDetail(args) };
+        }
+      }
+      return undefined;
+    }
+    return undefined;
+  }, [agent.messages]);
   const saveHistory = useCallback(async () => {
-    if (!richThreads) await api.request("/api/conversation", { messages: agent.messages }, "PUT");
+    await api.request(
+      `/api/conversation?threadId=${encodeURIComponent(threadId)}`,
+      { messages: agent.messages },
+      "PUT",
+    );
     setSaveError("");
-  }, [agent, api, richThreads]);
+  }, [agent, api, threadId]);
   const run = useCallback(
     async (message?: QueuedMessage) => {
       if (runLock.current || agent.isRunning || !isReady || !loaded)
@@ -887,7 +902,7 @@ export function ChatScreen({
             ))}
           </View>
         )}
-        {!richThreads && (
+        {
           <>
             {(w.files.some((file) => file.parentId) ||
               w.browsers.some((browser) => browser.status === "active") ||
@@ -930,8 +945,8 @@ export function ChatScreen({
               </>
             )}
           </>
-        )}
-        {(!richThreads || selection.id === mainId) && <BackgroundUpdates />}
+        }
+        {(!savedThreads || selection.id === mainId) && <BackgroundUpdates />}
         {(busy || agent.isRunning) && (
           <View
             accessibilityLabel="智能体正在工作"
@@ -939,15 +954,28 @@ export function ChatScreen({
               s.row,
               {
                 alignSelf: "flex-start",
-                gap: 7,
+                gap: 10,
+                alignItems: "center",
                 paddingHorizontal: 19,
-                paddingVertical: 18,
+                paddingVertical: 16,
                 backgroundColor: "#EEEEF0",
                 borderRadius: 28,
+                maxWidth: "88%",
               },
             ]}
           >
             <ThinkingDots />
+            {/* 说人话：正在搜索网页 · 金球奖 今年 得主（Muse 式实时状态） */}
+            {inFlight && (
+              <View style={{ gap: 2, flexShrink: 1 }}>
+                <Text style={s.text}>{agentActionLabel(inFlight.name)}</Text>
+                {!!inFlight.detail && (
+                  <Text style={s.small} numberOfLines={1}>
+                    {inFlight.detail}
+                  </Text>
+                )}
+              </View>
+            )}
           </View>
         )}
         <ErrorNotice error={error} />

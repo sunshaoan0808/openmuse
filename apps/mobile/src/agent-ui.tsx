@@ -20,8 +20,8 @@ import {
   Users,
   X,
 } from "lucide-react-native";
-import { useEffect, useState } from "react";
-import { ActivityIndicator, Image, Linking, Pressable, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Animated, Image, Linking, Pressable, Text, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import type { ActionProposal, Artifact, BrowserSession } from "../../../packages/domain/src";
 import type {
@@ -40,6 +40,7 @@ import {
   fieldLabel,
   missingCount,
   pendingSummary,
+  relativeTime,
   statusLabel,
   stepStatusLabel,
   taskStatusLabel,
@@ -81,9 +82,45 @@ function errorText(e: unknown) {
 function activeTask(task: AgentTask) {
   return !["succeeded", "failed", "cancelled"].includes(task.status);
 }
+/** 一闪一闪的"在干活"指示灯。 */
+function LivePulse() {
+  const opacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.25, duration: 700, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 1, duration: 700, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [opacity]);
+  return (
+    <Animated.View
+      style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: colors.orange, opacity }}
+    />
+  );
+}
+/**
+ * 实时状态：智能体此刻在干什么。
+ *
+ * 上游这里只显示 worker 在线与否，看不出它在做什么；Muse 是一边干活一边显示当前动作。
+ * 数据来自服务端的 /api/agent`live`（每次工具调用都会更新）——太旧会自动消失，
+ * 所以这里同时显示"多久之前"，并且每 5 秒重算一次相对时间。
+ */
 export function AgentStatus() {
   const { data, error, refresh } = useAgentWorkspace();
-  if (data?.worker.running && !error) return null;
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => tick((n) => n + 1), 5000);
+    return () => clearInterval(timer);
+  }, []);
+  const live = data?.live ?? undefined;
+  const running = (data?.tasks ?? []).find((task) => ["running", "waiting"].includes(task.status));
+  const step = running?.plan.find((item) => ["running", "waiting"].includes(item.status));
+  const text = live?.text ?? (running ? `正在执行：${running.title}` : "");
+  const detail = live?.detail || (step ? `${stepStatusLabel(step.status)} · ${step.title}` : "");
+  const at = live?.at ?? running?.updatedAt;
   return (
     <View style={{ gap: 8 }}>
       <ErrorNotice error={error ? `Agent updates unavailable. ${error}` : ""} />
@@ -93,7 +130,24 @@ export function AgentStatus() {
         </Button>
       )}
       {!data && !error && <ActivityIndicator color={colors.blueDark} />}
-      {data && !data.worker.running && (
+      {!!data && !!text && (
+        <Card style={{ padding: 16, gap: 8, borderRadius: 22 }}>
+          <View style={[s.row, { gap: 9, alignItems: "center" }]}>
+            <LivePulse />
+            <Text style={[s.text, { flex: 1 }]}>{text}</Text>
+            {!!at && <Text style={s.small}>{relativeTime(at)}</Text>}
+          </View>
+          {!!detail && (
+            <Text style={s.small} numberOfLines={2}>
+              {detail}
+            </Text>
+          )}
+        </Card>
+      )}
+      {!!data && !text && data.worker.running && (
+        <Text style={s.small}>待命中。它在聊天里接到活之后，这里会显示当前在做什么。</Text>
+      )}
+      {!!data && !data.worker.running && (
         <Text style={s.small}>worker 离线，已保存的工作会在它重连后继续。</Text>
       )}
     </View>

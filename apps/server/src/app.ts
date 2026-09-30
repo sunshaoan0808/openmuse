@@ -22,6 +22,14 @@ import { Files } from "./files.ts";
 import { GoogleAuth } from "./google-auth.ts";
 import { backgroundFailure } from "./log.ts";
 import { SearchService } from "./search.ts";
+import {
+  conversationRecordId,
+  mainThreadId,
+  mergeThread,
+  type SavedThread,
+  sortThreads,
+  titleFromMessages,
+} from "./threads.ts";
 import { WorkspaceService } from "./workspace.ts";
 
 export async function createApp(
@@ -211,10 +219,62 @@ export async function createApp(
       201,
     );
   });
-  app.get("/api/main-thread", async (c) => {
-    // 本地会话模式：不需要平台线程，直接用固定线程号
-    if (!intelligence) return c.json({ threadId: "local-main", existing: true });
+  // ---- 本地已保存会话（不走 CopilotKit 云线程）----
+  const ensureThread = async (
+    owner: string,
+    id: string,
+    options: {
+      name?: string;
+      archived?: boolean;
+      autoTitle?: string;
+      messageCount?: number;
+      agentId?: string;
+    } = {},
+  ): Promise<SavedThread> => {
+    const existing = await db.get<SavedThread>(owner, "threads", id);
+    const next = mergeThread(existing ?? undefined, id, {
+      now: new Date().toISOString(),
+      ...options,
+    });
+    await db.put(owner, "threads", next);
+    return next;
+  };
+  app.get("/api/threads", async (c) => {
     const owner = c.get("owner");
+    await ensureThread(owner, mainThreadId);
+    return c.json({ threads: sortThreads(await db.list<SavedThread>(owner, "threads")) });
+  });
+  app.patch("/api/threads/:id", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const patch = z
+      .object({ name: z.string().trim().max(80).optional(), archived: z.boolean().optional() })
+      .parse(body ?? {});
+    const thread = await ensureThread(c.get("owner"), c.req.param("id"), patch);
+    return c.json({ thread });
+  });
+  app.post("/api/threads/:id/archive", async (c) => {
+    const thread = await ensureThread(c.get("owner"), c.req.param("id"), { archived: true });
+    return c.json({ thread });
+  });
+  app.post("/api/threads/:id/unarchive", async (c) => {
+    const thread = await ensureThread(c.get("owner"), c.req.param("id"), { archived: false });
+    return c.json({ thread });
+  });
+  app.delete("/api/threads/:id", async (c) => {
+    const owner = c.get("owner");
+    const id = c.req.param("id");
+    if (id === mainThreadId) throw new AppError("主会话不能删除");
+    await db.remove(owner, "threads", id);
+    await db.remove(owner, "conversations", conversationRecordId(id));
+    return c.json({ ok: true });
+  });
+  app.get("/api/main-thread", async (c) => {
+    const owner = c.get("owner");
+    // 本地会话模式：不需要平台线程，用固定线程号，会话记录由我们自己存
+    if (!intelligence) {
+      await ensureThread(owner, mainThreadId);
+      return c.json({ threadId: mainThreadId, existing: true });
+    }
     await db.insertIfAbsent(owner, "conversation-settings", {
       id: "main",
       threadId: randomUUID(),
@@ -233,14 +293,28 @@ export async function createApp(
     }
     return c.json({ threadId: main.threadId, existing: true });
   });
-  app.get("/api/conversation", async (c) =>
-    c.json((await db.get(c.get("owner"), "conversations", "default")) ?? { messages: [] }),
-  );
+  app.get("/api/conversation", async (c) => {
+    const owner = c.get("owner");
+    const threadId = c.req.query("threadId");
+    return c.json(
+      (await db.get(owner, "conversations", conversationRecordId(threadId))) ?? { messages: [] },
+    );
+  });
   app.put("/api/conversation", async (c) => {
+    const owner = c.get("owner");
+    const threadId = c.req.query("threadId");
     const body = await c.req.json();
     const messages = z.array(z.unknown()).max(1000).parse(body.messages);
     for (const message of messages) MessageSchema.parse(message);
-    await db.put(c.get("owner"), "conversations", { id: "default", messages });
+    await db.put(owner, "conversations", {
+      id: conversationRecordId(threadId),
+      messages,
+    });
+    if (threadId)
+      await ensureThread(owner, threadId, {
+        autoTitle: titleFromMessages(messages),
+        messageCount: messages.length,
+      });
     return c.json({ ok: true });
   });
   app.post("/api/files", async (c) => {
@@ -354,12 +428,14 @@ export async function createApp(
       throw new AppError("要开始聊天，请配置模型与供应商 API key，或一个有效的 AG-UI 端点", 503);
     try {
       let threadId: string | undefined;
+      let messages: unknown[] | undefined;
       if (c.req.method !== "GET" && c.req.method !== "HEAD") {
         const text = await c.req.raw.clone().text();
         if (text) {
           try {
-            const body = JSON.parse(text) as { threadId?: unknown };
+            const body = JSON.parse(text) as { threadId?: unknown; messages?: unknown };
             if (typeof body.threadId === "string") threadId = body.threadId;
+            if (Array.isArray(body.messages)) messages = body.messages;
           } catch {
             // 非 JSON 请求体，忽略
           }
@@ -373,6 +449,26 @@ export async function createApp(
           agentId: "default",
         });
         knownThreads.add(threadId);
+      }
+      // 本地会话：进一次对话就把会话登记下来（带上自动标题与消息），
+      // 这样侧会话会自己出现在列表里，历史也不依赖 App 主动保存。
+      if (threadId && !intelligence) {
+        const owner = c.get("owner");
+        await ensureThread(owner, threadId, {
+          autoTitle: titleFromMessages(messages),
+          messageCount: messages?.length,
+        });
+        if (messages?.length) {
+          try {
+            for (const message of messages) MessageSchema.parse(message);
+            await db.put(owner, "conversations", {
+              id: conversationRecordId(threadId),
+              messages,
+            });
+          } catch {
+            // 消息形状不合规就不落库，别影响这一轮对话
+          }
+        }
       }
     } catch (error) {
       // 不阻断请求：让运行时按原路径如实报错，日志里留下原因

@@ -185,7 +185,10 @@ export interface Workspace {
     provider: "sample" | "model" | "openbot";
     configured: boolean;
     openbotConfigured: boolean;
+    /** CopilotKit 云富线程（列表/改名/归档只有 Intelligence 才有）。 */
     richThreads?: boolean;
+    /** 我们自己存的已保存会话（列表/改名/归档/每条会话的历史）。 */
+    savedThreads?: boolean;
   };
 }
 
