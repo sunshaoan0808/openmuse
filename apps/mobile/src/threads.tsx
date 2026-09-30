@@ -1,4 +1,3 @@
-import { useThreads } from "@copilotkit/react-native/headless";
 import {
   Archive,
   CalendarDays,
@@ -11,6 +10,7 @@ import {
 } from "lucide-react-native";
 import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
+import { useSavedThreads } from "./saved-threads";
 import { SkeletonRows } from "./skeleton";
 import { Button, colors, ErrorNotice, Field, LinkRow, Sheet, s } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -38,7 +38,8 @@ const ThreadContext = createContext<{
 export function ThreadsProvider({ children }: { children: ReactNode }) {
   const { workspace, navigate, api } = useWorkspace();
   const handledPrompt = useRef(0);
-  const enabled = workspace.runtime.richThreads === true;
+  // 已保存会话由我们自己的服务端实现（/api/threads），不再依赖 CopilotKit 云富线程
+  const enabled = workspace.runtime.savedThreads === true;
   const [selection, setSelection] = useState<Selection>({ id: "local", existing: false });
   const [visited, setVisited] = useState<Selection[]>([]);
   const [mainId, setMainId] = useState("local");
@@ -113,7 +114,7 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
     start,
   } = useMuseThread();
   const { workspace, open, navigate, refresh } = useWorkspace();
-  const threads = useThreads({ agentId: "default", enabled, includeArchived: true, limit: 20 });
+  const threads = useSavedThreads({ enabled });
   const [editing, setEditing] = useState<string>();
   const [name, setName] = useState("");
   const [error, setError] = useState("");
@@ -167,7 +168,7 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
             <View style={[s.between, { marginTop: 12 }]}>
               <Text style={s.heading}>侧边聊天</Text>
               <Button small onPress={() => setArchived(!archived)}>
-                {archived ? "只看进行中" : "Archived"}
+                {archived ? "只看进行中" : "已归档"}
               </Button>
             </View>
             {threads.isLoading && <SkeletonRows count={2} />}
@@ -187,7 +188,7 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                   <LinkRow
                     key={item.id}
                     icon={MessageCircle}
-                    title={`Side chat ${index + 1}`}
+                    title={`侧边会话 ${index + 1}`}
                     detail="在本应用中打开"
                     onPress={() => {
                       select(item);
@@ -209,7 +210,7 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                 >
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={`Open conversation: ${thread.name || "未命名会话"}`}
+                    accessibilityLabel={`打开会话：${thread.name || "未命名会话"}`}
                     accessibilityState={{ selected: selection.id === thread.id }}
                     onPress={() => {
                       select({ id: thread.id, existing: true });
@@ -236,7 +237,7 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                         }
                       }}
                     >
-                      {editing === thread.id ? "保存名称" : "Rename"}
+                      {editing === thread.id ? "保存名称" : "重命名"}
                     </Button>
                     <Button
                       small
@@ -250,7 +251,14 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                         )
                       }
                     >
-                      {thread.archived ? "Restore" : "Archive"}
+                      {thread.archived ? "恢复" : "归档"}
+                    </Button>
+                    <Button
+                      small
+                      disabled={threads.isMutating}
+                      onPress={() => void mutate(() => threads.deleteThread(thread.id))}
+                    >
+                      删除
                     </Button>
                   </View>
                 </View>

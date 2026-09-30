@@ -5,6 +5,7 @@ import {
   goalInputSchema,
   monitorInputSchema,
 } from "../../../../packages/domain/src/agent.ts";
+import { withActivity } from "../live-activity.ts";
 import { hasCjk, mergeSearchResults } from "../search.ts";
 import { lookAtImage } from "../vision.ts";
 import type { AgentService } from "./service.ts";
@@ -99,7 +100,9 @@ function numberArg(options: { min: number; max: number; fallback?: number; optio
 export function chatTools(ctx: ChatToolContext): NeutralTool[] {
   /** 保留泛型推断：parameters 决定 execute 入参类型 */
   const tool = <S extends z.ZodType>(spec: NeutralTool<S>): NeutralTool<S> => spec;
-  return [
+  // 所有工具统一套一层"当前动作"上报：App 因此能显示实时状态（Muse 式），
+  // 两条引擎共用这批工具，所以不必在每个工具里各写一遍。
+  return withActivity(ctx, [
     tool({
       name: "search_mail",
       description:
@@ -397,5 +400,5 @@ export function chatTools(ctx: ChatToolContext): NeutralTool[] {
         return value;
       },
     }),
-  ];
+  ]);
 }

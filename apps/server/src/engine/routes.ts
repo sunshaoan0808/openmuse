@@ -7,6 +7,7 @@ import type {
   AgentNotification,
 } from "../../../../packages/domain/src/agent.ts";
 import { AppError } from "../errors.ts";
+import { readActivity } from "../live-activity.ts";
 import type { AgentService } from "./service.ts";
 
 const text = z.string().trim().min(1).max(4000);
@@ -27,7 +28,15 @@ const goalPatchSchema = z.object({
 
 export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: string } }> {
   const app = new Hono<{ Variables: { owner: string } }>();
-  app.get("/", async (c) => c.json(await service.snapshot(c.get("owner"))));
+  app.get("/", async (c) => {
+    const owner = c.get("owner");
+    const [snapshot, live] = await Promise.all([
+      service.snapshot(owner),
+      readActivity(service.db, owner),
+    ]);
+    // live：智能体此刻在干什么（App 的动态页显示实时状态）
+    return c.json({ ...snapshot, live });
+  });
   app.post("/tasks", async (c) =>
     c.json(await service.createTask(c.get("owner"), await c.req.json()), 201),
   );

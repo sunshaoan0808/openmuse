@@ -1383,7 +1383,13 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
               />
               <SettingsLine
                 label="多会话线程"
-                value={w.runtime.richThreads ? "CopilotKit Intelligence" : "未连接"}
+                value={
+                  w.runtime.richThreads
+                    ? "CopilotKit Intelligence"
+                    : w.runtime.savedThreads
+                      ? "本地保存（自有服务端）"
+                      : "未连接"
+                }
               />
               <Button
                 small
