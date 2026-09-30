@@ -1,6 +1,7 @@
 import { Bell, ListChecks, MessageCircle, PanelsTopLeft, Plus } from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
 import { useAgentWorkspace } from "./agent-workspace";
+import { ComputerEntry } from "./computer";
 import { agentActionLabel, relativeTime, statusLabel } from "./labels";
 import { Button, colors, Mascot, Sheet, s } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -134,6 +135,10 @@ export function AvatarPanel({ onClose }: { onClose: () => void }) {
         >
           查看动态
         </Button>
+      </View>
+      {/* 顶栏卡片要窄（照 Muse），所以"可接管"这类入口移到这里来 */}
+      <View style={{ marginTop: 14, alignItems: "center" }}>
+        <ComputerEntry />
       </View>
     </Sheet>
   );
