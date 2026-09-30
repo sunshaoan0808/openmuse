@@ -390,6 +390,8 @@ export function EvidenceList({ items }: { items: Evidence[] }) {
 export function TaskDetail({ taskId }: { taskId: string }) {
   const { api, workspace, close, open, refresh: refreshWorkspace } = useWorkspace();
   const { data, mutate } = useAgentWorkspace();
+  // 照 Muse 的详情页：副标题显示"此刻正在做的那一步"，而不是静态状态
+  const liveNow = (data?.live ?? []).find((activity) => activity.threadId === taskId);
   const [detail, setDetail] = useState<{
     task: AgentTask;
     events: RunEvent[];
@@ -506,7 +508,9 @@ export function TaskDetail({ taskId }: { taskId: string }) {
       title={task?.title || "任务"}
       subtitle={
         task
-          ? `${taskStatusLabel(task.status)} · ${stamp(task.updatedAt)}`
+          ? liveNow
+            ? `${liveNow.text}${liveNow.detail ? ` · ${liveNow.detail}` : ""}`
+            : `${taskStatusLabel(task.status)} · ${stamp(task.updatedAt)}`
           : "正在加载已保存的进展…"
       }
       onClose={close}
@@ -729,15 +733,42 @@ export function TaskDetail({ taskId }: { taskId: string }) {
           {detail?.events.map((event) => (
             <View
               key={event.id}
-              style={{ gap: 4, paddingLeft: 14, borderLeftWidth: 2, borderLeftColor: colors.line }}
+              style={[
+                s.row,
+                {
+                  gap: 9,
+                  alignItems: "flex-start",
+                  paddingLeft: 12,
+                  borderLeftWidth: 2,
+                  borderLeftColor: event.kind === "error" ? colors.danger : colors.line,
+                },
+              ]}
             >
-              <Text style={s.small}>
-                {stamp(event.date)} · {statusLabel(event.kind)}
+              {/* 照 Muse：每一步带结果标记（完成 ✓ / 失败 ✗ / 交付 ★） */}
+              <Text
+                style={[
+                  s.text,
+                  {
+                    color:
+                      event.kind === "error"
+                        ? colors.danger
+                        : event.kind === "result"
+                          ? colors.blueDark
+                          : "#1F8A4C",
+                  },
+                ]}
+              >
+                {event.kind === "error" ? "✗" : event.kind === "result" ? "★" : "✓"}
               </Text>
-              <Text style={s.text}>{event.title}</Text>
-              <Text selectable style={s.muted}>
-                {event.detail}
-              </Text>
+              <View style={{ flex: 1, gap: 4 }}>
+                <Text style={s.small}>
+                  {stamp(event.date)} · {statusLabel(event.kind)}
+                </Text>
+                <Text style={s.text}>{event.title}</Text>
+                <Text selectable style={s.muted}>
+                  {event.detail}
+                </Text>
+              </View>
             </View>
           ))}
           {!detail?.events.length && <Text style={s.muted}>worker 会把每一步记录在这里。</Text>}
