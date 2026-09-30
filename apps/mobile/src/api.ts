@@ -75,6 +75,9 @@ function isNetworkError(error: unknown) {
 }
 
 const RETRY_DELAYS = [400, 1200, 2500];
+/** 单次请求的超时（毫秒）。RN 的 fetch 默认**不会**超时：链路一挂，请求能悬着几分钟，
+ *  调用方的 busy 就永远为 true —— 真机上出现过"按钮点了没反应、只能靠服务端状态变化消失"。 */
+const REQUEST_TIMEOUT_MS = 20_000;
 
 async function withRetry<T>(
   url: string,
@@ -116,8 +119,11 @@ export class MuseApi {
       path.startsWith("/api/conversation") ||
       !!options?.idempotencyKey;
     return withRetry(url, idempotent, async () => {
-      const call = () =>
-        fetch(url, {
+      const call = () => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+        return fetch(url, {
+          signal: controller.signal,
           method: verb,
           headers: {
             Authorization: `Bearer ${this.token}`,
@@ -128,7 +134,8 @@ export class MuseApi {
           },
           body:
             body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
-        });
+        }).finally(() => clearTimeout(timer));
+      };
       let response: Response;
       try {
         response = await call();
