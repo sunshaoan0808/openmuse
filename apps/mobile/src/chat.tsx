@@ -46,6 +46,7 @@ import { acknowledgedIds, mergeConversation } from "./conversation-merge";
 import { ConversationQueue, type QueuedMessage } from "./conversation-queue";
 import { runConversationTurn } from "./conversation-run";
 import { loadCursor, outboxStorage, saveCursor } from "./conversation-store";
+import { guard } from "./crash-log";
 import { hapticPress, hapticSuccess, hapticTap, hapticWarn } from "./haptics";
 import { headerScrollHandler } from "./header-scrim";
 import {
@@ -1364,7 +1365,7 @@ export function ChatScreen({
               disabled={!replying && (!draft.trim() || !loaded || !isReady)}
               onPressIn={sendPress.onPressIn}
               onPressOut={sendPress.onPressOut}
-              onPress={replying ? () => void stop() : send}
+              onPress={replying ? () => void stop() : guard("send", send)}
               style={{
                 width: 44,
                 height: 44,
