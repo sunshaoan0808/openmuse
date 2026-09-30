@@ -42,8 +42,10 @@ import { BackgroundUpdates } from "./background-updates";
 import { BrowserActionCard } from "./browser-action-card";
 import { BrowserRunContext, BrowserToolCard } from "./browser-tool-card";
 import { BrowserThreadCard } from "./computer";
+import { acknowledgedIds, mergeConversation } from "./conversation-merge";
 import { ConversationQueue, type QueuedMessage } from "./conversation-queue";
 import { runConversationTurn } from "./conversation-run";
+import { loadCursor, outboxStorage, saveCursor } from "./conversation-store";
 import { hapticPress, hapticSuccess, hapticTap, hapticWarn } from "./haptics";
 import {
   captureImage,
@@ -436,11 +438,15 @@ export function ChatScreen({
   const [imageBusy, setImageBusy] = useState<ImageSource | "">("");
   const [attachError, setAttachError] = useState("");
   const list = useRef<ScrollView>(null);
-  const [queue] = useState(() => new ConversationQueue());
+  // 待发消息落本地：杀掉 App 也不丢（收到服务端确认才清）
+  const [queue] = useState(() => new ConversationQueue(outboxStorage));
   const choiceCompletions = useRef(
     new Map<string, { resolve: () => void; reject: (error: unknown) => void }>(),
   );
   const outbox = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot);
+  useEffect(() => {
+    void queue.restore();
+  }, [queue]);
   const followLatest = useRef(true);
   const [awayFromLatest, setAwayFromLatest] = useState(false);
   const runLock = useRef(false);
@@ -458,18 +464,37 @@ export function ChatScreen({
   // 历史消息进场不逐个播动画，只有"新来的"才淡入上浮
   const animatedMessages = useRef(new Set<string>());
   const hydratedMessages = useRef(false);
+  /**
+   * 按游标拉增量（Telegram 那套 offset）：重开 App 时把断线期间写完的回复补回来，
+   * 同时用"服务端已存到哪些消息"给本地待发队列清账（ACK）。
+   */
+  const [lastTurn, setLastTurn] = useState<{ status: string } | null>(null);
+  const syncConversation = useCallback(async () => {
+    const since = await loadCursor(threadId);
+    const result = await api.request<{
+      messages: Message[];
+      seq: number;
+      turn?: { status: string } | null;
+    }>(
+      `/api/conversation?threadId=${encodeURIComponent(threadId)}${since === undefined ? "" : `&since=${since}`}`,
+    );
+    const incoming = result.messages ?? [];
+    if (incoming.length)
+      agent.setMessages(mergeConversation(agent.messages, incoming) as Message[]);
+    await saveCursor(threadId, result.seq ?? 0);
+    for (const id of acknowledgedIds(incoming)) queue.remove(id);
+    setLastTurn(result.turn ?? null);
+    return result;
+  }, [agent, api, threadId, queue]);
   useEffect(() => {
     if (!isReady) return;
     let active = true;
     setHistoryError("");
     setLoaded(false);
-    // 历史按会话存在我们自己的服务端（/api/conversation?threadId=…）
+    // 历史按会话存在我们自己的服务端，按游标增量补（断线期间写完的回复也在这里补回来）
     async function hydrate() {
       try {
-        const { messages } = await api.request<{ messages: Message[] }>(
-          `/api/conversation?threadId=${encodeURIComponent(threadId)}`,
-        );
-        if (active) agent.setMessages(messages);
+        await syncConversation();
         if (active) setLoaded(true);
       } catch (e) {
         if (active) {
@@ -484,7 +509,7 @@ export function ChatScreen({
     return () => {
       active = false;
     };
-  }, [agent, api, isReady, historyAttempt, threadId]);
+  }, [agent, api, isReady, historyAttempt, threadId, syncConversation]);
   // 正在跑、还没结果的工具调用：聊天里显示"当前在干什么"
   const inFlight = useMemo(() => {
     const messages = agent.messages;
@@ -532,6 +557,8 @@ export function ChatScreen({
           (onError) => copilotkit.subscribe({ onError }),
         );
         await Promise.all([refresh(), refreshAgent()]);
+        // 这一轮的服务端副本此刻可能还在写，拉不到也没关系：下次打开时游标会补上
+        await syncConversation().catch(() => {});
       } finally {
         try {
           await saveHistory();
@@ -546,7 +573,18 @@ export function ChatScreen({
         }
       }
     },
-    [agent, agentId, copilotkit, isReady, loaded, refresh, refreshAgent, saveHistory, queue],
+    [
+      agent,
+      agentId,
+      copilotkit,
+      isReady,
+      loaded,
+      refresh,
+      refreshAgent,
+      saveHistory,
+      queue,
+      syncConversation,
+    ],
   );
   const runQueued = useCallback(
     async (message: QueuedMessage) => {
@@ -978,6 +1016,20 @@ export function ChatScreen({
             )}
           </View>
         )}
+        {/* 服务重启/出错导致上一轮没跑完：说清楚并给重试入口，而不是让人干等 */}
+        {!busy &&
+          !agent.isRunning &&
+          !!lastTurn &&
+          ["failed", "interrupted"].includes(lastTurn.status) &&
+          agent.messages.at(-1)?.role === "user" && (
+            <ErrorNotice
+              error={
+                lastTurn.status === "interrupted"
+                  ? "上一轮没有跑完（服务重启或连接中断）。点「重试回复」重新问一次。"
+                  : "上一轮出错了。点「重试回复」重新问一次。"
+              }
+            />
+          )}
         <ErrorNotice error={error} />
         {!!error && (
           <Button
