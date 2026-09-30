@@ -42,7 +42,10 @@ import { AvatarPanel } from "./src/avatar-panel";
 import { ChatScreen, WorkspaceTools } from "./src/chat";
 import { ComputerEntry } from "./src/computer";
 import { ComputerDraftProvider } from "./src/computer-drafts";
+import { installCrashHandler } from "./src/crash-log";
+import { CrashNotice } from "./src/crash-notice";
 import { Details } from "./src/details";
+import { ErrorBoundary } from "./src/error-boundary";
 import { hapticTap } from "./src/haptics";
 import { headerScrimOpacity, headerScrollHandler } from "./src/header-scrim";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
@@ -75,6 +78,9 @@ const titles: Partial<Record<Section, { title: string; subtitle: string }>> = {
   browser: { title: "浏览器", subtitle: "你已连接的浏览会话。" },
   files: { title: "文件", subtitle: "文档、表单与已填写的副本。" },
 };
+// 尽早接住全局异常：release 包里未捕获的 JS 异常就是无提示闪退
+installCrashHandler();
+
 export default function App() {
   // edge-to-edge 下 Android 不执行 adjustResize，键盘会盖住输入区；在根上补内边距统一解决
   const keyboardInset = useAndroidKeyboardInset();
@@ -115,69 +121,72 @@ export default function App() {
     })();
   }, [connect]);
   return (
-    <SafeAreaProvider>
-      <StatusBar style="dark" />
-      <View style={{ flex: 1, paddingBottom: keyboardInset }}>
-        {token ? (
-          <CopilotKitProvider
-            runtimeUrl={`${server}/api/copilotkit`}
-            headers={{ Authorization: `Bearer ${token}` }}
-          >
-            <WorkspaceApp token={token} />
-          </CopilotKitProvider>
-        ) : (
-          <SafeAreaView
-            style={{
-              flex: 1,
-              backgroundColor: colors.canvas,
-              justifyContent: "center",
-              alignItems: "center",
-              padding: 24,
-            }}
-          >
-            <View style={{ width: "100%", maxWidth: 420, gap: 22, alignItems: "center" }}>
-              <Mascot size={72} />
-              <Text
-                style={{ fontSize: 32, color: colors.text, letterSpacing: -1, fontWeight: "500" }}
-              >
-                欢迎使用 OpenMuse。
-              </Text>
-              <Text style={[s.muted, { textAlign: "center" }]}>给你的一天留点空间。</Text>
-              {busy ? (
-                <ActivityIndicator color={colors.blueDark} />
-              ) : (
-                <Card style={{ width: "100%" }}>
-                  <ErrorNotice error={error} />
-                  <Field
-                    label="服务器地址"
-                    value={server}
-                    onChangeText={setServer}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType="url"
-                    placeholder={defaultApiUrl()}
-                  />
-                  <Field
-                    label="工作区访问密钥"
-                    value={accessKey}
-                    onChangeText={setAccessKey}
-                    secureTextEntry
-                    placeholder="实时工作区必填"
-                  />
-                  <Button primary onPress={() => void connect(accessKey || undefined, server)}>
-                    打开工作区
-                  </Button>
-                  <Text style={[s.small, { marginTop: 15 }]}>
-                    填你的 OpenMuse 服务器地址（例如
-                    http://10.7.0.6:8787）。它会记在这台设备上。本地工作区无需密钥。
-                  </Text>
-                </Card>
-              )}
-            </View>
-          </SafeAreaView>
-        )}
-      </View>
-    </SafeAreaProvider>
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <StatusBar style="dark" />
+        <View style={{ flex: 1, paddingBottom: keyboardInset }}>
+          <CrashNotice />
+          {token ? (
+            <CopilotKitProvider
+              runtimeUrl={`${server}/api/copilotkit`}
+              headers={{ Authorization: `Bearer ${token}` }}
+            >
+              <WorkspaceApp token={token} />
+            </CopilotKitProvider>
+          ) : (
+            <SafeAreaView
+              style={{
+                flex: 1,
+                backgroundColor: colors.canvas,
+                justifyContent: "center",
+                alignItems: "center",
+                padding: 24,
+              }}
+            >
+              <View style={{ width: "100%", maxWidth: 420, gap: 22, alignItems: "center" }}>
+                <Mascot size={72} />
+                <Text
+                  style={{ fontSize: 32, color: colors.text, letterSpacing: -1, fontWeight: "500" }}
+                >
+                  欢迎使用 OpenMuse。
+                </Text>
+                <Text style={[s.muted, { textAlign: "center" }]}>给你的一天留点空间。</Text>
+                {busy ? (
+                  <ActivityIndicator color={colors.blueDark} />
+                ) : (
+                  <Card style={{ width: "100%" }}>
+                    <ErrorNotice error={error} />
+                    <Field
+                      label="服务器地址"
+                      value={server}
+                      onChangeText={setServer}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType="url"
+                      placeholder={defaultApiUrl()}
+                    />
+                    <Field
+                      label="工作区访问密钥"
+                      value={accessKey}
+                      onChangeText={setAccessKey}
+                      secureTextEntry
+                      placeholder="实时工作区必填"
+                    />
+                    <Button primary onPress={() => void connect(accessKey || undefined, server)}>
+                      打开工作区
+                    </Button>
+                    <Text style={[s.small, { marginTop: 15 }]}>
+                      填你的 OpenMuse 服务器地址（例如
+                      http://10.7.0.6:8787）。它会记在这台设备上。本地工作区无需密钥。
+                    </Text>
+                  </Card>
+                )}
+              </View>
+            </SafeAreaView>
+          )}
+        </View>
+      </SafeAreaProvider>
+    </ErrorBoundary>
   );
 }
 function WorkspaceApp({ token }: { token: string }) {
