@@ -20,15 +20,22 @@ export function BackgroundUpdates() {
     void syncLocalNotifications(data);
   }, [data]);
   const updates = data?.notifications.filter((item) => !item.read && item.taskId) || [];
-  const update = updates[0];
-  if (!update || data?.identity.showChatUpdates === false) return null;
+  // 点过 X 就本端先藏起来：服务端那一步再慢也不该让卡片"点了没反应"
+  const [hidden, setHidden] = useState<string[]>([]);
+  const visible = updates.filter((item) => !hidden.includes(item.id));
+  const first = visible[0];
+  if (!first || data?.identity.showChatUpdates === false) return null;
   async function dismiss() {
-    if (!update) return;
+    const target = first;
+    if (!target || busy) return;
+    setHidden((ids) => [...ids, target.id]);
     setBusy(true);
     try {
-      await mutate(`/notifications/${update.id}/read`, {});
+      await mutate(`/notifications/${target.id}/read`, {});
       setError("");
     } catch (e) {
+      // 服务端没标成也没关系：本端已经隐藏；下次轮询若仍是未读，它会再出现
+      setHidden((ids) => ids.filter((id) => id !== target.id));
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
@@ -44,27 +51,27 @@ export function BackgroundUpdates() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="忽略后台更新"
-          disabled={busy}
+          // 不做 disabled：一旦请求挂住，disabled 会让这个按钮永久失效（真机上就是这个表现）
           onPress={() => void dismiss()}
-          hitSlop={10}
-          style={{ padding: 6 }}
+          hitSlop={14}
+          style={{ padding: 10 }}
         >
-          <X size={16} color={colors.muted} />
+          <X size={18} color={colors.muted} />
         </Pressable>
       </View>
-      <Text style={s.heading}>{update.title}</Text>
-      <Text style={s.text}>{resultSummary(update.body)}</Text>
+      <Text style={s.heading}>{first.title}</Text>
+      <Text style={s.text}>{resultSummary(first.body)}</Text>
       <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
         <Button
           small
           icon={ArrowRight}
-          onPress={() => update.taskId && open({ type: "task", taskId: update.taskId })}
+          onPress={() => first.taskId && open({ type: "task", taskId: first.taskId })}
         >
           查看任务
         </Button>
-        {updates.length > 1 && (
+        {visible.length > 1 && (
           <Button small onPress={() => open({ type: "notifications" })}>
-            还有 {updates.length - 1} 条更新
+            还有 {visible.length - 1} 条更新
           </Button>
         )}
       </View>
