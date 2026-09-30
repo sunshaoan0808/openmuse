@@ -46,7 +46,6 @@ import { CrashNotice } from "./src/crash-notice";
 import { Details } from "./src/details";
 import { ErrorBoundary } from "./src/error-boundary";
 import { hapticTap } from "./src/haptics";
-import { headerScrimOpacity, headerScrollHandler } from "./src/header-scrim";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
 import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from "./src/ui";
@@ -371,7 +370,7 @@ function WorkspaceShell({
                 top: 0,
                 bottom: 0,
                 backgroundColor: colors.canvas,
-                opacity: headerScrimOpacity(),
+                opacity: 0.92,
               }}
             />
             <View style={{ position: "absolute", left: 0, top: 13 }}>
@@ -460,7 +459,6 @@ function WorkspaceShell({
               <ScrollView
                 key={section}
                 showsVerticalScrollIndicator={false}
-                onScroll={headerScrollHandler()}
                 scrollEventThrottle={16}
                 contentContainerStyle={{ paddingHorizontal: desktop ? 42 : 22, paddingBottom: 28 }}
                 keyboardShouldPersistTaps="handled"
