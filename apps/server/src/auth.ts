@@ -40,7 +40,11 @@ export class Auth {
     return session.owner;
   }
   sign(owner: string, path: string) {
-    const expires = String(Date.now() + 15 * 60 * 1000);
+    // 到期时间取整到 15 分钟窗口，使同一窗口内签出的 URL 完全一致。
+    // 否则每次轮询都会生成新 URL：App 把 previewUrl 交给 <Image>，URI 一变就重下整张
+    // 浏览器预览图——跨境外链路上这是持续的无用流量（实测 40 分钟几十次预览请求）。
+    const window = 15 * 60 * 1000;
+    const expires = String((Math.floor(Date.now() / window) + 1) * window);
     const signature = createHmac("sha256", this.signingKey)
       .update(`${owner}\n${path}\n${expires}`)
       .digest("hex");
