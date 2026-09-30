@@ -500,7 +500,7 @@ export function ChatScreen({
         if (active) {
           setLoaded(false);
           setHistoryError(
-            `Could not load conversation. Your saved messages have not been changed. ${e instanceof Error ? e.message : String(e)}`,
+            `没能载入这段对话（已保存的消息没有被改动）：${e instanceof Error ? e.message : String(e)}`,
           );
         }
       }
@@ -563,10 +563,9 @@ export function ChatScreen({
         try {
           await saveHistory();
         } catch (e) {
-          queue.pause();
-          setSaveError(
-            `Conversation could not be saved: ${e instanceof Error ? e.message : String(e)}`,
-          );
+          // 服务端那一支自己也会把这一轮写进会话，所以这里失败不阻断后续发送，
+          // 只如实告诉用户：这一轮没同步上，稍后会自己补。
+          setSaveError(`这一轮没能同步到服务器：${e instanceof Error ? e.message : String(e)}`);
         } finally {
           runLock.current = false;
           setBusy(false);
@@ -617,7 +616,7 @@ export function ChatScreen({
     (text: string, retry = false): Promise<void> => {
       const snapshot = queue.getSnapshot();
       if (!loaded || !isReady || saveError || (!retry && snapshot.paused))
-        return Promise.reject(new Error("The conversation is not ready for a choice yet."));
+        return Promise.reject(new Error("这条会话还没准备好，稍等一下再选。"));
       if (retry) {
         if (runLock.current || agent.isRunning || snapshot.running || snapshot.pending.length)
           return Promise.reject(new Error("Wait for the current response before retrying."));

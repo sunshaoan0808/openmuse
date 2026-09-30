@@ -123,7 +123,7 @@ export function AgentStatus() {
   const at = live?.at ?? running?.updatedAt;
   return (
     <View style={{ gap: 8 }}>
-      <ErrorNotice error={error ? `Agent updates unavailable. ${error}` : ""} />
+      <ErrorNotice error={error ? `没能连上智能体：${error}` : ""} />
       {!!error && (
         <Button small onPress={() => void refresh().catch(() => {})}>
           重新连接智能体
