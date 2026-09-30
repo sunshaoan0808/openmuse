@@ -618,7 +618,7 @@ export function ChatScreen({
   );
   const flush = useCallback(() => {
     if (!loaded || !isReady || runLock.current || agent.isRunning) return;
-    void queue.flush(runQueued).catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    void queue.flush(runQueued).catch((e) => setError(humanizeNetworkError(e)));
   }, [agent, isReady, loaded, queue, runQueued]);
   // 会话就绪后把上次没发出去的补发出去（配合 api.ts 的重试：网络恢复即自动续上）
   useEffect(() => {
@@ -642,7 +642,7 @@ export function ChatScreen({
         return Promise.reject(new Error("这条会话还没准备好，稍等一下再选。"));
       if (retry) {
         if (runLock.current || agent.isRunning || snapshot.running || snapshot.pending.length)
-          return Promise.reject(new Error("Wait for the current response before retrying."));
+          return Promise.reject(new Error("等这一轮回复完再重试。"));
         if (snapshot.paused) queue.resume();
       }
       const id = `choice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -725,7 +725,7 @@ export function ChatScreen({
     try {
       await copilotkit.stopAgent({ agent });
     } catch (e) {
-      setError(`Could not stop response: ${e instanceof Error ? e.message : String(e)}`);
+      setError(`没能停下这一轮：${humanizeNetworkError(e)}`);
     }
   }
   function send() {
@@ -1124,7 +1124,7 @@ export function ChatScreen({
                 .then(() => {
                   if (!queue.getSnapshot().paused) flush();
                 })
-                .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+                .catch((e) => setError(humanizeNetworkError(e)));
             }}
           >
             重试回复
