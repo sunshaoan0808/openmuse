@@ -11,6 +11,8 @@ const normalize = (value: string) => (value || "").trim().replace(/\/$/, "");
 const STORE = `${FileSystem.documentDirectory ?? ""}openmuse-server.json`;
 // 密钥单独存一个文件：只存服务端地址会导致每次启动都要重新输密钥
 const KEY_STORE = `${FileSystem.documentDirectory ?? ""}openmuse-key.json`;
+// 会话令牌也存下来：启动能直接用，不必每次重启都重新登录（跨境外链路上这一次登录很贵）
+const TOKEN_STORE = `${FileSystem.documentDirectory ?? ""}openmuse-session.json`;
 
 let current = BUILD_API_URL;
 
@@ -90,7 +92,7 @@ async function withRetry<T>(
 }
 
 export class MuseApi {
-  constructor(readonly token: string) {}
+  constructor(public token: string) {}
   async request<T>(path: string, body?: unknown, method?: string): Promise<T> {
     const verb = method ?? (body === undefined ? "GET" : "POST");
     const url = `${apiUrl()}${path}`;
@@ -98,9 +100,8 @@ export class MuseApi {
     const idempotent =
       verb === "GET" || verb === "PUT" || verb === "DELETE" || path.startsWith("/api/conversation");
     return withRetry(url, idempotent, async () => {
-      let response: Response;
-      try {
-        response = await fetch(url, {
+      const call = () =>
+        fetch(url, {
           method: verb,
           headers: {
             Authorization: `Bearer ${this.token}`,
@@ -111,6 +112,18 @@ export class MuseApi {
           body:
             body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
         });
+      let response: Response;
+      try {
+        response = await call();
+        // 令牌过期：用存下的密钥续一次，然后原样重试（只做一次，避免打转）
+        if (response.status === 401 && unauthorized) {
+          const fresh = await unauthorized().catch(() => null);
+          if (fresh) {
+            this.token = fresh;
+            await saveToken(fresh);
+            response = await call();
+          }
+        }
       } catch (error) {
         // 5xx 之外的临时故障：交给上层判断是否重试
         throw isNetworkError(error)
@@ -147,6 +160,30 @@ export async function saveAccessKey(accessKey: string): Promise<void> {
   } catch {
     // 存不下也不该挡住这次连接
   }
+}
+
+export async function loadToken(): Promise<string> {
+  try {
+    const raw = await FileSystem.readAsStringAsync(TOKEN_STORE);
+    const parsed = JSON.parse(raw) as { token?: string };
+    return typeof parsed.token === "string" ? parsed.token : "";
+  } catch {
+    return "";
+  }
+}
+
+export async function saveToken(token: string): Promise<void> {
+  try {
+    await FileSystem.writeAsStringAsync(TOKEN_STORE, JSON.stringify({ token }));
+  } catch {
+    // 存不下不影响本次使用
+  }
+}
+
+/** 令牌失效时的续期回调（由 App 注入：用存下的密钥重新登录并返回新令牌）。 */
+let unauthorized: (() => Promise<string | null>) | null = null;
+export function setUnauthorizedHandler(handler: (() => Promise<string | null>) | null) {
+  unauthorized = handler;
 }
 
 export async function createSession(

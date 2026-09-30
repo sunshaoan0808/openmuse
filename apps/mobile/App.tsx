@@ -34,9 +34,12 @@ import {
   defaultApiUrl,
   loadAccessKey,
   loadApiUrl,
+  loadToken,
   MuseApi,
   saveAccessKey,
   saveApiUrl,
+  saveToken,
+  setUnauthorizedHandler,
 } from "./src/api";
 import { AvatarPanel } from "./src/avatar-panel";
 import { ChatScreen, WorkspaceTools } from "./src/chat";
@@ -97,6 +100,7 @@ export default function App() {
       if (url !== undefined) setServer(await saveApiUrl(url));
       const session = await createSession(key);
       setToken(session.token);
+      await saveToken(session.token);
       if (key) {
         setAccessKey(key);
         await saveAccessKey(key);
@@ -111,15 +115,34 @@ export default function App() {
   }, []);
   useEffect(() => {
     void (async () => {
-      const [savedUrl, savedKey] = await Promise.all([loadApiUrl(), loadAccessKey()]);
+      const [savedUrl, savedKey, savedToken] = await Promise.all([
+        loadApiUrl(),
+        loadAccessKey(),
+        loadToken(),
+      ]);
       setServer(savedUrl);
-      // 存过密钥就自动登录；没存过就直接给表单，不发那次注定 401 的请求
-      if (savedKey) {
-        setAccessKey(savedKey);
-        await connect(savedKey);
-      }
+      if (savedKey) setAccessKey(savedKey);
+      // 有令牌就直接用（重启不必再登录一次，跨境外链路上这一步很贵）；
+      // 令牌过期由 401 续期钩子兜住，续不上才回到表单
+      if (savedToken) setToken(savedToken);
+      else if (savedKey) await connect(savedKey);
     })();
   }, [connect]);
+
+  // 令牌失效时自动用存下的密钥续期（回调里只续一次，失败就交给界面提示）
+  useEffect(() => {
+    setUnauthorizedHandler(async () => {
+      const key = await loadAccessKey();
+      if (!key) return null;
+      try {
+        const session = await createSession(key);
+        return session.token;
+      } catch {
+        return null;
+      }
+    });
+    return () => setUnauthorizedHandler(null);
+  }, []);
   return (
     <ErrorBoundary>
       <SafeAreaProvider>
