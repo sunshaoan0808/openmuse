@@ -4,7 +4,8 @@ import { Animated } from "react-native";
  * 顶栏磨砂强度跟着滚动走（照 Muse 的 ScrimScrollConnection / ScrimConfig）。
  *
  * 停在顶部时几乎透明，一滚就把遮罩加厚——不是固定的一块磨砂。
- * 做法：BlurView 强度固定，另外叠一层画布色遮罩，只动它的 opacity
+ * 做法：顶栏不依赖模糊（Android 上 BlurView 会退化成白色实底），只用一层画布色遮罩，
+ * 只动它的 opacity —— 静止时透明（内容从控件后面滚过去），滚动时加厚。
  * （opacity 能走原生驱动，代价最低）。
  */
 export const headerScrollY = new Animated.Value(0);

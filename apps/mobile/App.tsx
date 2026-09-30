@@ -1,5 +1,4 @@
 import { CopilotKitProvider } from "@copilotkit/react-native/headless";
-import { BlurView } from "expo-blur";
 import { StatusBar } from "expo-status-bar";
 import {
   Bell,
@@ -373,12 +372,13 @@ function WorkspaceShell({
       <WorkspaceTools />
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.canvas }} edges={["top", "bottom"]}>
         <View style={{ flex: 1, width: "100%", maxWidth: 760, alignSelf: "center" }}>
-          <BlurView
-            // Muse 原版的"悬浮"是原生模糊（RenderEffect）+ scrim：内容从玻璃下面滚过去。
-            // Android 上必须指定 dimezisBlurView，否则 expo-blur 只会加一层半透明底色（等于没模糊）。
-            intensity={desktop ? 80 : 70}
-            tint="light"
-            experimentalBlurMethod="dimezisBlurView"
+          <View
+            // 这里原来用 expo-blur 的 BlurView（tint=light + dimezisBlurView）。
+            // 真机实测：Android 上它没能真模糊时**退化成一层白色实底**，于是整条顶栏变成
+            // 从屏幕左到右的白色横带（下边缘还是硬边），三个白色控件被同色淹没 ——
+            // 用户看到的就是"一个白色块"。
+            // 现在顶栏的背景只由下面那层"画布色遮罩"负责：静止时几乎透明（内容从控件后面
+            // 滚过去），滚动时按 Muse 的 scrim 逻辑加厚。这样不依赖模糊是否可用，观感可控。
             pointerEvents="box-none"
             style={{
               position: "absolute",
@@ -487,7 +487,7 @@ function WorkspaceShell({
                 </Text>
               </Pressable>
             </View>
-          </BlurView>
+          </View>
           <View style={{ flex: 1, minHeight: 0, paddingTop: desktop ? 92 : 74 }}>
             {section !== "chat" && (
               <ScrollView
