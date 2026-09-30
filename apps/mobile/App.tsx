@@ -16,6 +16,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   AppState,
   Pressable,
   ScrollView,
@@ -28,11 +29,13 @@ import type { Section, Workspace } from "../../packages/domain/src";
 import { AgentActivityScreen, AppsScreen, GoalsScreen, IdeasScreen } from "./src/agent-ui";
 import { AgentWorkspaceProvider, useAgentWorkspace } from "./src/agent-workspace";
 import { apiUrl, createSession, defaultApiUrl, loadApiUrl, MuseApi, saveApiUrl } from "./src/api";
+import { AvatarPanel } from "./src/avatar-panel";
 import { ChatScreen, WorkspaceTools } from "./src/chat";
 import { ComputerEntry } from "./src/computer";
 import { ComputerDraftProvider } from "./src/computer-drafts";
 import { Details } from "./src/details";
 import { hapticTap } from "./src/haptics";
+import { headerScrimOpacity, headerScrollHandler } from "./src/header-scrim";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
 import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from "./src/ui";
@@ -266,6 +269,7 @@ function WorkspaceShell({
     enabled: richThreads,
   } = useMuseThread();
   const [threadsOpen, setThreadsOpen] = useState(false);
+  const [avatarOpen, setAvatarOpen] = useState(false);
   const { width } = useWindowDimensions();
   const desktop = width >= 900;
   const pending =
@@ -331,6 +335,19 @@ function WorkspaceShell({
               paddingHorizontal: 20,
             }}
           >
+            {/* 遮罩跟着滚动加厚（照 Muse 的 scrim 滚动联动）：停在顶部几乎透明，一滚就厚起来 */}
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                top: 0,
+                bottom: 0,
+                backgroundColor: colors.canvas,
+                opacity: headerScrimOpacity(),
+              }}
+            />
             <View style={{ position: "absolute", left: 0, top: 13 }}>
               <IconButton icon={Menu} label="打开会话与菜单" onPress={() => setThreadsOpen(true)} />
             </View>
@@ -338,7 +355,7 @@ function WorkspaceShell({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`Open ${agentName} activity and approvals`}
-                onPress={() => navigate("activity")}
+                onPress={() => setAvatarOpen(true)}
                 style={({ pressed }) => ({
                   alignItems: "center",
                   maxWidth: "70%",
@@ -417,6 +434,8 @@ function WorkspaceShell({
               <ScrollView
                 key={section}
                 showsVerticalScrollIndicator={false}
+                onScroll={headerScrollHandler()}
+                scrollEventThrottle={16}
                 contentContainerStyle={{ paddingHorizontal: desktop ? 42 : 22, paddingBottom: 28 }}
                 keyboardShouldPersistTaps="handled"
               >
@@ -546,6 +565,7 @@ function WorkspaceShell({
           </View>
         )}
         {threadsOpen && <ThreadsSheet onClose={() => setThreadsOpen(false)} />}
+        {avatarOpen && <AvatarPanel onClose={() => setAvatarOpen(false)} />}
         {detail && (
           <Details
             key={

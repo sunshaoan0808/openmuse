@@ -47,6 +47,7 @@ import { ConversationQueue, type QueuedMessage } from "./conversation-queue";
 import { runConversationTurn } from "./conversation-run";
 import { loadCursor, outboxStorage, saveCursor } from "./conversation-store";
 import { hapticPress, hapticSuccess, hapticTap, hapticWarn } from "./haptics";
+import { headerScrollHandler } from "./header-scrim";
 import {
   captureImage,
   type ImageSource,
@@ -745,12 +746,14 @@ export function ChatScreen({
         ref={list}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ gap: 13, paddingTop: 15, paddingBottom: 20, flexGrow: 1 }}
-        onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
-          const nearEnd = contentSize.height - contentOffset.y - layoutMeasurement.height < 100;
-          followLatest.current = nearEnd;
-          setAwayFromLatest(visible.length > 0 && !nearEnd);
-        }}
-        scrollEventThrottle={100}
+        onScroll={headerScrollHandler(
+          ({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
+            const nearEnd = contentSize.height - contentOffset.y - layoutMeasurement.height < 100;
+            followLatest.current = nearEnd;
+            setAwayFromLatest(visible.length > 0 && !nearEnd);
+          },
+        )}
+        scrollEventThrottle={16}
         onContentSizeChange={() => {
           if (active && visible.length > 0 && followLatest.current)
             list.current?.scrollToEnd({ animated: false });
