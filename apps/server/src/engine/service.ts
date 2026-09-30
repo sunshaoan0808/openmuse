@@ -193,17 +193,11 @@ export class AgentService {
       throw new AppError("先完成或取消一些任务，再添加新的", 409);
     const titles =
       input.kind === "document"
-        ? [
-            "Find the source document",
-            "Fill a new copy",
-            "Prepare a reply",
-            "Wait for your decision",
-            "Record the outcome",
-          ]
+        ? ["找到原始文档", "填写新的副本", "准备回复", "等你的决定", "记录结果"]
         : input.kind === "monitor"
-          ? ["Check the source", "Compare with the last observation", "Report a meaningful change"]
+          ? ["检查来源", "与上次观察对比", "报告有意义的变化"]
           : input.kind === "finance"
-            ? ["Validate transactions", "Calculate the summary", "Save your tracker"]
+            ? ["校验账目", "计算汇总", "保存你的记录"]
             : ["理解目标", "规划步骤", "使用已连接的工具", "交付结果"];
     const task: AgentTask = {
       id,
