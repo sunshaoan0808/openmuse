@@ -8,6 +8,23 @@ import * as Haptics from "expo-haptics";
  */
 let enabled = true;
 
+/**
+ * expo-haptics 的失败有两条路：异步 reject（.catch 能接）与**同步抛**（比如原生模块没注册时
+ * 直接抛），后者会顺着点击处理器冒出去，在 release 包里就是一次无提示闪退。
+ * 所以这里统一包一层，任何失败都吞掉——这是本文件对所有调用方的承诺。
+ */
+function safe(run: () => unknown) {
+  if (!enabled) return;
+  try {
+    const result = run();
+    if (result && typeof (result as { catch?: unknown }).catch === "function") {
+      void (result as Promise<unknown>).catch(() => {});
+    }
+  } catch {
+    // 触感失败绝不该影响功能
+  }
+}
+
 /** 预留的总开关（例如以后做"关闭触感"的设置项）。 */
 export function setHapticsEnabled(value: boolean) {
   enabled = value;
@@ -15,24 +32,20 @@ export function setHapticsEnabled(value: boolean) {
 
 /** 轻碰：按钮、列表行、Tab 切换。 */
 export function hapticTap() {
-  if (!enabled) return;
-  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+  safe(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
 }
 
 /** 稍重：发送、确认、关闭面板。 */
 export function hapticPress() {
-  if (!enabled) return;
-  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+  safe(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium));
 }
 
 /** 成功：上传完成、识别出结果。 */
 export function hapticSuccess() {
-  if (!enabled) return;
-  void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  safe(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
 }
 
 /** 出错：上传失败、权限被拒。 */
 export function hapticWarn() {
-  if (!enabled) return;
-  void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+  safe(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning));
 }
