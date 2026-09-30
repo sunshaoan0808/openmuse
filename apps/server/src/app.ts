@@ -32,7 +32,7 @@ import { AgentService } from "./engine/service.ts";
 import { AppError } from "./errors.ts";
 import { Files } from "./files.ts";
 import { GoogleAuth } from "./google-auth.ts";
-import { friendlyToolError, recordActivity } from "./live-activity";
+import { friendlyToolError, recordActivity } from "./live-activity.ts";
 import { backgroundFailure } from "./log.ts";
 import { SearchService } from "./search.ts";
 import {

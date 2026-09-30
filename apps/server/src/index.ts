@@ -24,6 +24,15 @@ for (const record of await db.scan<ChatTurn>("turns")) {
 }
 const { app, agent } = await createApp(db, config);
 if (config.taskWorkerEnabled) agent.start();
+// 额外监听一个公网地址（通常是本机的 IPv6）：入口域名只有 A 记录，跨境链路上
+// 长连接（聊天那一轮的 SSE）常被掐；而手机侧的 IPv6 到这台机器是通的，且比绕欧洲
+// 那台反代更近。设了 PUBLIC_HOST 才开这一路，不影响原有 mesh 监听。
+const publicHost = process.env.PUBLIC_HOST?.trim();
+if (publicHost) {
+  serve({ fetch: app.fetch, port: config.port, hostname: publicHost }, (info) => {
+    console.log(`[server] public listener on ${publicHost}:${info.port}`);
+  });
+}
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, () =>
   console.log(`OpenMuse ${config.mode} API ready at ${config.publicUrl}`),
 );
