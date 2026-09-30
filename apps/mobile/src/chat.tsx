@@ -51,6 +51,8 @@ import {
   imageUploadMessage,
   uploadImage,
 } from "./image-attachment";
+import { confirmedJevSelection, displayJevUserMessage, latestJevPanelId } from "./jev-actions";
+import { JevInteractionContext, JevToolCard } from "./jev-tool-card";
 import { actionKindLabel, proposalStatusLabel } from "./labels";
 import { MailToolCard } from "./mail-tool-card";
 import { type HeroRect, usePressScale, usePulse } from "./motion";
@@ -196,6 +198,12 @@ export function WorkspaceTools() {
     render: ({ result, status }) => (
       <SearchToolCard result={result} loading={status !== "complete"} />
     ),
+  });
+  useRenderTool({
+    name: "present_choices",
+    description: "看智能体给出的选项与来源对比",
+    parameters: displayParameters,
+    render: ({ result, status }) => <JevToolCard result={result} loading={status !== "complete"} />,
   });
   useRenderTool({
     name: "delegate_task",
@@ -429,6 +437,9 @@ export function ChatScreen({
   const [attachError, setAttachError] = useState("");
   const list = useRef<ScrollView>(null);
   const [queue] = useState(() => new ConversationQueue());
+  const choiceCompletions = useRef(
+    new Map<string, { resolve: () => void; reject: (error: unknown) => void }>(),
+  );
   const outbox = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot);
   const followLatest = useRef(true);
   const [awayFromLatest, setAwayFromLatest] = useState(false);
@@ -522,10 +533,24 @@ export function ChatScreen({
     },
     [agent, agentId, copilotkit, isReady, loaded, refresh, refreshAgent, saveHistory, queue],
   );
+  const runQueued = useCallback(
+    async (message: QueuedMessage) => {
+      try {
+        await run(message);
+        choiceCompletions.current.get(message.id)?.resolve();
+      } catch (error) {
+        choiceCompletions.current.get(message.id)?.reject(error);
+        throw error;
+      } finally {
+        choiceCompletions.current.delete(message.id);
+      }
+    },
+    [run],
+  );
   const flush = useCallback(() => {
     if (!loaded || !isReady || runLock.current || agent.isRunning) return;
-    void queue.flush(run).catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [agent, isReady, loaded, queue, run]);
+    void queue.flush(runQueued).catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [agent, isReady, loaded, queue, runQueued]);
   const enqueue = useCallback(
     (text: string) => {
       queue.enqueue({ id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text });
@@ -534,6 +559,28 @@ export function ChatScreen({
       flush();
     },
     [queue, flush],
+  );
+  const sendChoice = useCallback(
+    (text: string, retry = false): Promise<void> => {
+      const snapshot = queue.getSnapshot();
+      if (!loaded || !isReady || saveError || (!retry && snapshot.paused))
+        return Promise.reject(new Error("The conversation is not ready for a choice yet."));
+      if (retry) {
+        if (runLock.current || agent.isRunning || snapshot.running || snapshot.pending.length)
+          return Promise.reject(new Error("Wait for the current response before retrying."));
+        if (snapshot.paused) queue.resume();
+      }
+      const id = `choice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const completion = new Promise<void>((resolve, reject) => {
+        choiceCompletions.current.set(id, { resolve, reject });
+      });
+      queue.enqueue({ id, text });
+      followLatest.current = true;
+      setAwayFromLatest(false);
+      flush();
+      return completion;
+    },
+    [agent.isRunning, flush, isReady, loaded, queue, saveError],
   );
   useEffect(() => {
     if (!busy && !agent.isRunning && outbox.pending.length) flush();
@@ -617,10 +664,15 @@ export function ChatScreen({
     speech.toggle();
   }
   const messages = agent.messages || [];
+  const latestPanelId = latestJevPanelId(messages, threadId);
   const latestUserIndex = messages.reduce(
     (last, message, index) => (message.role === "user" ? index : last),
     -1,
   );
+  const latestUserText =
+    latestUserIndex >= 0 && typeof messages[latestUserIndex]?.content === "string"
+      ? messages[latestUserIndex].content
+      : null;
   const visible = messages.filter((m) => m.role === "user" || m.role === "assistant");
   // 第一次拿到消息时只登记、不播动画（历史记录一次刷出几十条气泡并不好看）
   if (visible.length && !hydratedMessages.current) {
@@ -700,7 +752,15 @@ export function ChatScreen({
         ) : (
           visible.map((message) => {
             const user = message.role === "user";
-            const text = typeof message.content === "string" ? message.content : "";
+            const text =
+              typeof message.content === "string"
+                ? user
+                  ? displayJevUserMessage(
+                      message.content,
+                      messages.slice(0, messages.indexOf(message)),
+                    )
+                  : message.content
+                : "";
             const toolCalls = "toolCalls" in message ? message.toolCalls || [] : [];
             const fresh = !animatedMessages.current.has(message.id);
             animatedMessages.current.add(message.id);
@@ -735,23 +795,50 @@ export function ChatScreen({
                     )}
                   </View>
                 )}
-                <BrowserRunContext
+                <JevInteractionContext.Provider
                   value={{
-                    running: busy || agent.isRunning,
-                    active:
-                      (busy || agent.isRunning) && messages.indexOf(message) > latestUserIndex,
+                    threadId,
+                    busy:
+                      busy ||
+                      agent.isRunning ||
+                      !loaded ||
+                      !isReady ||
+                      !!outbox.pending.length ||
+                      outbox.paused ||
+                      !!saveError,
+                    latestPanelId,
+                    latestUserText,
+                    send: sendChoice,
+                    retry: (text) => sendChoice(text, true),
+                    canRetry:
+                      loaded &&
+                      isReady &&
+                      !busy &&
+                      !agent.isRunning &&
+                      !outbox.running &&
+                      !outbox.pending.length &&
+                      !saveError,
+                    confirmedSelection: (panelId) => confirmedJevSelection(messages, panelId),
                   }}
                 >
-                  {toolCalls.map((toolCall) => {
-                    const toolMessage = messages.find(
-                      (candidate): candidate is ToolMessage =>
-                        candidate.role === "tool" && candidate.toolCallId === toolCall.id,
-                    );
-                    return (
-                      <View key={toolCall.id}>{renderToolCall({ toolCall, toolMessage })}</View>
-                    );
-                  })}
-                </BrowserRunContext>
+                  <BrowserRunContext
+                    value={{
+                      running: busy || agent.isRunning,
+                      active:
+                        (busy || agent.isRunning) && messages.indexOf(message) > latestUserIndex,
+                    }}
+                  >
+                    {toolCalls.map((toolCall) => {
+                      const toolMessage = messages.find(
+                        (candidate): candidate is ToolMessage =>
+                          candidate.role === "tool" && candidate.toolCallId === toolCall.id,
+                      );
+                      return (
+                        <View key={toolCall.id}>{renderToolCall({ toolCall, toolMessage })}</View>
+                      );
+                    })}
+                  </BrowserRunContext>
+                </JevInteractionContext.Provider>
               </RiseIn>
             );
           })
@@ -917,13 +1004,19 @@ export function ChatScreen({
             {outbox.pending.map((message) => (
               <View key={message.id} style={[s.row, { gap: 8 }]}>
                 <Text numberOfLines={2} style={[s.muted, { flex: 1 }]}>
-                  {message.text}
+                  {displayJevUserMessage(message.text, messages)}
                 </Text>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={`Remove queued message: ${message.text}`}
+                  accessibilityLabel={`Remove queued message: ${displayJevUserMessage(message.text, messages)}`}
                   hitSlop={10}
-                  onPress={() => queue.remove(message.id)}
+                  onPress={() => {
+                    queue.remove(message.id);
+                    choiceCompletions.current
+                      .get(message.id)
+                      ?.reject(new Error("Choice removed from queue."));
+                    choiceCompletions.current.delete(message.id);
+                  }}
                   style={{ padding: 8 }}
                 >
                   <X size={16} color={colors.muted} />

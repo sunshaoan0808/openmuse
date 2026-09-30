@@ -32,6 +32,11 @@ export interface ChatToolContext {
    * 同一次调用里再用用户原话搜一遍并合并，避免翻译本身把用户的语义选掉。
    */
   userText?: () => string | undefined;
+  /**
+   * 记录"读过哪些证据"（邮件线程 / 网页），供 JEV 的 present_choices 校验来源。
+   * 上游把这几个钩子写在内联工具里；我们抽成中性工具后改由这里回调。
+   */
+  noteEvidence?: (kind: "mail" | "web", id: string, text?: string) => Promise<void>;
 }
 
 /** 从 AG-UI 的消息数组里取最后一条用户消息的文本（content 可能是字符串或分段数组）。 */
@@ -133,6 +138,8 @@ export function chatTools(ctx: ChatToolContext): NeutralTool[] {
         ctx.signal.throwIfAborted();
         try {
           const messages = await ctx.service.workspace.thread(ctx.owner, threadId);
+          // JEV：读过这封邮件线程，present_choices 才允许引用它作为来源
+          if (ctx.noteEvidence && messages.length) await ctx.noteEvidence("mail", threadId);
           return {
             messages: messages.slice(-20).map((message) => ({
               ...message,
@@ -157,12 +164,16 @@ export function chatTools(ctx: ChatToolContext): NeutralTool[] {
       execute: async ({ url }) => {
         ctx.signal.throwIfAborted();
         try {
-          return await ctx.service.browser.observeForThread(
+          const page = await ctx.service.browser.observeForThread(
             ctx.owner,
             ctx.threadId,
             url,
             ctx.signal,
           );
+          // JEV：对比卡的来源必须来自真正读过的页面（URL + 正文）
+          if (ctx.noteEvidence && page.text?.trim())
+            await ctx.noteEvidence("web", page.url, page.text);
+          return page;
         } catch (error) {
           ctx.signal.throwIfAborted();
           return { error: error instanceof Error ? error.message : "无法读取页面" };

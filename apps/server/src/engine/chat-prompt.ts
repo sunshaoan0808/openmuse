@@ -19,3 +19,19 @@ export function chatInstructions(): string {
     computerInstructions,
   ].join("");
 }
+
+/**
+ * JEV（选项/对比卡）指令。上游原话搬过来，只在 JEV 开启时拼进系统提示词，
+ * 避免给不支持的引擎或模式增加噪声。
+ */
+export function jevInstructions(): string {
+  return (
+    " When a request has several possible next steps, call present_choices with factual clarification options. " +
+    "If those choices depend on email, first search and read the relevant thread, then provide its mailThreadId to present_choices. " +
+    "Generic choices need no mail. For research comparisons, call browse_web for every cited source before calling present_choices " +
+    "with a comparison. Comparison details must be exact phrases from the returned page text, and each source URL must be the final URL " +
+    "from successful browsing. If source reading fails, report the failure and do not present a sourced comparison. To refine a panel, " +
+    "pass its refinementPanelId with empty options; retained candidates will be ranked again. A selection is a preference; continue the " +
+    "user's requested planning from it."
+  );
+}
