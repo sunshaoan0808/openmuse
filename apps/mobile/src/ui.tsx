@@ -209,10 +209,13 @@ export function IconButton({
   icon: Icon,
   label,
   onPress,
+  glass = false,
 }: {
   icon: LucideIcon;
   label: string;
   onPress: () => void;
+  /** 磨砂顶栏上使用：半透明底、无阴影，让玻璃层本身承担层次 */
+  glass?: boolean;
 }) {
   const [pressed, setPressed] = useState(false);
   const { scale, onPressIn, onPressOut } = usePressScale(0.92);
@@ -237,13 +240,22 @@ export function IconButton({
           alignItems: "center",
           justifyContent: "center",
           borderRadius: 22,
-          backgroundColor: pressed ? colors.line : "#FFFFFF",
-          // 悬浮感：顶栏图标做成浮在内容之上的小圆钮（原来是贴在白底上的一排图标）
-          shadowColor: "#132631",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.08,
-          shadowRadius: 10,
-          elevation: 2,
+          backgroundColor: glass
+            ? pressed
+              ? "rgba(255,255,255,0.75)"
+              : "rgba(255,255,255,0.42)"
+            : pressed
+              ? colors.line
+              : "#FFFFFF",
+          ...(glass
+            ? { borderWidth: 1, borderColor: "rgba(255,255,255,0.6)" }
+            : {
+                shadowColor: "#132631",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.08,
+                shadowRadius: 10,
+                elevation: 2,
+              }),
         },
         { transform: [{ scale }] },
       ]}

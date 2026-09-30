@@ -1,4 +1,5 @@
 import { CopilotKitProvider } from "@copilotkit/react-native/headless";
+import { BlurView } from "expo-blur";
 import { StatusBar } from "expo-status-bar";
 import {
   Bell,
@@ -312,10 +313,14 @@ function WorkspaceShell({
       <WorkspaceTools />
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.canvas }} edges={["top", "bottom"]}>
         <View style={{ flex: 1, width: "100%", maxWidth: 760, alignSelf: "center" }}>
-          <View
+          <BlurView
+            // Muse 原版的"悬浮"是原生模糊（RenderEffect）+ scrim：内容从玻璃下面滚过去。
+            // Android 上必须指定 dimezisBlurView，否则 expo-blur 只会加一层半透明底色（等于没模糊）。
+            intensity={desktop ? 55 : 48}
+            tint="light"
+            experimentalBlurMethod="dimezisBlurView"
             pointerEvents="box-none"
             style={{
-              // 悬浮顶栏：不占布局，内容从它下面滚过去（原版 Muse 的顶栏感觉）
               position: "absolute",
               top: 0,
               left: 0,
@@ -327,7 +332,12 @@ function WorkspaceShell({
             }}
           >
             <View style={{ position: "absolute", left: 0, top: 16 }}>
-              <IconButton icon={Menu} label="打开会话与菜单" onPress={() => setThreadsOpen(true)} />
+              <IconButton
+                glass
+                icon={Menu}
+                label="打开会话与菜单"
+                onPress={() => setThreadsOpen(true)}
+              />
             </View>
             <View style={{ alignItems: "center", gap: 1 }}>
               <Pressable
@@ -362,8 +372,9 @@ function WorkspaceShell({
             </View>
             <View style={{ position: "absolute", right: 0, top: 16 }}>
               <IconButton
+                glass
                 icon={Bell}
-                label={`Notifications, ${pending} unread or pending`}
+                label={`通知：${pending} 条未读或待处理`}
                 onPress={() => open({ type: "notifications" })}
               />
               {pending > 0 && (
@@ -381,8 +392,8 @@ function WorkspaceShell({
                 />
               )}
             </View>
-          </View>
-          <View style={{ flex: 1, minHeight: 0, paddingTop: desktop ? 146 : 122 }}>
+          </BlurView>
+          <View style={{ flex: 1, minHeight: 0, paddingTop: desktop ? 104 : 88 }}>
             {section !== "chat" && (
               <ScrollView
                 key={section}
