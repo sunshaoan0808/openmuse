@@ -313,7 +313,7 @@ export async function createApp(
       .filter((turn) => turn.threadId === threadId)
       .sort((left, right) => right.startedAt.localeCompare(left.startedAt));
     const turn = mine[0] ?? null;
-    if (!turn || turn.status !== "running") return turn;
+    if (turn?.status !== "running") return turn;
     // 看门狗：一轮跑够久了要么被上游拖住、要么早没了下文。
     // 不标它，App 会一直显示"正在生成"等一条永远不来的回复。
     if (Date.parse(turn.startedAt) + TURN_TIMEOUT_MS > Date.now()) return turn;
