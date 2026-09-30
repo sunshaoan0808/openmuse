@@ -21,6 +21,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { hapticTap } from "./haptics";
 import { type HeroCard, type HeroRect, usePressScale, useRiseIn, useSheetEntrance } from "./motion";
+import { useAndroidKeyboardInset } from "./use-android-keyboard-inset";
 
 /** 按压缩放交给 Animated（写死的 transform: scale 没有回弹，手感是"顿"的）。 */
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -384,6 +385,7 @@ export function ErrorNotice({ error }: { error?: string }) {
     </View>
   ) : null;
 }
+
 export function Sheet({
   title,
   subtitle,
@@ -400,8 +402,11 @@ export function Sheet({
   /** 传了就做"从这张卡片飞进来 / 飞回去"的共享元素过渡 */
   hero?: HeroCard;
 }) {
-  const { width } = useWindowDimensions();
+  const { width, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  // 面板是 RN Modal（渲染在另一棵树里），根组件那层键盘补偿管不到它 —— 这里必须自己避让键盘，
+  // 否则面板里的输入框（任务/目标/邮件/会话重命名等）会被输入法盖住。
+  const keyboard = useAndroidKeyboardInset();
   const compact = width < 600;
   // 面板进场：淡入 + 上浮 + 轻微缩放，替代 Modal 自带的硬滑入
   const entrance = useSheetEntrance();
@@ -515,8 +520,8 @@ export function Sheet({
               compact && {
                 borderBottomLeftRadius: 0,
                 borderBottomRightRadius: 0,
-                paddingBottom: Math.max(insets.bottom, 12),
-                maxHeight: "94%",
+                paddingBottom: Math.max(insets.bottom, 12) + keyboard,
+                maxHeight: keyboard > 0 ? Math.max(220, windowHeight - keyboard - 40) : "94%",
               },
               hero
                 ? { opacity: morph, transform: [{ translateY: drag }] }
