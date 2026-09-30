@@ -82,6 +82,53 @@
 
 **风险/成本**：中（纯 UI，但真机手感只能靠你验）。
 
+### P1 · 对话富内容补齐（差距"一眼可见"）
+
+**动机**：Muse 的助手消息能渲染代码块（高亮）、数学公式（KaTeX）、流程图（Mermaid）、
+表格卡片、行内文件 chip、内嵌 HTML/交互控件；我们的 `assistant-markdown.ts` 只是基础 markdown-it
+（无数学、无流程图、无代码高亮、无文件 chip）。
+
+**做法（按性价比排序）**
+1. **代码高亮**：markdown-it 加高亮插件（或自建轻量 tokenizer），只影响渲染层。
+2. **数学公式**：接 KaTeX 渲染（WebView 或纯 JS 渲染 MathML）；先支持行内 `$…$` 与块级 `$$…$$`。
+3. **文件 chip**：智能体调用 `save_document` 后，助手消息里渲染文件卡（与 §文件交付 的 chip 同一条）。
+4. **Mermaid**：可用现成浏览器 worker 渲染成图片回填（我们本来就有无头浏览器）。
+
+**验证**：把同一段含公式/代码/表格的回复在改动前后各渲染一次，比对（截图由你在真机确认）。
+
+### P1 · 未读会话 + 会话内搜索（对照 `HatchUnreadThreadsRepository` / `ConversationSearchScreen`）
+
+**做法**：未读用已有会话存储加 `lastReadAt` 游标即可；搜索在服务端按消息文本过滤（会话列表已有数据）。
+**验证**：服务端单测（未读计数/搜索命中）+ 真机：列表出现未读点、搜索能定位到会话。
+
+### P2 · 浏览器"租约 + 接管"状态（对照 `BrowserControlLease` / `AgentBrowserTakeoverControls`）
+
+**动机**：Muse 把"谁在控制浏览器"做成显式状态（租约 + 接管），我们只有一句"可接管"入口。
+**做法**：服务端为浏览器会话增加 `controlOwner: agent | user` 与租约到期时间；agent 动作前校验租约；
+App 顶部显示当前控制方并可一键接管/归还。
+**验证**：服务端单测（租约过期/接管后 agent 动作被拒）+ 真机现象。
+
+### P2 · 消息反应与撤回（对照 `HatchReactionUsageStore` / `HatchUnsendNuxStore`）
+
+**做法**：消息加 `reactions` 字段（按使用频率排序的表情面板）；撤回 = 本端与服务端同时移除该条
+（服务端已有按消息 id 幂等的存储，撤回要写一条 tombstone，避免增量拉取时复活）。
+**验证**：服务端单测（反应/撤回 + 游标不复活）+ 真机。
+
+### P2 · 目标分类与拖拽（对照 `GoalCategory` / `GoalDragResolver`）
+
+**做法**：目标加分类字段（先做分类，拖拽排序放到之后）。
+**验证**：服务端单测 + 真机。
+
+### P2 · 导入记忆（对照 `settings/importmemory`）
+
+**做法**：给"记忆"加一个导入入口，接受文本/JSON（先做粘贴文本 → 拆条 → 存入 memories）。
+**验证**：服务端单测（拆条/去重）+ 真机。
+
+### P3 · 离线加密会话库 / 应用锁
+
+Muse 有 `HatchOfflineConversationCipher`（设备端加密的离线会话库）与 `AppLockOverlayScreenKey`（应用锁）。
+我们已有 outbox + 游标（防杀进程），但**没有**设备端加密库与应用锁——这两项成本高、优先级低，先记录。
+
 ### P2 · 每连接器的权限页（对应 `HatchConnectorPermissionsListScreen`）
 
 **做法**：把 integrations/MCP 工具按连接器分组，逐连接器列出可用能力 + 开关（服务端存 allow/deny）；未连接时显示连接入口。

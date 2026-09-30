@@ -213,7 +213,89 @@ commands/core/NodePermissionActivity + HatchPermissionResolver   按节点的权
 | 每连接器权限 | `HatchConnectorPermissionsListScreen` | ❌ 只有总开关 |
 | 手机节点能力 | `commands`（闹钟/健康/定位/通讯录） | ❌ 不做（见计划 §4） |
 
-## 10. 文档与文件交付（`library` 941 类 + `file` 888 类）★
+## 9. 信息架构：导航键注册表（`navigation/key`，544 类）★
+
+Muse 把每个目的地注册成一个 Key，名字直接暴露了它的产品表面（摘录）：
+
+```
+AcSkillConsentSheetKey · ApiKeyAuthSheetKey            连接器授权
+ActivationScreenKey · ActivationSettingsScreenKey       入门/激活
+ActivationLegalSafetySettingsScreenKey · …DataPrivacy… · …HelpSupport…   法律/隐私/帮助
+ActivePermissionsScreenKey                              ★ 常驻授权（我们缺）
+AgentComputerScreenKey · AgentComputerTakeOverScreenKey ★ 智能体电脑 + 接管
+AgentPermissionDecisionSheetKey · …HistoryDetailsSheetKey · …TaskDetailsSheetKey  审批三段
+ArchivedSideChatsScreenKey                              ★ 归档的侧边会话（= 我们的会话+归档）
+ArtifactsDetailScreenKey                                ★ 产物详情（= 我们的文件详情）
+AppLockOverlayScreenKey                                 ★ 应用锁
+AuraBugReportScreenKey · AuraBugReportDiagnosticLogsScreenKey  ★ 自带报错 + 诊断日志
+AgenticDebugScreenKey · AuraInternalSettingsScreenKey   内部调试
+```
+
+## 10. 对话里的富内容（`conversation/view/richcontent`）★
+
+Muse 的助手消息能渲染的不止 markdown：
+
+```
+HatchCodeBlockKt                 代码块
+HatchKatexRenderer · HatchInlineMathKt · HatchMathContentKt   数学公式（KaTeX）
+HatchMermaidContentKt            流程图（Mermaid）
+HatchMarkdownTableCardKt         表格（卡片样式）
+HatchInlineFileChipKt            行内文件 chip
+HatchInlineImageKt / HatchInlineImageData   行内图片
+HatchEmbeddedHtmlKt · HatchWidgetWebViewKt  嵌入 HTML / 交互控件（WebView 承载）
+BlockQuoteDecoration             引用块
+HatchMentionedData               提及数据/产物（@ 引用）
+HatchPromptPreviewText           提示词预览
+```
+
+对照我们：`assistant-markdown.ts` 用的是**基础 markdown-it**（html:false，无数学/无流程图/无代码高亮），
+有 markdown 表格但**没有** KaTeX、Mermaid、代码高亮、行内文件 chip —— 这是"一眼能看出来的差距"。
+
+## 11. 浏览器与电脑控制：租约 + 接管（`gateway/agentbrowser`，128 类）★
+
+```
+BrowserControlLease · BrowserControlLeaseJson · BrowserLeaseRequestJson   ★ 控制权租约
+AgentBrowserTakeoverControls                        ★ 人来接管的操作
+BrowserSessionController · BrowserTaskRepository · BrowserTaskStateKt      会话与任务
+BrowserTaskSnapshotJson · AgentBrowserSurface · AgentBrowserRemoteKey      快照与界面
+HatchComputerContext · HatchComputerRepository · ComputerContextJson · ComputerEventJson
+DesktopImageJson                                    桌面画面
+```
+即：**"谁在控制浏览器"是一个显式状态**（租约 + 接管），人和 agent 轮流持有；我们只有一句"可接管"的入口，
+没有租约/接管状态机。
+
+## 12. 对话级功能与离线（`conversation/{reactions,unsend,unread,offline,search}`）
+
+```
+reactions/HatchReactionUsageStore · HatchReactionOrderingKt   消息反应（按使用频率排序）
+unsend/HatchUnsendNuxStore                                    撤回消息（带首次提示）
+unread/HatchUnreadThreadsRepository · HasUnreadThreadsPayloadJson   未读会话
+offline/HatchOfflineConversationCipher · …Dao · …Database     ★ 设备端加密的离线会话库
+search/ConversationSearchScreenKt · HatchSearchHit · HatchSearchResult   会话内搜索
+```
+另：`conversation/view` 里还有 `HatchChatPromptPillKt`（提示词药丸）、`HatchCompactAudioPlayerKt`（音频播放）、
+`HatchBrowserTaskCardKt`（浏览器任务卡）、`HatchConnectorAddAccountCardKt`（连接器卡片）、
+`ConversationAnchorTracker`/`ConversationTailState`（滚动锚定）、`EmojiCategory`/`EmojiGridItem`（表情选择）、
+`FlightOfferBookingRequest`/`FlightOfferDetailHolder`（机票预订流程，`partners` 模块的落地）。
+
+## 13. 目标与产物库的 UI 能力（`library/view`，507 类）
+
+```
+ArtifactsDetailScreenKt · ArtifactsSectionKt           产物详情/分区
+GoalCreationBottomSheetKt · GoalDetailScreenKt         目标创建（底部面板）/详情
+GoalDragResolver · GoalDragSource · GoalDragTarget · GoalDropOutcome   ★ 目标拖拽
+GoalCategory · GoalCreationCategory                    目标分类
+GoalContextMenuKt · GoalRenameDialogKt · GoalDeleteConfirmationDialogKt  右键菜单/重命名/删除确认
+```
+
+## 14. 其他值得记的
+
+- `settings/importmemory`（42 类）——**从别处导入记忆**（把已有助手的记忆迁进来）
+- `AppLockOverlayScreenKey` —— 应用锁；`AuraBugReportDiagnosticLogsScreenKey` —— 自带诊断日志（与我们做的崩溃红条同一思路）
+- `CredentialCaptureUrlOutcome` —— 登录凭据采集的出口（连接器登录用）
+- `HatchComposerScrimKt` —— 输入区也有 scrim（与顶栏同一套磨砂思路）
+
+## 15. 文档与文件交付（`library` 941 类 + `file` 888 类）★
 
 用户要"一份 MD 文件"时，Muse 的完整机制（符号均为直接读到）：
 
@@ -270,7 +352,7 @@ file/docx/DocElement$Para | $Table | $Image | $Drawing    ← 自己拼 docx 结
 | 发布链接 | `PUBLISH` / `PUBLISH_TO_SHARE` | ❌ 无 |
 | 生成 Office | docx 结构自拼 | ❌ 无（只做 PDF 表单填写） |
 
-## 9. 使用边界
+## 16. 使用边界
 
 - 本记录**只用于理解机制**，不搬运原版的图片/字体/颜色令牌/代码（沿用项目既定约定：不照抄 Muse 专有资产）。
 - 尺寸/配色中，只有"截图逐像素量出来的"那一节是近似值；符号与字段名是直接读到的。
