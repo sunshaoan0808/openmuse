@@ -19,7 +19,7 @@ import {
   X,
 } from "lucide-react-native";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Image, Linking, Platform, Text, View } from "react-native";
+import { ActivityIndicator, Image, Linking, Platform, ScrollView, Text, View } from "react-native";
 import {
   type ActionProposal,
   type Artifact,
@@ -33,6 +33,7 @@ import {
   type ProposalInput,
 } from "../../../packages/domain/src";
 import { DelegateSheet, NotificationsSheet, TaskDetail } from "./agent-ui";
+import { AssistantResponse } from "./assistant-response";
 import BrowserConsole from "./BrowserConsole";
 import { browserAddress, browserSite } from "./browser-address";
 import { ComputerSheet } from "./computer";
@@ -729,6 +730,10 @@ function ReviewLine({ label, value }: { label: string; value: string }) {
 function isPdf(file: Artifact) {
   return file.mimeType === "application/pdf" || /\.pdf$/i.test(file.name.trim());
 }
+/** 智能体写出来的文本文件（markdown / 纯文本）：直接读出来渲染，而不是丢给 Office 渲染器。 */
+function isText(file: Artifact) {
+  return file.mimeType.startsWith("text/") || /\.(md|txt)$/i.test(file.name.trim());
+}
 function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
   const { api, refresh, open, close } = useWorkspace();
   const [values, setValues] = useState<Record<string, string | boolean>>(() =>
@@ -746,6 +751,19 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const url = api.url(f.url || `/api/files/${f.id}/content`);
+  const textFile = isText(f);
+  const [content, setContent] = useState<string>();
+  useEffect(() => {
+    if (!textFile) return;
+    let active = true;
+    void api
+      .text(`/api/files/${f.id}/content`)
+      .then((value) => active && setContent(value))
+      .catch((e) => active && setError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      active = false;
+    };
+  }, [api, f.id, textFile]);
   async function fill() {
     setBusy(true);
     setError("");
@@ -766,12 +784,17 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
         await Linking.openURL(url);
         return;
       }
-      const target = `${FileSystem.cacheDirectory}${f.id}.pdf`;
+      // 扩展名与类型要跟着文件走：之前一律存成 .pdf 并声明 PDF，文本文件分享出去会是坏文件
+      const extension = textFile ? (/[.](txt)$/i.test(f.name) ? "txt" : "md") : "pdf";
+      const target = `${FileSystem.cacheDirectory}${f.id}.${extension}`;
       await FileSystem.downloadAsync(url, target, {
         headers: { Authorization: `Bearer ${api.token}` },
       });
       if (await Sharing.isAvailableAsync())
-        await Sharing.shareAsync(target, { mimeType: "application/pdf", UTI: "com.adobe.pdf" });
+        await Sharing.shareAsync(target, {
+          mimeType: extension === "pdf" ? "application/pdf" : "text/markdown",
+          UTI: extension === "pdf" ? "com.adobe.pdf" : "net.daringfireball.markdown",
+        });
       else throw new Error("此设备不支持分享。");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -780,13 +803,24 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
   return (
     <Sheet
       title={f.name}
-      subtitle={`${f.pageCount} pages · ${Math.max(1, Math.round(f.size / 1024))} KB · ${f.source}`}
+      subtitle={`${isText(f) ? "" : `${f.pageCount} pages · `}${Math.max(1, Math.round(f.size / 1024))} KB · ${f.source}`}
       onClose={close}
       wide
       hero={hero}
     >
       {isPdf(f) ? (
         <PdfReader url={url} token={api.token} pageCount={f.pageCount} />
+      ) : textFile ? (
+        // 智能体写出来的攻略/报告就是这类文件：直接按 markdown 渲染，能读也能分享
+        content === undefined ? (
+          <ActivityIndicator color={colors.blueDark} />
+        ) : (
+          <View style={{ maxHeight: 460 }}>
+            <ScrollView>
+              <AssistantResponse content={content} />
+            </ScrollView>
+          </View>
+        )
       ) : (
         // Word / Excel / PowerPoint 走离线渲染（pptx 会降级为“用外部应用打开”）
         <OfficeReader url={url} token={api.token} name={f.name} size={f.size} />

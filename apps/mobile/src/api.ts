@@ -156,6 +156,17 @@ export class MuseApi {
       return payload;
     });
   }
+  /** 取一段文本（例如智能体写出来的 .md/.txt 文件内容）。内容接口返回的是正文，不是 JSON。 */
+  async text(path: string): Promise<string> {
+    const url = `${apiUrl()}${path}`;
+    return withRetry(url, true, async () => {
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${this.token}` },
+      });
+      if (!response.ok) throw new Error(`读取文件失败（${response.status}）`);
+      return await response.text();
+    });
+  }
   url(path: string) {
     return path.startsWith("http") ? path : `${apiUrl()}${path}`;
   }

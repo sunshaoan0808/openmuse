@@ -272,6 +272,26 @@ export function chatTools(ctx: ChatToolContext): NeutralTool[] {
         ),
     }),
     tool({
+      name: "save_document",
+      description:
+        "Save a document the person asked for as a real file in Files (Markdown by default, plain text if they ask for .txt). Use this whenever the request is for a document/file/report/guide as a file — 「给我一份 MD 文件」「导出一份报告」「写成文件给我」 —— instead of pasting the whole text into the chat. Put the complete content in `content`; the file is what they read, so it must be self-contained and in the language they asked in. After saving, tell them the file name and that it is in Files.",
+      parameters: z.object({
+        name: z.string().min(1).max(160).describe("文件名，例如 广元三天旅游攻略.md"),
+        content: z.string().min(1).max(200000).describe("文件的完整内容（Markdown 或纯文本）"),
+      }),
+      execute: async (args) => {
+        const filename = /\.[a-z0-9]+$/i.test(args.name) ? args.name : `${args.name}.md`;
+        const file = await ctx.service.files.importText(
+          ctx.owner,
+          filename,
+          args.content,
+          "Written by your agent",
+          ctx.key("document", args),
+        );
+        return { id: file.id, name: file.name, mimeType: file.mimeType, size: file.size };
+      },
+    }),
+    tool({
       name: "watch_page",
       description:
         "Schedule a public-page condition check requested by the user. The worker records observations and notifies on meaningful changes. Price checks detect explicit USD or dollar prices; no booking is performed.",
