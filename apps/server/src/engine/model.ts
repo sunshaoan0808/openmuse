@@ -359,11 +359,14 @@ export async function executeModelTask(
   });
   if (runError) throw new Error(runError);
   if (text) await ctx.event("step", "智能体更新", text.slice(0, 12000));
-  return (
-    outcome ?? {
-      status: "waiting_input",
-      question: "这一轮结束前没有拿到完成确认。给它一条后续指令即可继续。",
-      state: { ...task.state, lastUpdate: text },
-    }
-  );
+  // 显式结果优先：模型自己要求审批或追问时，那是它的判断，不能被下面的兜底覆盖。
+  if (outcome) return outcome;
+  // 已经产出完整答案却没有调 finish_task —— 这依然是完成，不能挂成"待我处理"。
+  // （之前这里一律落到 waiting_input，导致每个跑完的任务都堆进"待我处理"。）
+  if (text.trim()) return service.finish(task, ctx, text);
+  return {
+    status: "waiting_input",
+    question: "这一轮结束前没有拿到完成确认。给它一条后续指令即可继续。",
+    state: { ...task.state, lastUpdate: text },
+  };
 }
