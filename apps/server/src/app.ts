@@ -99,6 +99,18 @@ export async function createApp(
       onError: (c) => c.json({ error: "请求过大；PDF 需在 10 MB 以内" }, 413),
     }),
   );
+  // 访问日志：手机报"连不上/超时"时，唯一能判断"请求到底有没有到达服务端"的依据。
+  // 只记方法、路径（去掉 query 里的敏感值）、状态码与耗时；不记请求体、不记鉴权头。
+  app.use("*", async (c, next) => {
+    const started = Date.now();
+    await next();
+    const path = c.req.path;
+    if (path === "/api/health") return;
+    const status = c.res.status;
+    const ms = Date.now() - started;
+    const slow = ms > 3000 ? "（慢）" : "";
+    console.log(`[http] ${c.req.method} ${path} → ${status} ${ms}ms${slow}`);
+  });
   app.onError((error, c) => {
     if (error instanceof z.ZodError)
       return c.json({ error: error.issues.map((i) => i.message).join("; ") }, 422);

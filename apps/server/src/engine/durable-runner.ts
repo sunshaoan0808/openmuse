@@ -10,7 +10,18 @@ import {
   type LocalThreadEndpointRunner,
   ɵGLOBAL_STORE,
 } from "@copilotkit/runtime/v2";
-import { defer, from, mergeAll, type Observable, tap } from "rxjs";
+import {
+  catchError,
+  defer,
+  EMPTY,
+  from,
+  mergeAll,
+  mergeMap,
+  type Observable,
+  tap,
+  throwError,
+  timer,
+} from "rxjs";
 import type { Store } from "../db.ts";
 import { backgroundFailure } from "../log.ts";
 
@@ -29,6 +40,16 @@ const MESSAGES = "chat-messages";
 const EVENTS = "chat-events";
 const STATE = "chat-state";
 
+/** 取最后一条用户消息的 id：用来识别"同一轮被重复投递"。 */
+function lastUserMessageId(input: { messages?: unknown } | undefined): string | undefined {
+  const messages = Array.isArray(input?.messages) ? input.messages : [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index] as { role?: string; id?: string } | undefined;
+    if (message?.role === "user" && typeof message.id === "string") return message.id;
+  }
+  return undefined;
+}
+
 type StoredMessages = { id: string; messages: Message[] };
 type StoredEvents = { id: string; events: BaseEvent[] };
 type StoredState = { id: string; state: Record<string, unknown> | null };
@@ -38,6 +59,8 @@ export class DurableAgentRunner extends AgentRunner implements LocalThreadEndpoi
   private readonly inner = new InMemoryAgentRunner();
   private readonly threads = new Map<string, LocalThreadEndpointRecord>();
   private readonly messages = new Map<string, Message[]>();
+  /** 每个会话当前在跑的那一轮（用于去重与排队，避免 "Thread already running"）。 */
+  private readonly inFlight = new Map<string, { messageId?: string; settled: Promise<void> }>();
   private readonly events = new Map<string, BaseEvent[]>();
   private readonly states = new Map<string, Record<string, unknown> | null>();
   private readonly hydrating: Promise<void>;
@@ -168,9 +191,50 @@ export class DurableAgentRunner extends AgentRunner implements LocalThreadEndpoi
           await this.hydrating;
           this.seed(request.threadId);
           void this.persist(request.threadId);
-          return this.inner
-            .run(request)
-            .pipe(tap({ complete: () => void this.persist(request.threadId) }));
+          const messageId = lastUserMessageId(request.input);
+          const existing = this.inFlight.get(request.threadId);
+          // 同一轮的重复投递（客户端超时后重发、或用户连点）：不要再跑一遍。
+          // 回复已经由这一轮自己在写，客户端按游标增量拉取就能拿到——这也是 at-least-once 的语义。
+          if (existing && messageId && existing.messageId === messageId) {
+            console.log(
+              `[runner] 忽略重复的一轮 thread=${request.threadId} message=${messageId}（回复由游标补拉送达）`,
+            );
+            return EMPTY;
+          }
+          // 同一会话已有另一轮在跑：等它结束再开始（原来的实现直接抛
+          // "Thread already running"，等于把这一轮丢掉）
+          if (existing)
+            await Promise.race([existing.settled, new Promise((r) => setTimeout(r, 180_000))]);
+          let settle = () => {};
+          const settled = new Promise<void>((resolve) => {
+            settle = resolve;
+          });
+          const entry = { messageId, settled };
+          this.inFlight.set(request.threadId, entry);
+          const release = () => {
+            settle();
+            if (this.inFlight.get(request.threadId) === entry)
+              this.inFlight.delete(request.threadId);
+          };
+          const start = (attempt: number): Observable<BaseEvent> =>
+            this.inner.run(request).pipe(
+              catchError((error: unknown) => {
+                // 兜底：内存 runner 里可能还有我们不知道的在跑的轮次
+                const reason = error instanceof Error ? error.message : String(error);
+                if (attempt >= 3 || !/already running/i.test(reason))
+                  return throwError(() => error);
+                return timer(1500).pipe(mergeMap(() => start(attempt + 1)));
+              }),
+            );
+          return start(0).pipe(
+            tap({
+              complete: () => {
+                void this.persist(request.threadId);
+                release();
+              },
+              error: () => release(),
+            }),
+          );
         })(),
       ).pipe(mergeAll()),
     );
