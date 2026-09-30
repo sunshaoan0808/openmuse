@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Artifact } from "../../../packages/domain/src/index.ts";
@@ -38,6 +38,10 @@ function extensionFor(mimeType: string): string {
       return "webp";
     case "image/gif":
       return "gif";
+    case "text/markdown":
+      return "md";
+    case "text/plain":
+      return "txt";
     default:
       return "pdf";
   }
@@ -85,6 +89,52 @@ export class Files {
     const directory = join(this.config.dataDir, "files");
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await writeFile(join(directory, `${id}.${kind.extension}`), bytes, { mode: 0o600, flag: "wx" });
+    await this.db.put(owner, "files", artifact);
+    return this.signed(owner, artifact);
+  }
+  /**
+   * 存一份"由智能体写出来的文本文件"（markdown / 纯文本）。
+   * 之前的 import() 只放行 PDF 与图片（靠字节魔数嗅探），所以用户要一份 .md 时
+   * 智能体即使写出了内容也无处可存，只能把全文打在聊天里。
+   */
+  async importText(
+    owner: string,
+    name: string,
+    text: string,
+    source: string,
+    idempotencyKey?: string,
+  ): Promise<Artifact> {
+    const bytes = new TextEncoder().encode(text);
+    if (bytes.length > 10 * 1024 * 1024) throw new AppError("文件需在 10 MB 以内", 413);
+    // 默认 markdown：用户/智能体说"一份文件"时通常要的就是可读的 md；只有明确 .txt 才存纯文本
+    const markdown = !/\.txt$/i.test(name);
+    const clean = Array.from((name.split(/[\\/]/).at(-1) || "document").replace(/\s+$/, ""))
+      .filter((character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127)
+      .join("")
+      .slice(0, 160);
+    const safeName = /\.(md|txt)$/i.test(clean) ? clean : `${clean}.${markdown ? "md" : "txt"}`;
+    const id = idempotencyKey
+      ? createHash("sha256").update(`file:${idempotencyKey}`).digest("hex")
+      : randomUUID();
+    const existing = await this.db.get<Artifact>(owner, "files", id);
+    if (existing) return this.signed(owner, existing);
+    const artifact: Artifact = {
+      id,
+      name: safeName,
+      mimeType: markdown ? "text/markdown" : "text/plain",
+      size: bytes.length,
+      pageCount: 0,
+      fields: [],
+      url: "",
+      createdAt: new Date().toISOString(),
+      source,
+    };
+    const directory = join(this.config.dataDir, "files");
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await writeFile(join(directory, `${id}.${markdown ? "md" : "txt"}`), bytes, {
+      mode: 0o600,
+      flag: "wx",
+    });
     await this.db.put(owner, "files", artifact);
     return this.signed(owner, artifact);
   }
