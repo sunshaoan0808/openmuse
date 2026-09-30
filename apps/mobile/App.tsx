@@ -316,7 +316,7 @@ function WorkspaceShell({
           <BlurView
             // Muse 原版的"悬浮"是原生模糊（RenderEffect）+ scrim：内容从玻璃下面滚过去。
             // Android 上必须指定 dimezisBlurView，否则 expo-blur 只会加一层半透明底色（等于没模糊）。
-            intensity={desktop ? 55 : 48}
+            intensity={desktop ? 80 : 70}
             tint="light"
             experimentalBlurMethod="dimezisBlurView"
             pointerEvents="box-none"
@@ -332,12 +332,7 @@ function WorkspaceShell({
             }}
           >
             <View style={{ position: "absolute", left: 0, top: 13 }}>
-              <IconButton
-                glass
-                icon={Menu}
-                label="打开会话与菜单"
-                onPress={() => setThreadsOpen(true)}
-              />
+              <IconButton icon={Menu} label="打开会话与菜单" onPress={() => setThreadsOpen(true)} />
             </View>
             <View style={{ alignItems: "center", gap: 1 }}>
               <Pressable
@@ -351,24 +346,43 @@ function WorkspaceShell({
                 })}
               >
                 <Mascot size={desktop ? 46 : 38} variant={data?.identity.avatar} />
-                <Text
+                {/* Muse 实测结构：中间是一张白色圆角卡片（头像叠在上沿），
+                    第二行可变——空闲是入口，干活时是"当前在做什么"。 */}
+                <View
                   style={{
-                    fontSize: 16,
-                    fontWeight: "600",
-                    color: colors.text,
-                    letterSpacing: -0.4,
+                    marginTop: -4,
+                    marginBottom: 6,
+                    paddingHorizontal: 16,
+                    paddingTop: 9,
+                    paddingBottom: 10,
+                    borderRadius: 20,
+                    backgroundColor: "#FFFFFF",
+                    alignItems: "center",
+                    gap: 2,
+                    minWidth: 132,
+                    shadowColor: "#132631",
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.08,
+                    shadowRadius: 12,
+                    elevation: 2,
                   }}
                 >
-                  {agentName}
-                </Text>
-                <Text
-                  numberOfLines={1}
-                  style={{ fontSize: 11, color: colors.muted, marginBottom: 6 }}
-                >
-                  {status}
-                </Text>
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      fontWeight: "600",
+                      color: colors.text,
+                      letterSpacing: -0.4,
+                    }}
+                  >
+                    {agentName}
+                  </Text>
+                  <Text numberOfLines={1} style={{ fontSize: 11, color: colors.muted }}>
+                    {status}
+                  </Text>
+                  {section === "chat" && <ComputerEntry />}
+                </View>
               </Pressable>
-              {section === "chat" && <ComputerEntry />}
             </View>
             <View style={{ position: "absolute", right: 0, top: 16 }}>
               {/* 照 Muse：右侧是一个带文字的胶囊，而不是光秃秃一个图标 */}
@@ -376,17 +390,20 @@ function WorkspaceShell({
                 accessibilityRole="button"
                 accessibilityLabel={`通知：${pending} 条未读或待处理`}
                 onPress={() => open({ type: "notifications" })}
-                style={({ pressed }) => ({
+                style={{
                   flexDirection: "row",
                   alignItems: "center",
                   gap: 6,
                   height: 34,
                   paddingHorizontal: 14,
                   borderRadius: 19,
-                  backgroundColor: pressed ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.5)",
-                  borderWidth: 1,
-                  borderColor: "rgba(255,255,255,0.65)",
-                })}
+                  backgroundColor: "#FFFFFF",
+                  shadowColor: "#132631",
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.08,
+                  shadowRadius: 12,
+                  elevation: 2,
+                }}
               >
                 <Bell size={16} strokeWidth={1.8} color={colors.text} />
                 <Text style={[s.small, { color: colors.text }]}>
