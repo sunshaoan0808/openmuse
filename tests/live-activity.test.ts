@@ -6,7 +6,7 @@ import { after, before, test } from "node:test";
 import { createStore, type Store } from "../apps/server/src/db.ts";
 import {
   activityFor,
-  readActivity,
+  readActivities,
   recordActivity,
   withActivity,
 } from "../apps/server/src/live-activity.ts";
@@ -37,19 +37,33 @@ test("工具调用翻译成人话，并带上最有信息量的参数", () => {
   assert.equal(activityFor("没见过的工具", {}).text, "正在使用 没见过的工具");
 });
 
-test("活动写进 store，超时后读成空（App 就不显示陈旧状态）", async () => {
+test("活动按会话分开存，超时后不再显示（不会串到别的会话）", async () => {
   const now = Date.now();
   await recordActivity(
     db,
     "local-user",
-    activityFor("search_web", { query: "上海 天气" }, { at: new Date(now).toISOString() }),
+    activityFor(
+      "search_web",
+      { query: "上海 天气" },
+      { at: new Date(now).toISOString(), threadId: "thread-a" },
+    ),
   );
-  const fresh = await readActivity(db, "local-user", { now });
-  assert.equal(fresh?.text, "正在搜索网页");
-  assert.equal(fresh?.detail, "上海 天气");
-  // 4 分钟前的不再显示
-  const stale = await readActivity(db, "local-user", { now: now + 4 * 60_000 });
-  assert.equal(stale, null);
+  await recordActivity(
+    db,
+    "local-user",
+    activityFor(
+      "browse_web",
+      { url: "https://example.com" },
+      { at: new Date(now).toISOString(), threadId: "thread-b" },
+    ),
+  );
+  const fresh = await readActivities(db, "local-user", { now });
+  assert.equal(fresh.length, 2, "两条会话各自一条");
+  assert.equal(fresh.find((activity) => activity.threadId === "thread-a")?.detail, "上海 天气");
+  assert.equal(fresh.find((activity) => activity.threadId === "thread-b")?.text, "正在打开网页");
+  // 90 秒之后不再显示（界面不能一直说"正在搜索"）
+  const stale = await readActivities(db, "local-user", { now: now + 2 * 60_000 });
+  assert.deepEqual(stale, []);
 });
 
 test("withActivity 包住的工具照常执行，同时上报当前动作", async () => {
@@ -71,7 +85,9 @@ test("withActivity 包住的工具照常执行，同时上报当前动作", asyn
   const result = await run({ query: "水族馆 门票" });
   assert.deepEqual(result, { results: [] });
   assert.deepEqual(calls, ["水族馆 门票"]);
-  const activity = await readActivity(db, "local-user");
+  const activity = (await readActivities(db, "local-user")).find(
+    (item) => item.threadId === "local-main",
+  );
   assert.equal(activity?.tool, "search_web");
   assert.equal(activity?.threadId, "local-main");
 });

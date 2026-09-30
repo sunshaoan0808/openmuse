@@ -115,7 +115,7 @@ export function AgentStatus() {
     const timer = setInterval(() => tick((n) => n + 1), 5000);
     return () => clearInterval(timer);
   }, []);
-  const live = data?.live ?? undefined;
+  const live = (data?.live ?? [])[0]; // 各会话各一条，动态页显示最新的
   const running = (data?.tasks ?? []).find((task) => ["running", "waiting"].includes(task.status));
   const step = running?.plan.find((item) => ["running", "waiting"].includes(item.status));
   const text = live?.text ?? (running ? `正在执行：${running.title}` : "");
