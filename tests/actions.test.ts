@@ -74,9 +74,9 @@ test("wrong owner and stale hash cannot approve", async () => {
   const proposal = await service.propose("private-user", email);
   await assert.rejects(
     service.decide("attacker", proposal.id, proposal.hash, "approve"),
-    /not found/i,
+    /找不到|未找到/,
   );
-  await assert.rejects(service.decide("private-user", proposal.id, "stale", "approve"), /changed/i);
+  await assert.rejects(service.decide("private-user", proposal.id, "stale", "approve"), /已变更/);
 });
 test("expired and disconnected proposals never reach the provider", async () => {
   let now = Date.now();
@@ -94,13 +94,13 @@ test("expired and disconnected proposals never reach the provider", async () => 
   now += 31 * 60 * 1000;
   await assert.rejects(
     service.decide("expired-user", expired.id, expired.hash, "approve"),
-    /expired/i,
+    /已过期/,
   );
   const revoked = await service.propose("revoked-user", email);
   connected = false;
   await assert.rejects(
     service.decide("revoked-user", revoked.id, revoked.hash, "approve"),
-    /disconnected/i,
+    /未连接|断开/,
   );
   assert.equal(calls, 0);
 });
@@ -152,12 +152,12 @@ test("account switching and reconnecting invalidate a prepared action", async ()
   connection = { id: "connection-b", account: "b@example.com" };
   await assert.rejects(
     service.decide("account-user", proposal.id, proposal.hash, "approve"),
-    /connection changed/i,
+    /连接已变更/,
   );
   connection = { id: "connection-new-a", account: "a@example.com" };
   await assert.rejects(
     service.decide("account-user", proposal.id, proposal.hash, "approve"),
-    /connection changed/i,
+    /连接已变更/,
   );
   assert.equal(calls, 0);
 });
@@ -279,9 +279,21 @@ test("an expired stale review cannot overwrite a concurrently executing action",
   await executing.promise;
   now += 31 * 60 * 1000;
   resumeRead.resolve();
-  await stale.catch((error) => assert.match(error.message, /expired/i));
+  await stale.catch((error) => assert.match(error.message, /已过期/));
   const saved = await db.get<ActionProposal>("expiry-race", "actions", proposal.id);
   finishExecution.resolve("sent");
   await approval;
   assert.equal(saved?.status, "executing");
+});
+
+test("a proposal remembers the conversation that asked for it", async () => {
+  const service = new ActionService(db, {
+    execute: async () => "sent",
+    connected: async () => true,
+  });
+  const proposal = await service.propose("thread-owner", email, "thread-key", "task-9", "thread-9");
+  assert.equal(proposal.taskId, "task-9");
+  assert.equal(proposal.threadId, "thread-9");
+  const stored = await db.get<ActionProposal>("thread-owner", "actions", proposal.id);
+  assert.equal(stored?.threadId, "thread-9");
 });

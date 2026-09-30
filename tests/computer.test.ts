@@ -59,7 +59,7 @@ test("a running command holds an atomic lease across service instances", async (
   const second = new ComputerService(db, config, f.runner);
   const run = first.execute("owner", { command: "sleep 1" });
   await started;
-  await assert.rejects(second.execute("owner", { command: "pwd" }), /busy/);
+  await assert.rejects(second.execute("owner", { command: "pwd" }), /忙/);
   finish?.(ok());
   await run;
 });
@@ -116,7 +116,7 @@ test("attaching an existing container fails closed on unsafe isolation or owner 
     modify(inspect);
     const f = fixture({ inspect });
     const service = new ComputerService(db, config, f.runner);
-    await assert.rejects(service.execute("owner", { command: "pwd" }), /isolation|ownership/);
+    await assert.rejects(service.execute("owner", { command: "pwd" }), /隔离|归属/);
     assert.ok(!f.calls.some((c) => c.args[0] === "exec"));
   }
 });
@@ -125,7 +125,7 @@ test("paths cannot escape the workspace and file contents travel on stdin", asyn
   const f = fixture({ command: async () => ok(JSON.stringify({ path: "/workspace/note.txt" })) });
   const service = new ComputerService(db, config, f.runner);
   for (const path of ["/etc/passwd", "/workspace/../secret", "relative", "/workspace\0/file"])
-    await assert.rejects(service.read("owner", path), /workspace|path/i);
+    await assert.rejects(service.read("owner", path), /workspace|路径/);
   const text = "$(touch /host-must-not-run)\nquoted ' content";
   assert.deepEqual(await service.write("owner", "/workspace/note.txt", text), {
     path: "/workspace/note.txt",
@@ -196,7 +196,7 @@ test("restart waits until a delayed pre-stop Docker execution acknowledges compl
   try {
     await ready;
     await service.stop("owner");
-    await assert.rejects(service.start("owner"), /busy/);
+    await assert.rejects(service.start("owner"), /忙/);
   } finally {
     release?.();
     await command;
@@ -235,7 +235,7 @@ test("failed Stop keeps commands quarantined and can be retried before the lease
   try {
     await ready;
     await assert.rejects(service.stop("owner"), /Docker/);
-    await assert.rejects(service.start("owner"), /busy/);
+    await assert.rejects(service.start("owner"), /忙/);
     assert.equal((await service.stop("owner")).status, "stopped");
   } finally {
     release?.();
@@ -260,7 +260,7 @@ test("a timeout with unconfirmed Docker cleanup stays quarantined until Stop suc
     return f.runner(args, options);
   });
   assert.equal((await service.execute("owner", { command: "sleep 99" })).status, "timed_out");
-  await assert.rejects(service.start("owner"), /busy/);
+  await assert.rejects(service.start("owner"), /忙/);
   failStop = false;
   assert.equal((await service.stop("owner")).status, "stopped");
   assert.equal((await service.start("owner")).status, "running");

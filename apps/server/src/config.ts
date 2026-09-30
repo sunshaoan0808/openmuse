@@ -49,6 +49,11 @@ export interface Config {
   googleRedirectUri: string;
   workerUrl?: string;
   workerToken?: string;
+  /** 自建 SearXNG 基地址（启用 JSON 输出后可直接当搜索后端）。 */
+  searchUrl?: string;
+  /** 官方搜索 API key 池（brave / tavily / serper / firecrawl），逐个失败轮换；空 = 只有抓取。 */
+  searchApiKeys?: string[];
+  searchProvider?: "brave" | "tavily" | "serper" | "firecrawl";
   taskWorkerEnabled?: boolean;
   computerEnabled?: boolean;
   computerImage?: string;
@@ -70,9 +75,7 @@ export function required(name: string, message: string, value = process.env[name
 export function assertApiDeploymentConfig(config: Config): void {
   // 自家垫片要求 API 与实时平面成对配置：只设一个会让另一半静默连到官方托管平台并挂住。
   if (Boolean(config.intelligenceApiUrl) !== Boolean(config.intelligenceWsUrl))
-    throw new Error(
-      "INTELLIGENCE_API_URL and INTELLIGENCE_WS_URL must be set together",
-    );
+    throw new Error("INTELLIGENCE_API_URL and INTELLIGENCE_WS_URL must be set together");
 }
 
 /** Intelligence 是否启用：官方 key 或自家垫片地址任一存在即为启用。 */
@@ -121,6 +124,26 @@ export function readConfig(): Config {
     googleRedirectUri: `${publicUrl}/api/google/callback`,
     workerUrl: process.env.BROWSER_WORKER_URL,
     workerToken: process.env.WORKER_TOKEN,
+    searchUrl: process.env.SEARCH_URL?.trim() || undefined,
+    searchApiKeys: [
+      ...(process.env.SEARCH_API_KEYS ?? "").split(","),
+      process.env.SEARCH_API_KEY ?? "",
+      ...(process.env.FIRECRAWL_API_KEYS ?? "").split(","),
+      // 大批量的 key 用文件：SEARCH_API_KEYS_FILE 指向 600 权限的文件，一行一把
+      ...(process.env.SEARCH_API_KEYS_FILE ?? "")
+        .split(",")
+        .map((file) => file.trim())
+        .filter(Boolean)
+        .flatMap((file) => (existsSync(file) ? readFileSync(file, "utf8").split(/\s+/) : [])),
+    ]
+      .map((key) => key.trim())
+      .filter(Boolean)
+      .filter((key, index, all) => all.indexOf(key) === index),
+    searchProvider: ["brave", "tavily", "serper", "firecrawl"].includes(
+      process.env.SEARCH_PROVIDER ?? "",
+    )
+      ? (process.env.SEARCH_PROVIDER as "brave" | "tavily" | "serper" | "firecrawl")
+      : undefined,
     taskWorkerEnabled: process.env.TASK_WORKER_ENABLED !== "false",
     computerEnabled: process.env.COMPUTER_ENABLED === "true",
     computerImage: process.env.COMPUTER_IMAGE ?? "openmuse-computer:local",

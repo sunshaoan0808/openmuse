@@ -31,6 +31,7 @@ import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
 import { backgroundFailure } from "../log.ts";
+import { SearchService } from "../search.ts";
 import type { WorkspaceService } from "../workspace.ts";
 import { analyzeSpending } from "./finance.ts";
 import { executeModelTask } from "./model.ts";
@@ -51,6 +52,7 @@ export class AgentService {
     readonly actions: ActionService,
     readonly browser: BrowserService,
     readonly computer: ComputerService = new ComputerService(db, config),
+    readonly search: SearchService = new SearchService(config, browser),
   ) {
     this.worker = new TaskWorker(db, (owner, task, context) => this.execute(owner, task, context), {
       settled: (owner, task) => this.publishOutcome(owner, task),
@@ -154,7 +156,7 @@ export class AgentService {
   }
   async getTask(owner: string, id: string) {
     const task = await this.db.get<AgentTask>(owner, "tasks", id);
-    if (!task) throw new AppError("Task not found", 404);
+    if (!task) throw new AppError("找不到这个任务", 404);
     return task;
   }
   async detail(owner: string, id: string) {
@@ -180,7 +182,7 @@ export class AgentService {
   async createTask(owner: string, raw: unknown, idempotencyKey?: string, held = false) {
     const input = createTaskSchema.parse(raw);
     if (input.goalId && !(await this.db.get(owner, "goals", input.goalId)))
-      throw new AppError("Goal not found", 404);
+      throw new AppError("找不到这个目标", 404);
     const id = idempotencyKey ? hash(`task:${idempotencyKey}`) : randomUUID();
     const existing = await this.db.get<AgentTask>(owner, "tasks", id);
     if (existing) return existing;
@@ -188,7 +190,7 @@ export class AgentService {
       (await this.db.list<AgentTask>(owner, "tasks")).filter((t) => !terminal.has(t.status))
         .length >= 100
     )
-      throw new AppError("Finish or cancel some tasks before adding more", 409);
+      throw new AppError("先完成或取消一些任务，再添加新的", 409);
     const titles =
       input.kind === "document"
         ? [
@@ -209,6 +211,7 @@ export class AgentService {
       prompt: input.prompt,
       kind: input.kind,
       goalId: input.goalId,
+      threadId: input.threadId,
       status: held ? "paused" : "queued",
       plan: titles.map((title, i) => ({ id: String(i), title, status: "pending" })),
       evidence: [],
@@ -231,11 +234,11 @@ export class AgentService {
   async control(owner: string, id: string, action: "pause" | "resume" | "cancel" | "retry") {
     const task = await this.getTask(owner, id);
     if (action === "cancel" && task.status === "succeeded")
-      throw new AppError("This task is already complete", 409);
+      throw new AppError("这个任务已完成", 409);
     if (action === "retry" && task.status !== "failed")
-      throw new AppError("Only failed tasks can be retried", 409);
+      throw new AppError("只有失败的任务可以重试", 409);
     if (action === "resume" && task.status !== "paused")
-      throw new AppError("Only paused tasks can be resumed", 409);
+      throw new AppError("只有已暂停的任务可以继续", 409);
     if (action === "pause" && (terminal.has(task.status) || task.status === "paused")) return task;
     const status =
       action === "cancel"
@@ -248,10 +251,7 @@ export class AgentService {
     if (action === "retry" && task.actionId) {
       const a = await this.db.get<ActionProposal>(owner, "actions", task.actionId);
       if (a && a.status !== "succeeded")
-        throw new AppError(
-          "Check the reviewed action before retrying; its outcome may be uncertain. Start a new task when reconciled.",
-          409,
-        );
+        throw new AppError("重试前先核对这次操作的结果（可能不确定）；核对清楚后请新建任务。", 409);
     }
     const updated = await this.db.compareAndSwap<AgentTask>(
       owner,
@@ -275,7 +275,7 @@ export class AgentService {
           : {}),
       },
     );
-    if (!updated) throw new AppError("Task changed; refresh and try again", 409);
+    if (!updated) throw new AppError("任务已变更，刷新后重试", 409);
     this.worker.abort(id);
     if (task.kind === "monitor")
       await this.db.compareAndSwap(
@@ -312,8 +312,7 @@ export class AgentService {
     fields?: Record<string, string | boolean>,
   ) {
     const task = await this.getTask(owner, id);
-    if (task.status !== "waiting_input")
-      throw new AppError("This task is not waiting for input", 409);
+    if (task.status !== "waiting_input") throw new AppError("这个任务不在等待输入", 409);
     const next = await this.db.compareAndSwap<AgentTask>(
       owner,
       "tasks",
@@ -327,7 +326,7 @@ export class AgentService {
         updatedAt: date(),
       },
     );
-    if (!next) throw new AppError("Task changed; refresh and try again", 409);
+    if (!next) throw new AppError("任务已变更，刷新后重试", 409);
     return next;
   }
   async createGoal(owner: string, raw: unknown, id?: string) {
@@ -350,7 +349,7 @@ export class AgentService {
     patch: { status?: Goal["status"]; milestones?: Goal["milestones"] },
   ) {
     const goal = await this.db.get<Goal>(owner, "goals", id);
-    if (!goal) throw new AppError("Goal not found", 404);
+    if (!goal) throw new AppError("找不到这个目标", 404);
     const saved = await this.db.put(owner, "goals", { ...goal, ...patch });
     if (patch.status === "paused")
       for (const task of await this.db.list<AgentTask>(owner, "tasks"))
@@ -362,11 +361,11 @@ export class AgentService {
     const input = monitorInputSchema.parse(raw);
     const url = new URL(input.url);
     if (url.protocol === "sample:" && this.config.mode !== "sample")
-      throw new AppError("Sample sources are unavailable in live workspaces", 422);
+      throw new AppError("示例来源在真实工作区中不可用", 422);
     if (!["https:", "http:", "sample:"].includes(url.protocol) || url.username || url.password)
-      throw new AppError("Use a public HTTP(S) page", 422);
+      throw new AppError("请使用公开的 HTTP(S) 页面", 422);
     if (url.protocol === "sample:" && input.url !== "sample://availability")
-      throw new AppError("Unknown sample source", 422);
+      throw new AppError("未知的示例来源", 422);
     const id = idempotencyKey ? hash(`monitor:${idempotencyKey}`) : randomUUID();
     const existing = await this.db.get<Monitor>(owner, "monitors", id);
     if (existing) {
@@ -429,9 +428,9 @@ export class AgentService {
   }
   async controlMonitor(owner: string, id: string, action: "pause" | "resume" | "stop" | "check") {
     const monitor = await this.db.get<Monitor>(owner, "monitors", id);
-    if (!monitor) throw new AppError("Monitor not found", 404);
+    if (!monitor) throw new AppError("找不到这个监控", 404);
     if (monitor.status === "stopped" && action !== "stop")
-      throw new AppError("Create a new watch to restart this stopped monitor", 409);
+      throw new AppError("要重启这个已停止的监控，请新建一个监控", 409);
     if (action === "pause" || action === "stop") {
       const status = action === "pause" ? "paused" : "stopped";
       const saved = await this.db.put(owner, "monitors", {
@@ -516,7 +515,7 @@ export class AgentService {
       );
       if (queued) return saved;
     }
-    throw new AppError("The watch changed while updating. Try again.", 409);
+    throw new AppError("更新时监控已变更，请重试。", 409);
   }
   async refreshIdeas(owner: string) {
     const w = await this.workspace.snapshot(owner);
@@ -604,7 +603,7 @@ export class AgentService {
   }
   async decideIdea(owner: string, id: string, action: "accept" | "dismiss", prompt?: string) {
     let idea = await this.db.get<Idea>(owner, "ideas", id);
-    if (!idea) throw new AppError("Idea not found", 404);
+    if (!idea) throw new AppError("找不到这条灵感", 404);
     if (idea.status === "dismissed" || (idea.status === "accepted" && action === "dismiss"))
       return idea;
     if (action === "dismiss")
@@ -700,11 +699,14 @@ export class AgentService {
     await context.guard();
     const connection = await this.workspace.connection(owner);
     if (connection?.id !== task.state.connectionId)
-      throw new AppError(
-        "Google connection changed during this task. Start a new task using the current account.",
-        409,
-      );
-    const proposal = await this.actions.propose(owner, input, `${task.id}:${key}`, task.id);
+      throw new AppError("任务执行期间 Google 连接变了，请用当前账号新建任务。", 409);
+    const proposal = await this.actions.propose(
+      owner,
+      input,
+      `${task.id}:${key}`,
+      task.id,
+      task.threadId,
+    );
     if (proposal.status === "succeeded") return proposal;
     if (proposal.status !== "awaiting_review" && proposal.status !== "executing")
       throw new AppError(
@@ -738,7 +740,7 @@ export class AgentService {
     );
     if (task.actionId) {
       const action = await this.db.get<ActionProposal>(owner, "actions", task.actionId);
-      if (!action) throw new Error("The linked review could not be found");
+      if (!action) throw new Error("找不到关联的复核");
       if (action.status === "succeeded") {
         await context.event("result", "Approved action completed", action.result);
         if (task.kind === "document")
@@ -910,9 +912,9 @@ export class AgentService {
     if (!source) {
       const w = await this.workspace.snapshot(owner);
       const mail = w.mail.find((m) => m.id === task.input.messageId);
-      if (!mail) throw new Error("Choose a current email with a PDF attachment to start this task");
+      if (!mail) throw new Error("请选择一封带 PDF 附件的当前邮件来启动这个任务");
       const ref = mail.attachments[0];
-      if (!ref) throw new Error("This email has no PDF attachment");
+      if (!ref) throw new Error("这封邮件没有 PDF 附件");
       await ctx.guard();
       let file: Artifact;
       try {
@@ -999,12 +1001,12 @@ export class AgentService {
     ctx: TaskContext,
   ): Promise<Partial<AgentTask>> {
     const monitor = await this.db.get<Monitor>(owner, "monitors", String(task.input.monitorId));
-    if (!monitor) throw new Error("Monitor not found");
+    if (!monitor) throw new Error("找不到这个监控");
     if (monitor.status !== "active")
       return { status: monitor.status === "paused" ? "paused" : "cancelled" };
     let observation: { url: string; title: string; text: string; sessionId?: string };
     if (monitor.url === "sample://availability") {
-      if (this.config.mode !== "sample") throw new Error("Sample source unavailable");
+      if (this.config.mode !== "sample") throw new Error("示例来源不可用");
       const page = await this.db.get<{ text: string }>(owner, "sample-pages", "availability");
       observation = {
         url: monitor.url,

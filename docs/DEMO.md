@@ -64,7 +64,7 @@ From the repository root:
 pnpm install --frozen-lockfile
 npx copilotkit@latest login
 npx copilotkit@latest project select
-pnpm --dir apps/worker exec playwright install chromium
+pnpm --dir apps/worker exec patchright install chromium
 pnpm dev:demo
 ```
 

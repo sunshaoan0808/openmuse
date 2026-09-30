@@ -27,10 +27,6 @@ export function agentConfigured(config: Config) {
   );
 }
 /** 从请求头解析 owner（与 identifyUser 同源），供引擎工厂使用。 */
-function ownerFrom(request: Request): string {
-  const header = request.headers.get("authorization") ?? "";
-  return header ? header.slice(-8) : "local-user";
-}
 
 export function makeRuntime(
   config: Config,
@@ -42,34 +38,29 @@ export function makeRuntime(
   const agents: AgentsFactory = async ({ request }) => {
     const owner = await auth.owner(request.headers.get("authorization") ?? undefined);
     return {
-    default: config.agentEngine === "mastra"
-      ? (() => {
-          const mastra = createMastraChatAgent(config, {
-            service,
-            owner: owner,
-          });
-          if (!mastra)
-            throw new Error(
-              "AGENT_ENGINE=mastra 需要 MODEL（如 openai/vendor/model）与 OPENAI_BASE_URL",
-            );
-          return mastra;
-        })()
-      : config.agentBackend === "sample"
-        ? new ConversationAgent(
-            config,
-            service,
-            owner,
-          )
-        : config.agentBackend === "agui"
-          ? new HttpAgent({
-              url: config.agentUrl ?? "http://127.0.0.1:1/unconfigured",
-              headers: config.agentToken ? { Authorization: `Bearer ${config.agentToken}` } : {},
-            })
-          : new ConversationAgent(
-              config,
-              service,
-              owner,
-            ),
+      default:
+        config.agentEngine === "mastra"
+          ? (() => {
+              const mastra = createMastraChatAgent(config, {
+                service,
+                owner: owner,
+              });
+              if (!mastra)
+                throw new Error(
+                  "AGENT_ENGINE=mastra 需要 MODEL（如 openai/vendor/model）与 OPENAI_BASE_URL",
+                );
+              return mastra;
+            })()
+          : config.agentBackend === "sample"
+            ? new ConversationAgent(config, service, owner)
+            : config.agentBackend === "agui"
+              ? new HttpAgent({
+                  url: config.agentUrl ?? "http://127.0.0.1:1/unconfigured",
+                  headers: config.agentToken
+                    ? { Authorization: `Bearer ${config.agentToken}` }
+                    : {},
+                })
+              : new ConversationAgent(config, service, owner),
     };
   };
   // 两条分支对应官方两种运行时模式：

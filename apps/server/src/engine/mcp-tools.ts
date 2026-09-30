@@ -31,7 +31,11 @@ interface McpServerConfig {
 
 /** 已连接的工具缓存（同步读取用）。 */
 let cache: NeutralTool[] = [];
-let lastRefresh: { at: number; summary: string; tools: number } = { at: 0, summary: "未刷新", tools: 0 };
+let lastRefresh: { at: number; summary: string; tools: number } = {
+  at: 0,
+  summary: "未刷新",
+  tools: 0,
+};
 const clients = new Map<string, unknown>();
 
 export function mcpToolCount(): number {
@@ -53,9 +57,14 @@ function parseServers(): McpServerConfig[] {
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) throw new Error("MCP_SERVERS 必须是 JSON 数组");
-    return parsed.filter((s) => s && typeof s.name === "string" && (s.transport === "stdio" || s.transport === "http"));
+    return parsed.filter(
+      (s) => s && typeof s.name === "string" && (s.transport === "stdio" || s.transport === "http"),
+    );
   } catch (error) {
-    console.warn("[mcp] MCP_SERVERS 解析失败，已忽略：", error instanceof Error ? error.message : error);
+    console.warn(
+      "[mcp] MCP_SERVERS 解析失败，已忽略：",
+      error instanceof Error ? error.message : error,
+    );
     return [];
   }
 }
@@ -106,7 +115,9 @@ function renderResult(result: unknown): unknown {
   const r = result as { content?: unknown; isError?: boolean; structuredContent?: unknown };
   if (r?.structuredContent && !r.content) return r.structuredContent;
   if (!Array.isArray(r?.content)) return r ?? null;
-  const parts = (r.content as { type?: string; text?: string; uri?: string; mimeType?: string }[]).map((part) => {
+  const parts = (
+    r.content as { type?: string; text?: string; uri?: string; mimeType?: string }[]
+  ).map((part) => {
     if (part?.type === "text") return part.text ?? "";
     if (part?.type === "image") return `[image ${part.mimeType ?? ""}]`;
     if (part?.type === "resource") return `[resource ${part.uri ?? ""}]`;
@@ -142,7 +153,9 @@ export async function refreshMcpTools(): Promise<{ at: number; summary: string; 
         });
       } else {
         if (!server.url) throw new Error("http 传输缺少 url");
-        const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+        const { StreamableHTTPClientTransport } = await import(
+          "@modelcontextprotocol/sdk/client/streamableHttp.js"
+        );
         transport = new StreamableHTTPClientTransport(new URL(server.url));
       }
 
@@ -171,7 +184,9 @@ export async function refreshMcpTools(): Promise<{ at: number; summary: string; 
               );
               return renderResult(result);
             } catch (error) {
-              return { error: `MCP 调用失败（${server.name}/${tool.name}）：${error instanceof Error ? error.message : String(error)}` };
+              return {
+                error: `MCP 调用失败（${server.name}/${tool.name}）：${error instanceof Error ? error.message : String(error)}`,
+              };
             }
           },
         });
@@ -180,12 +195,19 @@ export async function refreshMcpTools(): Promise<{ at: number; summary: string; 
       console.log(`[mcp] ${server.name} 已连接，暴露 ${tools.length} 个工具`);
     } catch (error) {
       notes.push(`${server.name}: 连接失败`);
-      console.warn(`[mcp] ${server.name} 连接失败：`, error instanceof Error ? error.message : error);
+      console.warn(
+        `[mcp] ${server.name} 连接失败：`,
+        error instanceof Error ? error.message : error,
+      );
     }
   }
 
   cache = collected;
-  lastRefresh = { at: Date.now(), summary: notes.join("；") || "无服务器", tools: collected.length };
+  lastRefresh = {
+    at: Date.now(),
+    summary: notes.join("；") || "无服务器",
+    tools: collected.length,
+  };
   return mcpStatus();
 }
 

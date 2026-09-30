@@ -344,3 +344,16 @@ test("live mode rejects sample sources and hides the fixture mutation endpoint",
     await live.agent.stop();
   }
 });
+
+test("a delegated task keeps the conversation that asked for it", async () => {
+  const task = await read<AgentTask>(
+    "/tasks",
+    { prompt: "整理这份材料", threadId: "thread-local-1" },
+    201,
+  );
+  assert.equal(task.threadId, "thread-local-1");
+  const reopened = await read<{ task: AgentTask }>(`/tasks/${task.id}`);
+  assert.equal(reopened.task.threadId, "thread-local-1");
+  const snapshot = await read<AgentWorkspace>("");
+  assert.equal(snapshot.tasks.find((item) => item.id === task.id)?.threadId, "thread-local-1");
+});

@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
-import { Linking, Text, type ImageStyle, type TextStyle, type ViewStyle } from "react-native";
+import { type ImageStyle, Linking, Text, type TextStyle, type ViewStyle } from "react-native";
 import Markdown, { type RenderRules } from "react-native-markdown-display";
-import { assistantMarkdown, isSafeAssistantUrl } from "./assistant-markdown";
+import { assistantMarkdown, isSafeAssistantUrl, tidyAssistantText } from "./assistant-markdown";
 import { colors, ErrorNotice } from "./ui";
 
 const textStyle = { color: colors.text, fontSize: 16, lineHeight: 24 };
@@ -75,6 +75,8 @@ const rules: RenderRules = {
 
 export function AssistantResponse({ content }: { content: string }) {
   const [linkError, setLinkError] = useState("");
+  // 抄写抖动（书名号里的星号、重复片名、只开不闭）在渲染前清掉，不改模型输出也不进存档。
+  const shown = tidyAssistantText(content);
   const onLinkPress = useCallback((url: string) => {
     if (!isSafeAssistantUrl(url)) return false;
     setLinkError("");
@@ -91,7 +93,7 @@ export function AssistantResponse({ content }: { content: string }) {
         rules={rules}
         onLinkPress={onLinkPress}
       >
-        {content}
+        {shown}
       </Markdown>
       <ErrorNotice error={linkError} />
     </>

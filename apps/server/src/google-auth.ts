@@ -49,13 +49,11 @@ export class GoogleAuth {
   }
   private decodeTokens(stored: Credential | null): Tokens | null {
     if (!stored?.secret) return null;
-    if (!this.config.encryptionKey)
-      throw new AppError("TOKEN_ENCRYPTION_KEY is not configured", 503);
+    if (!this.config.encryptionKey) throw new AppError("TOKEN_ENCRYPTION_KEY 未配置", 503);
     return JSON.parse(decryptSecret(stored.secret, this.config.encryptionKey));
   }
   private async save(owner: string, tokens: Tokens, generation: string) {
-    if (!this.config.encryptionKey)
-      throw new AppError("TOKEN_ENCRYPTION_KEY is not configured", 503);
+    if (!this.config.encryptionKey) throw new AppError("TOKEN_ENCRYPTION_KEY 未配置", 503);
     const saved = await this.db.compareAndSwap<Credential>(
       owner,
       "credentials",
@@ -67,8 +65,7 @@ export class GoogleAuth {
         secret: encryptSecret(JSON.stringify(tokens), this.config.encryptionKey),
       },
     );
-    if (!saved)
-      throw new AppError("Google sign-in changed or was disconnected. Connect again.", 409);
+    if (!saved) throw new AppError("Google 登录状态已变更或断开，请重新连接。", 409);
   }
   private async rotateGeneration(owner: string, disconnect = false) {
     const generation = randomUUID();
@@ -100,7 +97,7 @@ export class GoogleAuth {
   async connect(owner: string, write: boolean) {
     if (!this.configured())
       throw new AppError(
-        "Configure GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and TOKEN_ENCRYPTION_KEY to connect Google",
+        "要连接 Google，请配置 GOOGLE_CLIENT_ID、GOOGLE_CLIENT_SECRET 和 TOKEN_ENCRYPTION_KEY",
         503,
       );
     const state = randomBytes(32).toString("base64url"),
@@ -147,10 +144,10 @@ export class GoogleAuth {
   async callback(stateId: string, code: string) {
     const state = await this.db.take<OAuthState>("system", "oauth", stateId);
     if (!state || state.expiresAt < Date.now())
-      throw new AppError("Google sign-in expired. Connect again.", 400);
+      throw new AppError("Google 登录已过期，请重新连接。", 400);
     const credential = await this.db.get<Credential>(state.owner, "credentials", "google");
     if (!state.generation || credential?.generation !== state.generation)
-      throw new AppError("Google sign-in changed or was disconnected. Connect again.", 409);
+      throw new AppError("Google 登录状态已变更或断开，请重新连接。", 409);
     const response = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -164,14 +161,13 @@ export class GoogleAuth {
       }),
       signal: AbortSignal.timeout(15000),
     });
-    if (!response.ok) throw new AppError("Google could not complete sign-in. Connect again.", 502);
+    if (!response.ok) throw new AppError("Google 登录未能完成，请重新连接。", 502);
     const token = tokenSchema.parse(await response.json());
     const profile = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
       headers: { Authorization: `Bearer ${token.access_token}` },
       signal: AbortSignal.timeout(15000),
     });
-    if (!profile.ok)
-      throw new AppError("Google did not grant Gmail read access. Connect again.", 403);
+    if (!profile.ok) throw new AppError("Google 未授予 Gmail 读取权限，请重新连接。", 403);
     const { emailAddress } = z.object({ emailAddress: z.email() }).parse(await profile.json());
     const previous = await this.tokens(state.owner);
     await this.save(
@@ -191,9 +187,9 @@ export class GoogleAuth {
   }
   async accessToken(owner: string, expectedConnectionId?: string): Promise<string> {
     const tokens = await this.tokens(owner);
-    if (!tokens) throw new AppError("Google is disconnected", 409);
+    if (!tokens) throw new AppError("Google 未连接", 409);
     if (expectedConnectionId && tokens.connectionId !== expectedConnectionId)
-      throw new AppError("Google account or connection changed. Prepare a new action.", 409);
+      throw new AppError("Google 账号或连接已变更，请重新准备操作。", 409);
     if (tokens.expiresAt > Date.now() + 60000) return tokens.accessToken;
     const refreshKey = `${owner}:${tokens.connectionId}`;
     const pending = this.refreshing.get(refreshKey);
@@ -203,7 +199,7 @@ export class GoogleAuth {
     return task;
   }
   private async refresh(owner: string, tokens: Tokens) {
-    if (!tokens.refreshToken) throw new AppError("Google session expired. Connect again.", 401);
+    if (!tokens.refreshToken) throw new AppError("Google 会话已过期，请重新连接。", 401);
     const response = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -215,21 +211,20 @@ export class GoogleAuth {
       }),
       signal: AbortSignal.timeout(15000),
     });
-    if (!response.ok) throw new AppError("Google session expired. Connect again.", 401);
+    if (!response.ok) throw new AppError("Google 会话已过期，请重新连接。", 401);
     const token = tokenSchema.parse(await response.json());
     const refreshed = {
       ...tokens,
       accessToken: token.access_token,
       expiresAt: Date.now() + token.expires_in * 1000,
     };
-    if (!this.config.encryptionKey) throw new AppError("Token encryption is not configured", 503);
+    if (!this.config.encryptionKey) throw new AppError("Token 加密未配置", 503);
     const updated = await this.db.updateCredential(
       owner,
       tokens.connectionId,
       encryptSecret(JSON.stringify(refreshed), this.config.encryptionKey),
     );
-    if (!updated)
-      throw new AppError("Google account changed or was disconnected during refresh", 409);
+    if (!updated) throw new AppError("刷新期间 Google 账号已变更或断开", 409);
     return token.access_token;
   }
   async disconnect(owner: string) {
@@ -244,7 +239,7 @@ export class GoogleAuth {
       });
       if (!response.ok && response.status !== 400)
         throw new AppError(
-          "Disconnected locally. Google revocation failed; remove access in your Google account settings.",
+          "已在本地断开，但 Google 侧撤销失败；请到 Google 账号设置里移除授权。",
           502,
         );
     }

@@ -40,6 +40,7 @@ import type {
 } from "../../../packages/domain/src";
 import { apiUrl } from "./api";
 import { localDateTime, zonedInstant } from "./date-time";
+import { actionKindLabel, proposalStatusLabel } from "./labels";
 import {
   Button,
   Card,
@@ -51,6 +52,7 @@ import {
   IconButton,
   LinkRow,
   Mascot,
+  MeasureCard,
   relativeDate,
   resultSummary,
   SectionHeading,
@@ -104,19 +106,20 @@ export function TodayScreen() {
               color: colors.text,
             }}
           >
-            Your day, with a little{"\n"}more room to breathe.
+            今天，留一点余地。
           </Text>
           <Text style={[s.muted, { maxWidth: 420, color: "#617680" }]}>
-            {events.length ? `${events.length} things on your calendar` : "日历还有空"}
-            {unread.length ? `, ${unread.length} unread emails` : ""}.{"\n"}Let’s make space for
-            what matters.
+            {events.length ? `今天有 ${events.length} 件事` : "日历还有空"}
+            {unread.length ? `，${unread.length} 封未读邮件` : ""}。{"\n"}先把要紧的留出来。
           </Text>
           <Button
             onPress={() => ask("帮我安排今天")}
             icon={Sparkles}
             primary
             style={{ alignSelf: "flex-start", marginTop: 5 }}
-          >安排我的一天</Button>
+          >
+            安排我的一天
+          </Button>
         </View>
         {wide && (
           <View style={{ width: 220, height: 210, alignItems: "center", justifyContent: "center" }}>
@@ -242,11 +245,7 @@ export function TodayScreen() {
           {events.length ? (
             events.slice(0, 3).map((e, i) => <AgendaRow key={e.id} event={e} index={i} />)
           ) : (
-            <Empty
-              icon={CalendarDays}
-              title="一点喘息空间"
-              detail="今天没有安排。"
-            />
+            <Empty icon={CalendarDays} title="一点喘息空间" detail="今天没有安排。" />
           )}
           <Pressable
             onPress={() => open({ type: "event" })}
@@ -273,9 +272,9 @@ export function TodayScreen() {
           />
           {w.mail.length ? (
             w.mail.slice(0, 3).map((m, i) => (
-              <Pressable
+              <MeasureCard
                 key={m.id}
-                onPress={() => open({ type: "mail", mail: m })}
+                label={m.sender}
                 style={[
                   s.row,
                   {
@@ -285,6 +284,19 @@ export function TodayScreen() {
                     borderTopColor: colors.line,
                   },
                 ]}
+                onPress={(rect) =>
+                  open({
+                    type: "mail",
+                    mail: m,
+                    hero: {
+                      rect,
+                      title: m.sender,
+                      subtitle: m.subject,
+                      icon: Mail,
+                      tint: colors.lavender,
+                    },
+                  })
+                }
               >
                 <Avatar name={m.sender} index={i} />
                 <View style={{ flex: 1, gap: 3 }}>
@@ -304,14 +316,10 @@ export function TodayScreen() {
                     style={{ width: 5, height: 5, borderRadius: 4, backgroundColor: "#78ABD0" }}
                   />
                 )}
-              </Pressable>
+              </MeasureCard>
             ))
           ) : (
-            <Empty
-              icon={Inbox}
-              title="收件箱很安静"
-              detail="关联 Google，把邮件带到这里。"
-            />
+            <Empty icon={Inbox} title="收件箱很安静" detail="关联 Google，把邮件带到这里。" />
           )}
         </Card>
       </View>
@@ -319,11 +327,7 @@ export function TodayScreen() {
         <Card style={{ flex: 1, backgroundColor: "#F0F0E7" }}>
           <SectionHeading title="琐事有人帮手" />
           <Text style={[s.muted, { marginBottom: 15 }]}>从一个念头开始，剩下交给我们。</Text>
-          {[
-            "今天有什么需要我处理的？",
-            "帮我把收件箱补上",
-            "显示我最近的文档",
-          ].map((prompt) => (
+          {["今天有什么需要我处理的？", "帮我把收件箱补上", "显示我最近的文档"].map((prompt) => (
             <Pressable
               key={prompt}
               onPress={() => ask(prompt)}
@@ -339,7 +343,7 @@ export function TodayScreen() {
         </Card>
         <Card style={{ flex: 1 }}>
           <SectionHeading
-            title={pending.length ? "Ready for your review" : "最近活动"}
+            title={pending.length ? "等你确认" : "最近活动"}
             action="查看全部"
             onPress={() => navigate("activity")}
           />
@@ -488,12 +492,16 @@ export function MailScreen() {
             style={{ flex: 1, paddingVertical: 13, fontSize: 13, color: colors.text }}
           />
         </View>
-        <Button onPress={() => open({ type: "email" })} primary icon={Plus}>写信</Button>
+        <Button onPress={() => open({ type: "email" })} primary icon={Plus}>
+          写信
+        </Button>
       </View>
       <ErrorNotice error={error} />
       <Card>
         <View style={[s.row, { gap: 10, marginBottom: 15, flexWrap: "wrap" }]}>
-          <Button small primary={tab === "all"} onPress={() => setTab("all")}>全部消息</Button>
+          <Button small primary={tab === "all"} onPress={() => setTab("all")}>
+            全部消息
+          </Button>
           <Button small primary={tab === "unread"} onPress={() => setTab("unread")}>
             Unread · {w.mail.filter((m) => m.unread).length}
           </Button>
@@ -513,21 +521,30 @@ export function MailScreen() {
               />
             ))
           ) : (
-            <Empty
-              icon={Mail}
-              title="全新一页"
-              detail="存成草稿的邮件会留在这里，随时可以继续。"
-            />
+            <Empty icon={Mail} title="全新一页" detail="存成草稿的邮件会留在这里，随时可以继续。" />
           )
         ) : items.length ? (
           items.map((m, i) => (
-            <Pressable
+            <MeasureCard
               key={m.id}
-              onPress={() => open({ type: "mail", mail: m })}
+              label={m.sender}
               style={[
                 s.row,
                 { gap: 15, paddingVertical: 20, borderTopWidth: 1, borderTopColor: colors.line },
               ]}
+              onPress={(rect) =>
+                open({
+                  type: "mail",
+                  mail: m,
+                  hero: {
+                    rect,
+                    title: m.sender,
+                    subtitle: m.subject,
+                    icon: Mail,
+                    tint: colors.lavender,
+                  },
+                })
+              }
             >
               <Avatar name={m.sender} index={i} />
               <View style={{ flex: 1, gap: 5 }}>
@@ -553,17 +570,13 @@ export function MailScreen() {
                   style={{ width: 6, height: 6, borderRadius: 4, backgroundColor: "#83B5D3" }}
                 />
               )}
-            </Pressable>
+            </MeasureCard>
           ))
         ) : (
           <Empty
             icon={Inbox}
             title={query ? "没有匹配的消息" : "收件箱里没有内容"}
-            detail={
-              query
-                ? "换个名称或主题试试。"
-                : "在「连接」里关联 Google，就能在这里读邮件。"
-            }
+            detail={query ? "换个名称或主题试试。" : "在「连接」里关联 Google，就能在这里读邮件。"}
           />
         )}
       </Card>
@@ -676,13 +689,11 @@ export function CalendarScreen() {
             label="上一周"
             onPress={() => setDate(plusDays(date, -7))}
           />
-          <IconButton
-            icon={ChevronRight}
-            label="下周"
-            onPress={() => setDate(plusDays(date, 7))}
-          />
+          <IconButton icon={ChevronRight} label="下周" onPress={() => setDate(plusDays(date, 7))} />
         </View>
-        <Button primary icon={Plus} disabled={!writable} onPress={newEvent}>新建事件</Button>
+        <Button primary icon={Plus} disabled={!writable} onPress={newEvent}>
+          新建事件
+        </Button>
       </View>
       {calendars.length > 0 && (
         <View style={{ gap: 9 }}>
@@ -763,11 +774,13 @@ export function CalendarScreen() {
           </Button>
         </View>
         <Text style={[s.small, { marginTop: 7, marginBottom: 13 }]}>
-          {selected?.name || "你的日历"} · {zone}. Events show their own time zone.
+          {selected?.name || "你的日历"} · {zone} · 日程各自显示自己的时区。
         </Text>
         <ErrorNotice error={error} />
         {!!error && (
-          <Button small onPress={() => setRetry(retry + 1)}>重试</Button>
+          <Button small onPress={() => setRetry(retry + 1)}>
+            重试
+          </Button>
         )}
         {loading ? (
           <View style={[s.row, { gap: 10, paddingVertical: 35, justifyContent: "center" }]}>
@@ -787,14 +800,12 @@ export function CalendarScreen() {
             <Empty
               icon={CalendarDays}
               title="一点留白"
-              detail={
-                all
-                  ? "未来 30 天没有安排。"
-                  : "这一天日历上没有安排。"
-              }
+              detail={all ? "未来 30 天没有安排。" : "这一天日历上没有安排。"}
             >
               {writable && (
-                <Button icon={Plus} onPress={newEvent}>新增事件</Button>
+                <Button icon={Plus} onPress={newEvent}>
+                  新增事件
+                </Button>
               )}
             </Empty>
           )
@@ -849,7 +860,9 @@ export function BrowserScreen() {
             busy={busy}
             disabled={!url.trim()}
             onPress={() => void create()}
-          >打开会话</Button>
+          >
+            打开会话
+          </Button>
         </View>
         <ErrorNotice error={error} />
       </Card>
@@ -857,15 +870,28 @@ export function BrowserScreen() {
         <SectionHeading title="浏览器会话" />
         {w.browsers.length ? (
           w.browsers.map((b) => (
-            <Pressable
+            <MeasureCard
               key={b.id}
-              onPress={() => open({ type: "browser", browser: b })}
+              label={b.title || "Browser session"}
               style={{
                 borderTopWidth: 1,
                 borderTopColor: colors.line,
                 paddingVertical: 20,
                 gap: 12,
               }}
+              onPress={(rect) =>
+                open({
+                  type: "browser",
+                  browser: b,
+                  hero: {
+                    rect,
+                    title: b.title || "Browser session",
+                    subtitle: b.url,
+                    icon: Globe2,
+                    tint: colors.sky,
+                  },
+                })
+              }
             >
               <View style={[s.row, { gap: 14 }]}>
                 <View style={s.iconBox}>
@@ -892,7 +918,7 @@ export function BrowserScreen() {
                   }}
                 />
               )}
-            </Pressable>
+            </MeasureCard>
           ))
         ) : (
           <Empty
@@ -905,6 +931,9 @@ export function BrowserScreen() {
     </View>
   );
 }
+function fileFormatLabel(name: string) {
+  return /\.([a-z0-9]+)$/i.exec(name.trim())?.[1]?.toUpperCase() ?? "FILE";
+}
 export function FilesScreen() {
   const { workspace: w, api, refresh, open } = useWorkspace();
   const [busy, setBusy] = useState(false);
@@ -914,7 +943,13 @@ export function FilesScreen() {
     setBusy(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: "application/pdf",
+        // PDF 与 Office 文档都能导入；Web 端与 Android 端都按 MIME 过滤
+        type: [
+          "application/pdf",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ],
         copyToCacheDirectory: true,
       });
       if (result.canceled) return;
@@ -922,8 +957,7 @@ export function FilesScreen() {
       let artifact: Artifact;
       if (Platform.OS === "web") {
         const form = new FormData();
-        if (!file.file)
-          throw new Error("无法读取所选文件，请重新选择。");
+        if (!file.file) throw new Error("无法读取所选文件，请重新选择。");
         form.append("file", file.file, file.name);
         artifact = await api.request<Artifact>("/api/files", form);
       } else {
@@ -931,12 +965,12 @@ export function FilesScreen() {
           httpMethod: "POST",
           uploadType: FileSystem.FileSystemUploadType.MULTIPART,
           fieldName: "file",
-          mimeType: "application/pdf",
+          mimeType: file.mimeType || "application/octet-stream",
           headers: { Authorization: `Bearer ${api.token}` },
         });
         const payload = JSON.parse(result.body);
         if (result.status < 200 || result.status >= 300)
-          throw new Error(payload.error || "无法导入这个 PDF。");
+          throw new Error(payload.error || "无法导入这个文件。");
         artifact = payload;
       }
       await refresh();
@@ -951,15 +985,31 @@ export function FilesScreen() {
     <View style={{ gap: 20 }}>
       <View style={s.between}>
         <Text style={[s.muted, { flex: 1, marginRight: 15 }]}>文档，以及一点干活的空间。</Text>
-        <Button primary icon={Upload} busy={busy} onPress={() => void upload()}>导入 PDF</Button>
+        <Button primary icon={Upload} busy={busy} onPress={() => void upload()}>
+          导入文档
+        </Button>
       </View>
       <ErrorNotice error={error} />
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 18 }}>
         {w.files.map((f) => (
-          <Pressable
+          <MeasureCard
             key={f.id}
-            onPress={() => open({ type: "file", file: f })}
+            label={f.name}
             style={{ flexGrow: 1, flexBasis: 250, maxWidth: 430 }}
+            onPress={(rect) =>
+              open({
+                type: "file",
+                file: f,
+                // 共享元素过渡的来源：这张卡片在屏幕上的位置
+                hero: {
+                  rect,
+                  title: f.name,
+                  subtitle: `${f.pageCount} ${f.pageCount === 1 ? "page" : "pages"} · ${Math.max(1, Math.round(f.size / 1024))} KB`,
+                  icon: FileText,
+                  tint: colors.sky,
+                },
+              })
+            }
           >
             <Card style={{ padding: 0, overflow: "hidden" }}>
               <View
@@ -1000,7 +1050,7 @@ export function FilesScreen() {
                   ))}
                 </View>
                 <View style={{ position: "absolute", bottom: 12, right: 14 }}>
-                  <Chip>PDF</Chip>
+                  <Chip>{fileFormatLabel(f.name)}</Chip>
                 </View>
               </View>
               <View style={{ padding: 21, gap: 6 }}>
@@ -1017,7 +1067,7 @@ export function FilesScreen() {
                 </View>
               </View>
             </Card>
-          </Pressable>
+          </MeasureCard>
         ))}
       </View>
       {!w.files.length && (
@@ -1040,22 +1090,37 @@ export function ActivityScreen() {
   return (
     <View style={{ gap: 20 }}>
       <View style={[s.row, { gap: 10 }]}>
-        <Button small primary={filter === "all"} onPress={() => setFilter("all")}>全部动态</Button>
+        <Button small primary={filter === "all"} onPress={() => setFilter("all")}>
+          全部动态
+        </Button>
         <Button small primary={filter === "review"} onPress={() => setFilter("review")}>
-          Needs review · {pending.length}
+          等你复核 · {pending.length}
         </Button>
       </View>
       {actions.length > 0 && (
         <Card>
           <SectionHeading title="你的操作" />
           {actions.map((a) => (
-            <Pressable
+            <MeasureCard
               key={a.id}
-              onPress={() => open({ type: "review", action: a })}
+              label={`复核：${a.title}`}
               style={[
                 s.row,
                 { gap: 15, paddingVertical: 17, borderTopWidth: 1, borderTopColor: colors.line },
               ]}
+              onPress={(rect) =>
+                open({
+                  type: "review",
+                  action: a,
+                  hero: {
+                    rect,
+                    title: a.title,
+                    subtitle: actionKindLabel(a.kind),
+                    icon: ShieldCheck,
+                    tint: colors.lavender,
+                  },
+                })
+              }
             >
               <View
                 style={[
@@ -1085,10 +1150,10 @@ export function ActivityScreen() {
                       : colors.canvas
                 }
               >
-                {a.status.replace(/_/g, " ")}
+                {proposalStatusLabel(a.status)}
               </Chip>
               <ChevronRight size={16} color={colors.muted} />
-            </Pressable>
+            </MeasureCard>
           ))}
         </Card>
       )}
@@ -1126,11 +1191,7 @@ export function ActivityScreen() {
               </View>
             ))
           ) : (
-            <Empty
-              icon={Clock3}
-              title="轻松一点的开始"
-              detail="你的操作和结果会记录在这里。"
-            />
+            <Empty icon={Clock3} title="轻松一点的开始" detail="你的操作和结果会记录在这里。" />
           )}
         </Card>
       )}
@@ -1222,11 +1283,7 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
         return (
           <View key={String(isConnected)} style={{ gap: 8 }}>
             <Text style={[s.small, { marginLeft: 12 }]}>
-              {isConnected
-                ? w.mode === "sample"
-                  ? "你的连接"
-                  : "Connected"
-                : "可用集成"}
+              {isConnected ? (w.mode === "sample" ? "你的连接" : "Connected") : "可用集成"}
             </Text>
             <View style={{ paddingHorizontal: 16, borderRadius: 23, backgroundColor: "#F3F4F5" }}>
               {group.map((row, index) => (
@@ -1290,17 +1347,25 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
         >
           {selected === "google" ? (
             <View style={{ gap: 18 }}>
-              <Text style={s.muted}>把 Gmail 和 Google 日历接进你的对话。先选只读权限，需要时再开启发送与编辑。</Text>
+              <Text style={s.muted}>
+                把 Gmail 和 Google 日历接进你的对话。先选只读权限，需要时再开启发送与编辑。
+              </Text>
               <View style={[s.row, { gap: 7, flexWrap: "wrap" }]}>
                 {google?.capabilities.map((cap) => (
                   <Chip key={cap}>{capabilityLabel(cap)}</Chip>
                 ))}
               </View>
               <ErrorNotice error={error} />
-              <Button busy={busy} primary icon={Link2} onPress={() => void connect("read")}>关联 Google</Button>
-              <Button busy={busy} onPress={() => void connect("write")}>开启发送与编辑</Button>
+              <Button busy={busy} primary icon={Link2} onPress={() => void connect("read")}>
+                关联 Google
+              </Button>
+              <Button busy={busy} onPress={() => void connect("write")}>
+                开启发送与编辑
+              </Button>
               {connected && (
-                <Button busy={busy} danger onPress={() => void disconnect()}>断开 Google</Button>
+                <Button busy={busy} danger onPress={() => void disconnect()}>
+                  断开 Google
+                </Button>
               )}
               <SettingsLine
                 label="环境"
@@ -1317,19 +1382,26 @@ export function ConnectionsScreen({ query = "" }: { query?: string }) {
                 }
               />
               <SettingsLine
-                label="Rich Threads"
+                label="多会话线程"
                 value={w.runtime.richThreads ? "CopilotKit Intelligence" : "未连接"}
               />
               <Button
                 small
                 icon={ArrowDownToLine}
                 onPress={() => void refresh().catch((e) => setError(String(e)))}
-              >刷新连接</Button>
+              >
+                刷新连接
+              </Button>
             </View>
           ) : (
             <View style={{ gap: 14 }}>
-              <Text style={s.text}>此开源项目内置 OpenBot 适配器，但尚未配置可用的 OpenBot 后端。</Text>
-              <Text style={s.muted}>当前电脑使用 OpenMuse 的持久 Chromium worker。OpenBot 集成会扩展执行后端，界面保持不变。</Text>
+              <Text style={s.text}>
+                此开源项目内置 OpenBot 适配器，但尚未配置可用的 OpenBot 后端。
+              </Text>
+              <Text style={s.muted}>
+                当前电脑使用 OpenMuse 的持久 Chromium worker。OpenBot
+                集成会扩展执行后端，界面保持不变。
+              </Text>
             </View>
           )}
         </Sheet>

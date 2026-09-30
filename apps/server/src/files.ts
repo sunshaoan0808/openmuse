@@ -8,7 +8,6 @@ import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
 
-
 /** 按魔数识别文件类型：只放行 PDF 与常见图片（与 agent 的图片理解能力对齐）。 */
 function sniff(bytes: Uint8Array): { mimeType: string; extension: string } | undefined {
   const b = bytes;
@@ -16,7 +15,13 @@ function sniff(bytes: Uint8Array): { mimeType: string; extension: string } | und
   if (startsWith(0x25, 0x50, 0x44, 0x46)) return { mimeType: "application/pdf", extension: "pdf" };
   if (startsWith(0x89, 0x50, 0x4e, 0x47)) return { mimeType: "image/png", extension: "png" };
   if (startsWith(0xff, 0xd8, 0xff)) return { mimeType: "image/jpeg", extension: "jpg" };
-  if (startsWith(0x52, 0x49, 0x46, 0x46) && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50)
+  if (
+    startsWith(0x52, 0x49, 0x46, 0x46) &&
+    b[8] === 0x57 &&
+    b[9] === 0x45 &&
+    b[10] === 0x42 &&
+    b[11] === 0x50
+  )
     return { mimeType: "image/webp", extension: "webp" };
   if (startsWith(0x47, 0x49, 0x46, 0x38)) return { mimeType: "image/gif", extension: "gif" };
   return undefined;
@@ -25,11 +30,16 @@ function sniff(bytes: Uint8Array): { mimeType: string; extension: string } | und
 /** 文件在磁盘上的扩展名：以存下来的 mimeType 为准，老数据回退到 pdf。 */
 function extensionFor(mimeType: string): string {
   switch (mimeType) {
-    case "image/png": return "png";
-    case "image/jpeg": return "jpg";
-    case "image/webp": return "webp";
-    case "image/gif": return "gif";
-    default: return "pdf";
+    case "image/png":
+      return "png";
+    case "image/jpeg":
+      return "jpg";
+    case "image/webp":
+      return "webp";
+    case "image/gif":
+      return "gif";
+    default:
+      return "pdf";
   }
 }
 
@@ -54,7 +64,7 @@ export class Files {
       kind.mimeType === "application/pdf"
         ? await inspectPdf(bytes)
         : { pageCount: 0, fields: [] as NonNullable<Artifact["fields"]> };
-    if (metadata.pageCount > 500) throw new AppError("PDFs must have 500 pages or fewer", 422);
+    if (metadata.pageCount > 500) throw new AppError("PDF 不能超过 500 页", 422);
     const id = randomUUID();
     const safeName = Array.from(name.split(/[\\/]/).at(-1) ?? "document.pdf")
       .filter((character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127)
@@ -86,7 +96,7 @@ export class Files {
   }
   async get(owner: string, id: string) {
     const file = await this.db.get<Artifact>(owner, "files", id);
-    if (!file) throw new AppError("File not found", 404);
+    if (!file) throw new AppError("找不到这个文件", 404);
     return file;
   }
   async bytes(owner: string, id: string) {

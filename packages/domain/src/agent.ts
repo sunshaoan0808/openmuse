@@ -30,6 +30,7 @@ export interface AgentTask {
   kind: "agent" | "document" | "monitor" | "finance" | "plan";
   status: TaskStatus;
   goalId?: string;
+  threadId?: string;
   plan: TaskStep[];
   evidence: Evidence[];
   input: Record<string, unknown>;
@@ -136,6 +137,8 @@ export const createTaskSchema = z.object({
   prompt: z.string().trim().min(1).max(12000),
   kind: z.enum(["agent", "document", "monitor", "finance", "plan"]).default("agent"),
   goalId: z.string().optional(),
+  /** 提出这件事的会话：让结果/审批回到它开始的地方 */
+  threadId: z.string().trim().max(200).optional(),
   input: z.record(z.string(), z.unknown()).default({}),
 });
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
@@ -149,12 +152,12 @@ export const monitorInputSchema = z
   })
   .superRefine((v, c) => {
     if (v.condition !== "change" && !v.value.trim())
-      c.addIssue({ code: "custom", message: "Enter a condition value" });
+      c.addIssue({ code: "custom", message: "请填写监控条件值" });
     if (
       v.condition === "price_below" &&
       (!Number.isFinite(Number(v.value)) || Number(v.value) <= 0)
     )
-      c.addIssue({ code: "custom", message: "Enter a positive price" });
+      c.addIssue({ code: "custom", message: "请填写一个正数价格" });
   });
 export const goalInputSchema = z.object({
   title: z.string().trim().min(1).max(160),

@@ -11,14 +11,15 @@ import type {
   Workspace,
 } from "../../../packages/domain/src";
 import type { MuseApi } from "./api";
+import type { HeroCard } from "./motion";
 export type Detail =
-  | { type: "mail"; mail: Mail }
+  | { type: "mail"; mail: Mail; hero?: HeroCard }
   | { type: "email"; draft?: Partial<EmailDraft> & { id?: string } }
   | { type: "event"; event?: CalendarEvent; draft?: EventDraft; neighbors?: CalendarEvent[] }
-  | { type: "file"; file: Artifact }
-  | { type: "browser"; browser: BrowserSession }
-  | { type: "review"; action: ActionProposal }
-  | { type: "task"; taskId: string }
+  | { type: "file"; file: Artifact; hero?: HeroCard }
+  | { type: "browser"; browser: BrowserSession; hero?: HeroCard }
+  | { type: "review"; action: ActionProposal; hero?: HeroCard }
+  | { type: "task"; taskId: string; hero?: HeroCard }
   | { type: "delegate" }
   | { type: "notifications" }
   | { type: "computer" }

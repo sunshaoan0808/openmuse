@@ -66,7 +66,7 @@ pnpm --dir apps/worker typecheck
 pnpm test
 pnpm build:server
 pnpm --dir apps/mobile exec expo export --platform all --output-dir dist/release
-pnpm --dir apps/worker exec playwright install chromium
+pnpm --dir apps/worker exec patchright install chromium
 pnpm test:browser
 # Requires a responsive Docker daemon; use DOCKER_CONTEXT if needed:
 docker build -t openmuse-computer:local apps/computer

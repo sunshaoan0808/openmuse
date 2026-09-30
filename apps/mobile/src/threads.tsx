@@ -10,7 +10,8 @@ import {
   Settings2,
 } from "lucide-react-native";
 import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
+import { SkeletonRows } from "./skeleton";
 import { Button, colors, ErrorNotice, Field, LinkRow, Sheet, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -140,11 +141,7 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
         {enabled && loading ? (
           <>
             <ErrorNotice error={mainError} />
-            {mainError ? (
-              <Button onPress={retry}>重试主聊天</Button>
-            ) : (
-              <ActivityIndicator color={colors.blueDark} />
-            )}
+            {mainError ? <Button onPress={retry}>重试主聊天</Button> : <SkeletonRows count={3} />}
           </>
         ) : enabled ? (
           <>
@@ -164,17 +161,21 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                 start();
                 onClose();
               }}
-            >新建侧边聊天</Button>
+            >
+              新建侧边聊天
+            </Button>
             <View style={[s.between, { marginTop: 12 }]}>
               <Text style={s.heading}>侧边聊天</Text>
               <Button small onPress={() => setArchived(!archived)}>
                 {archived ? "只看进行中" : "Archived"}
               </Button>
             </View>
-            {threads.isLoading && <ActivityIndicator color={colors.blueDark} />}
+            {threads.isLoading && <SkeletonRows count={2} />}
             <ErrorNotice error={error || threads.error?.message} />
             {threads.error && (
-              <Button small onPress={threads.refetchThreads}>重试会话</Button>
+              <Button small onPress={threads.refetchThreads}>
+                重试会话
+              </Button>
             )}
             {!archived &&
               visited
@@ -217,9 +218,7 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                     style={[s.row, { gap: 10 }]}
                   >
                     <MessageCircle size={19} color={colors.text} />
-                    <Text style={[s.text, { flex: 1 }]}>
-                      {thread.name || "未命名会话"}
-                    </Text>
+                    <Text style={[s.text, { flex: 1 }]}>{thread.name || "未命名会话"}</Text>
                   </Pressable>
                   {editing === thread.id && (
                     <Field label="会话名称" value={name} onChangeText={setName} />
@@ -262,14 +261,14 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
                 (thread) => thread.id !== mainId && thread.archived === archived,
               ) && (
                 <Text style={s.muted}>
-                  {archived
-                    ? "没有已归档的会话。"
-                    : "在这里放一个单独的话题，主聊天始终可用。"}
+                  {archived ? "没有已归档的会话。" : "在这里放一个单独的话题，主聊天始终可用。"}
                 </Text>
               )}
             <ErrorNotice error={threads.fetchMoreError?.message} />
             {threads.hasMoreThreads && (
-              <Button small busy={threads.isFetchingMoreThreads} onPress={threads.fetchMoreThreads}>加载更多会话</Button>
+              <Button small busy={threads.isFetchingMoreThreads} onPress={threads.fetchMoreThreads}>
+                加载更多会话
+              </Button>
             )}
             <Text style={s.small}>侧边聊天有各自的对话上下文，智能体保存的记忆是共享的。</Text>
           </>
@@ -306,10 +305,12 @@ export function ThreadsSheet({ onClose }: { onClose: () => void }) {
             open({ type: "computer" });
           }}
         />
-        <LinkRow icon={CalendarDays} title="Calendar" onPress={() => go("calendar")} />
+        <LinkRow icon={CalendarDays} title="日历" onPress={() => go("calendar")} />
         <LinkRow icon={FileText} title="文件" onPress={() => go("files")} />
         <LinkRow icon={Settings2} title="应用与设置" onPress={() => go("apps")} />
-        <Button small icon={RefreshCw} onPress={() => void mutate(refresh)}>刷新工作区</Button>
+        <Button small icon={RefreshCw} onPress={() => void mutate(refresh)}>
+          刷新工作区
+        </Button>
       </View>
     </Sheet>
   );

@@ -44,7 +44,7 @@ test("computer REST endpoints require session ownership and return persisted rec
       body: JSON.stringify({ fileId: "belongs-to-another-owner", path: "/workspace/document.pdf" }),
     });
     assert.equal(missing.status, 404);
-    assert.equal((await missing.json()).error, "File not found");
+    assert.equal((await missing.json()).error, "找不到这个文件");
     assert.equal(f.calls.length, 0);
     // A fixture tied to another owner must never attach to the authenticated owner.
     const command = await server.app.request("/api/computer/commands", {
@@ -53,7 +53,7 @@ test("computer REST endpoints require session ownership and return persisted rec
       body: JSON.stringify({ command: "pwd" }),
     });
     assert.equal(command.status, 409);
-    assert.match((await command.json()).error, /ownership/);
+    assert.match((await command.json()).error, /归属/);
     assert.ok(!f.calls.some((call) => call.args[0] === "exec"));
     const owned = await createApp(
       db,

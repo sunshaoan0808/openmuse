@@ -87,9 +87,9 @@ test("old refresh cannot overwrite a newly connected Google account", async (t) 
     secret: encryptSecret(JSON.stringify(b), key),
   });
   release?.(Response.json({ access_token: "refreshed-a", expires_in: 3600 }));
-  await assert.rejects(refresh, /account changed/i);
+  await assert.rejects(refresh, /账号已变更/);
   assert.equal((await auth.tokens("owner"))?.account, "b@example.com");
-  await assert.rejects(auth.accessToken("owner", "connection-a"), /connection changed/i);
+  await assert.rejects(auth.accessToken("owner", "connection-a"), /连接已变更/);
 });
 
 test("OAuth callbacks require a known, single-use state", async (t) => {
@@ -106,7 +106,7 @@ test("OAuth callbacks require a known, single-use state", async (t) => {
     allowedOrigins: [],
   };
   const auth = new GoogleAuth(db, config);
-  await assert.rejects(auth.callback("unknown-state", "untrusted-code"), /expired/);
+  await assert.rejects(auth.callback("unknown-state", "untrusted-code"), /已过期/);
   await db.put("system", "oauth", {
     id: "expired",
     owner: "owner",
@@ -114,7 +114,7 @@ test("OAuth callbacks require a known, single-use state", async (t) => {
     scopes: [],
     expiresAt: Date.now() - 1,
   });
-  await assert.rejects(auth.callback("expired", "untrusted-code"), /expired/);
+  await assert.rejects(auth.callback("expired", "untrusted-code"), /已过期/);
   assert.equal(await db.get("system", "oauth", "expired"), null);
 });
 
@@ -144,7 +144,7 @@ for (const stage of ["token", "profile"]) {
     await started.promise;
     await auth.disconnect("callback-race");
     release.resolve();
-    await assert.rejects(callback, /disconnect|expired|changed/i);
+    await assert.rejects(callback, /断开|已过期|已变更/);
     assert.equal(await auth.tokens("callback-race"), null);
   });
 }
@@ -166,7 +166,7 @@ test("disconnect invalidates pending OAuth state before a callback contacts Goog
         : { emailAddress: "unused@example.com" },
     );
   });
-  await assert.rejects(auth.callback(state, "synthetic-code"), /disconnect|expired|changed/i);
+  await assert.rejects(auth.callback(state, "synthetic-code"), /断开|已过期|已变更/);
   assert.equal(calls, 0);
 });
 
@@ -199,7 +199,7 @@ test("a newer connect attempt invalidates an older callback already exchanging i
   assert.ok(second);
   await auth.callback(second, "new-code");
   release.resolve();
-  await assert.rejects(oldCallback, /disconnect|expired|changed/i);
+  await assert.rejects(oldCallback, /断开|已过期|已变更/);
   assert.equal((await auth.tokens("reconnect-owner"))?.accessToken, "new-access");
 });
 
@@ -236,6 +236,6 @@ test("an in-flight refresh cannot restore credentials after disconnect", async (
   await started.promise;
   await auth.disconnect("refresh-disconnect");
   release.resolve();
-  await assert.rejects(refresh, /disconnected/i);
+  await assert.rejects(refresh, /断开|已变更/);
   assert.equal(await auth.tokens("refresh-disconnect"), null);
 });

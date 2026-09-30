@@ -48,7 +48,9 @@ export async function createWorkerServer(options: {
       response.end(JSON.stringify(body));
     };
     try {
-      const pathname = new URL(request.url ?? "/", "http://worker").pathname;
+      const target = new URL(request.url ?? "/", "http://worker");
+      const pathname = target.pathname;
+      const search = target.searchParams;
       if (request.method === "GET" && pathname === "/health") {
         json(200, { status: "ok" });
         return;
@@ -68,7 +70,7 @@ export async function createWorkerServer(options: {
         return;
       }
       const match =
-        /^\/sessions\/([^/]+)\/(navigate|close|screenshot|read|input|downloads)(?:\/([^/]+))?$/.exec(
+        /^\/sessions\/([^/]+)\/(navigate|close|screenshot|read|content|input|downloads|back|forward|reload|viewport|elements|act)(?:\/([^/]+))?$/.exec(
           pathname,
         );
       if (!match) throw new WorkerError("NOT_FOUND", "Worker endpoint not found.", 404);
@@ -83,9 +85,47 @@ export async function createWorkerServer(options: {
         json(200, await browser.input(id, await readBody(request)));
       else if (action === "read" && !downloadId && request.method === "GET")
         json(200, await browser.read(id));
+      else if (action === "content" && !downloadId && request.method === "GET")
+        json(200, await browser.content(id));
+      else if (action === "back" && !downloadId && request.method === "POST")
+        json(200, await browser.back(id));
+      else if (action === "forward" && !downloadId && request.method === "POST")
+        json(200, await browser.forward(id));
+      else if (action === "reload" && !downloadId && request.method === "POST")
+        json(200, await browser.reload(id));
+      else if (action === "viewport" && !downloadId && request.method === "POST") {
+        const body = await readBody(request);
+        const { width, height } = body;
+        if (
+          typeof width !== "number" ||
+          typeof height !== "number" ||
+          !Number.isInteger(width) ||
+          !Number.isInteger(height) ||
+          width < 320 ||
+          width > 1920 ||
+          height < 240 ||
+          height > 1200
+        )
+          throw new WorkerError(
+            "INVALID_VIEWPORT",
+            "Viewport must be 320-1920 by 240-1200 pixels.",
+          );
+        json(200, await browser.viewport(id, width, height));
+      } else if (action === "elements" && !downloadId && request.method === "GET")
+        json(200, await browser.elements(id));
+      else if (action === "act" && !downloadId && request.method === "POST")
+        json(200, await browser.act(id, await readBody(request)));
       else if (action === "screenshot" && !downloadId && request.method === "GET") {
-        const bytes = await browser.screenshot(id);
-        response.writeHead(200, { "content-type": "image/png", "content-length": bytes.length });
+        const format = search.get("format") === "jpeg" ? "jpeg" : "png";
+        const quality = Number(search.get("quality") ?? "");
+        const bytes = await browser.screenshot(id, {
+          format,
+          ...(Number.isFinite(quality) ? { quality } : {}),
+        });
+        response.writeHead(200, {
+          "content-type": format === "jpeg" ? "image/jpeg" : "image/png",
+          "content-length": bytes.length,
+        });
         response.end(bytes);
       } else if (action === "downloads" && request.method === "GET") {
         if (!downloadId) json(200, await browser.downloads(id));
@@ -100,6 +140,8 @@ export async function createWorkerServer(options: {
         }
       } else throw new WorkerError("NOT_FOUND", "Worker endpoint not found.", 404);
     } catch (error) {
+      // 非预期错误对外只回一句通用文案，真实原因必须落到服务端日志，否则线上只能看到 500。
+      if (!(error instanceof WorkerError)) console.error("worker failure", error);
       const safe =
         error instanceof WorkerError
           ? error

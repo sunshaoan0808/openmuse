@@ -76,7 +76,7 @@ test("document job runs without a client, waits for review, and resumes from its
   await server.agent.control(owner, task.id, "pause");
   await assert.rejects(
     server.actions.decide(owner, action.id, action.hash, "approve"),
-    /Resume the task/,
+    /先恢复任务/,
   );
   await server.agent.control(owner, task.id, "resume");
   const receipt = await server.actions.decide(owner, action.id, action.hash, "approve");

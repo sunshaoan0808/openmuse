@@ -14,6 +14,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  ShieldCheck,
   Square,
   Target,
   Users,
@@ -22,7 +23,7 @@ import {
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Image, Linking, Pressable, Text, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-import type { Artifact, BrowserSession } from "../../../packages/domain/src";
+import type { ActionProposal, Artifact, BrowserSession } from "../../../packages/domain/src";
 import type {
   AgentArtifact,
   AgentMemory,
@@ -34,6 +35,16 @@ import type {
   RunEvent,
 } from "../../../packages/domain/src/agent";
 import { useAgentWorkspace } from "./agent-workspace";
+import {
+  actionKindLabel,
+  fieldLabel,
+  missingCount,
+  pendingSummary,
+  statusLabel,
+  stepStatusLabel,
+  taskStatusLabel,
+} from "./labels";
+import type { HeroRect } from "./motion";
 import { ActivityScreen, ConnectionsScreen } from "./screens";
 import {
   Button,
@@ -46,6 +57,7 @@ import {
   Field,
   LinkRow,
   Mascot,
+  MeasureCard,
   resultSummary,
   SectionHeading,
   Sheet,
@@ -53,9 +65,6 @@ import {
 } from "./ui";
 import { useWorkspace } from "./workspace";
 
-export function statusLabel(value: string) {
-  return value.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
-}
 function stamp(value?: string) {
   return value
     ? new Date(value).toLocaleString(undefined, {
@@ -79,7 +88,9 @@ export function AgentStatus() {
     <View style={{ gap: 8 }}>
       <ErrorNotice error={error ? `Agent updates unavailable. ${error}` : ""} />
       {!!error && (
-        <Button small onPress={() => void refresh().catch(() => {})}>重新连接智能体</Button>
+        <Button small onPress={() => void refresh().catch(() => {})}>
+          重新连接智能体
+        </Button>
       )}
       {!data && !error && <ActivityIndicator color={colors.blueDark} />}
       {data && !data.worker.running && (
@@ -102,12 +113,22 @@ export function TaskCard({
   const next = task.plan.find((step) => ["running", "waiting"].includes(step.status));
   const waiting = ["waiting_input", "waiting_approval"].includes(task.status);
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Open task: ${task.title}`}
-      onPress={() => {
+    <MeasureCard
+      label={`Open task: ${task.title}`}
+      onPress={(rect) => {
         onOpen?.();
-        open({ type: "task", taskId: task.id });
+        open({
+          type: "task",
+          taskId: task.id,
+          // 共享元素过渡：从这张任务卡飞进详情
+          hero: {
+            rect,
+            title: task.title,
+            subtitle: `${taskStatusLabel(task.status)}${task.plan.length ? ` · ${done}/${task.plan.length} 步` : ""}`,
+            icon: ListChecks,
+            tint: waiting ? colors.orange : colors.sky,
+          },
+        });
       }}
     >
       <Card
@@ -130,8 +151,8 @@ export function TaskCard({
           <View style={{ flex: 1, gap: 4 }}>
             <Text style={s.heading}>{task.title}</Text>
             <Text style={s.small}>
-              {statusLabel(task.status)}
-              {task.plan.length ? ` · ${done}/${task.plan.length} steps` : ""}
+              {taskStatusLabel(task.status)}
+              {task.plan.length ? ` · ${done}/${task.plan.length} 步` : ""}
             </Text>
           </View>
           <ChevronRight size={17} color={colors.muted} />
@@ -155,11 +176,15 @@ export function TaskCard({
         )}
         {waiting && (
           <Text style={[s.small, { color: colors.blueDark, fontWeight: "600" }]}>
-            {task.status === "waiting_approval" ? "需要复核" : "需要你的输入"}
+            {task.status === "waiting_approval"
+              ? "等你确认这次操作"
+              : missingCount(task)
+                ? `还缺 ${missingCount(task)} 项信息`
+                : "需要你的补充"}
           </Text>
         )}
       </Card>
-    </Pressable>
+    </MeasureCard>
   );
 }
 export function ChatWork() {
@@ -177,33 +202,71 @@ export function ChatWork() {
     </View>
   );
 }
+/** 需要人介入的两个状态：等确认、缺信息。 */
+export function needsMe(task: AgentTask) {
+  return ["waiting_input", "waiting_approval"].includes(task.status);
+}
 export function AgentActivityScreen() {
   const { data } = useAgentWorkspace();
-  const [filter, setFilter] = useState("全部");
+  const { workspace: w, open } = useWorkspace();
+  // 默认落在"待我处理"：需要人的事排最前，其余按时间。
+  const [filter, setFilter] = useState("待我处理");
+  const pendingActions = w.actions.filter((action) => action.status === "awaiting_review");
+  const queue = (data?.tasks || []).filter(needsMe);
   const tasks = [...(data?.tasks || [])]
-    .filter(
-      (task) =>
-        filter === "全部" || (filter === "进行中" ? activeTask(task) : !activeTask(task)),
-    )
+    .filter((task) => {
+      if (filter === "待我处理") return needsMe(task);
+      if (filter === "全部") return true;
+      return filter === "进行中" ? activeTask(task) : !activeTask(task);
+    })
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const nothingWaiting = !tasks.length && !pendingActions.length;
   return (
     <View style={{ gap: 20 }}>
       <AgentStatus />
-      <View style={[s.row, { gap: 8 }]}>
-        {["全部", "进行中", "已完成"].map((item) => (
+      <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
+        {["待我处理", "全部", "进行中", "已完成"].map((item) => (
           <Button key={item} small primary={filter === item} onPress={() => setFilter(item)}>
-            {item}
+            {item === "待我处理" && queue.length + pendingActions.length
+              ? `${item} · ${queue.length + pendingActions.length}`
+              : item}
           </Button>
         ))}
       </View>
+      {filter === "待我处理" && !!pendingActions.length && (
+        <PendingActionCards
+          actions={pendingActions}
+          onOpen={(action, rect) =>
+            open({
+              type: "review",
+              action,
+              ...(rect
+                ? {
+                    hero: {
+                      rect,
+                      title: action.title,
+                      subtitle: actionKindLabel(action.kind),
+                      icon: ShieldCheck,
+                      tint: colors.lavender,
+                    },
+                  }
+                : {}),
+            })
+          }
+        />
+      )}
       {tasks.map((task) => (
         <TaskCard key={task.id} task={task} />
       ))}
-      {!tasks.length && (
+      {!tasks.length && (filter !== "待我处理" || nothingWaiting) && (
         <Empty
           icon={ListChecks}
-          title="放工作的地方"
-          detail="在聊天里派个任务，它的计划、进展和结果都会留在这里。"
+          title={filter === "待我处理" ? "没有等你处理的事" : "放工作的地方"}
+          detail={
+            filter === "待我处理"
+              ? "需要你确认的操作、缺信息的任务会排在这里；其余进展按时间排列。"
+              : "在聊天里派个任务，它的计划、进展和结果都会留在这里。"
+          }
         />
       )}
       <SectionHeading title="复核与回执" />
@@ -231,7 +294,9 @@ export function EvidenceList({ items }: { items: Evidence[] }) {
               onPress={() =>
                 void Linking.openURL(item.url || "").catch((e) => setError(errorText(e)))
               }
-            >开源</Button>
+            >
+              开源
+            </Button>
           )}
           {item.kind === "mail" && workspace.mail.some((mail) => mail.id === item.id) && (
             <Button
@@ -240,7 +305,9 @@ export function EvidenceList({ items }: { items: Evidence[] }) {
                 const mail = workspace.mail.find((m) => m.id === item.id);
                 if (mail) open({ type: "mail", mail });
               }}
-            >查看邮件</Button>
+            >
+              查看邮件
+            </Button>
           )}
           {item.kind === "file" && workspace.files.some((file) => file.id === item.id) && (
             <Button
@@ -249,7 +316,9 @@ export function EvidenceList({ items }: { items: Evidence[] }) {
                 const file = workspace.files.find((f) => f.id === item.id);
                 if (file) open({ type: "file", file });
               }}
-            >查看文件</Button>
+            >
+              查看文件
+            </Button>
           )}
         </View>
       ))}
@@ -337,14 +406,24 @@ export function TaskDetail({ taskId }: { taskId: string }) {
     }
   }
   async function review() {
+    const actionId = task?.actionId;
+    if (!actionId) {
+      setError("这次复核还不可用，刷新后重试。");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
-      await refreshWorkspace();
-      const snapshot = await api.request<typeof workspace>("/api/workspace");
-      const action = snapshot.actions.find((item) => item.id === task?.actionId);
+      // 先在已加载的工作区快照里找（0 次往返），找不到才补一次请求
+      let action = workspace.actions.find((item) => item.id === actionId);
+      if (!action) {
+        const snapshot = await api.request<typeof workspace>("/api/workspace");
+        action = snapshot.actions.find((item) => item.id === actionId);
+      }
       if (!action) throw new Error("这次复核还不可用，刷新后重试。");
       open({ type: "review", action });
+      // 后台补新鲜度：复核面板若拿到更新的 hash 会自己换新，批准照旧能用
+      void refreshWorkspace();
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -365,7 +444,9 @@ export function TaskDetail({ taskId }: { taskId: string }) {
     <Sheet
       title={task?.title || "任务"}
       subtitle={
-        task ? `${statusLabel(task.status)} · ${stamp(task.updatedAt)}` : "正在加载已保存的进展…"
+        task
+          ? `${taskStatusLabel(task.status)} · ${stamp(task.updatedAt)}`
+          : "正在加载已保存的进展…"
       }
       onClose={close}
     >
@@ -386,7 +467,9 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                 icon={Pause}
                 busy={busy}
                 onPress={() => void act("control", { action: "pause" })}
-              >暂停</Button>
+              >
+                暂停
+              </Button>
             )}
             {task.status === "paused" && (
               <Button
@@ -394,7 +477,9 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                 icon={Play}
                 busy={busy}
                 onPress={() => void act("control", { action: "resume" })}
-              >继续</Button>
+              >
+                继续
+              </Button>
             )}
             {task.status === "failed" && (
               <Button
@@ -402,7 +487,9 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                 icon={RefreshCw}
                 busy={busy}
                 onPress={() => void act("control", { action: "retry" })}
-              >重试任务</Button>
+              >
+                重试任务
+              </Button>
             )}
             {activeTask(task) && (
               <Button
@@ -411,33 +498,40 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                 icon={X}
                 busy={busy}
                 onPress={() => void act("control", { action: "cancel" })}
-              >取消任务</Button>
+              >
+                取消任务
+              </Button>
             )}
           </View>
           {task.status === "waiting_approval" && (
             <Card style={{ backgroundColor: colors.lavender, gap: 12 }}>
-              <Text style={s.heading}>Ready for your review</Text>
-              <Text style={s.muted}>在继续之前，复核具体操作与账号。</Text>
-              <Button primary busy={busy} onPress={() => void review()}>复核操作</Button>
+              <Text style={s.heading}>等你确认这次操作</Text>
+              <Text style={s.muted}>在继续之前，复核具体操作与账号；确认后它才会真的发出去。</Text>
+              <Button primary busy={busy} onPress={() => void review()}>
+                复核操作
+              </Button>
             </Card>
           )}
           {task.status === "waiting_input" && (
             <Card style={{ backgroundColor: colors.sky, gap: 10 }}>
               <Text style={s.heading}>{task.question || "补充一点信息会更好"}</Text>
+              {!!missingCount(task) && (
+                <Text style={s.small}>还缺 {missingCount(task)} 项信息，填完就能继续。</Text>
+              )}
               {fieldNames.map((name) =>
                 missing.some(
                   (f) => typeof f === "object" && f && f.name === name && f.type === "checkbox",
                 ) ? (
                   <CheckRow
                     key={name}
-                    label={name.replace(/_/g, " ")}
+                    label={fieldLabel(name)}
                     checked={Boolean(fields[name])}
                     onPress={() => setFields((current) => ({ ...current, [name]: !current[name] }))}
                   />
                 ) : (
                   <Field
                     key={name}
-                    label={name.replace(/_/g, " ")}
+                    label={fieldLabel(name)}
                     value={String(fields[name] ?? "")}
                     onChangeText={(value) =>
                       setFields((current) => ({ ...current, [name]: value }))
@@ -456,7 +550,9 @@ export function TaskDetail({ taskId }: { taskId: string }) {
               )}
               {task.kind === "document" && !fieldNames.length && (
                 <>
-                  <Button small onPress={() => setShowFieldJson(!showFieldJson)}>表单字段值</Button>
+                  <Button small onPress={() => setShowFieldJson(!showFieldJson)}>
+                    表单字段值
+                  </Button>
                   {showFieldJson && (
                     <Field
                       label="字段（JSON：字段名到值）"
@@ -474,7 +570,9 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                 busy={busy}
                 disabled={!answer.trim() && !Object.keys(fields).length && !fieldJson.trim()}
                 onPress={() => void submitInput()}
-              >继续任务</Button>
+              >
+                继续任务
+              </Button>
             </Card>
           )}
           {!!task.plan.length && (
@@ -493,7 +591,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                   <View style={{ flex: 1, gap: 3 }}>
                     <Text style={s.text}>{step.title}</Text>
                     <Text style={s.small}>
-                      {statusLabel(step.status)}
+                      {stepStatusLabel(step.status)}
                       {step.detail ? ` · ${step.detail}` : ""}
                     </Text>
                   </View>
@@ -581,9 +679,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
               </Text>
             </View>
           ))}
-          {!detail?.events.length && (
-            <Text style={s.muted}>worker 会把每一步记录在这里。</Text>
-          )}
+          {!detail?.events.length && <Text style={s.muted}>worker 会把每一步记录在这里。</Text>}
         </View>
       )}
     </Sheet>
@@ -729,10 +825,10 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
             </Svg>
           </View>
           <Text style={{ color: "#D4DCFC", fontSize: 11, lineHeight: 18, marginBottom: 20 }}>
-            Read from your imported transactions.{"\n"}
+            来自你导入的交易记录。{"\n"}
             {String(period?.from ?? "")} — {String(period?.to ?? "")}
             {"\n"}
-            {transactions.length} transactions, categorized and summarized.
+            已归类汇总 {transactions.length} 笔。
           </Text>
           <View style={[s.row, { gap: 7 }]}>
             {(
@@ -817,7 +913,9 @@ function FinanceArtifact({ artifact }: { artifact: AgentArtifact }) {
                 busy={goalBusy}
                 disabled={!goalTitle.trim()}
                 onPress={() => void saveGoal()}
-              >新建储蓄目标</Button>
+              >
+                新建储蓄目标
+              </Button>
             </View>
           )}
           <Button small onPress={() => setExpanded(!expanded)}>
@@ -932,13 +1030,19 @@ export function DelegateSheet() {
                   "date,description,amount,category\n2026-09-01,Salary,-4200,Income\n2026-09-02,Groceries,84.50,Food\n2026-09-03,Subscription,19.99,Subscriptions\n2026-09-04,Coffee,6.50,Food",
                 )
               }
-            >试试示例交易</Button>
+            >
+              试试示例交易
+            </Button>
           )}
-          <Text style={[s.small, { marginVertical: 12 }]}>正数为支出，负数为收入。仅限已导入的数据，并不代表连接了银行。</Text>
+          <Text style={[s.small, { marginVertical: 12 }]}>
+            正数为支出，负数为收入。仅限已导入的数据，并不代表连接了银行。
+          </Text>
         </>
       )}
       {kind === "agent" && !workspace.runtime.configured && (
-        <Text style={[s.muted, { marginBottom: 16 }]}>通用任务与计划需要先配置模型。文档处理、网页监控和支出汇总有引导式流程。</Text>
+        <Text style={[s.muted, { marginBottom: 16 }]}>
+          通用任务与计划需要先配置模型。文档处理、网页监控和支出汇总有引导式流程。
+        </Text>
       )}
       <ErrorNotice error={error} />
       <Button
@@ -950,7 +1054,9 @@ export function DelegateSheet() {
           (kind === "finance" && !csv.trim())
         }
         onPress={() => void submit()}
-      >派发任务</Button>
+      >
+        派发任务
+      </Button>
     </Sheet>
   );
 }
@@ -975,7 +1081,9 @@ export function IdeasScreen() {
       <AgentStatus />
       <View style={s.between}>
         <Text style={s.small}>灵感来自你已连接的应用</Text>
-        <Button small icon={RefreshCw} busy={busy} onPress={() => void refreshIdeas()}>找灵感</Button>
+        <Button small icon={RefreshCw} busy={busy} onPress={() => void refreshIdeas()}>
+          找灵感
+        </Button>
       </View>
       <ErrorNotice error={error} />
       {ideas.map((idea) => (
@@ -1010,7 +1118,9 @@ function TaskLink({ taskId, onOpen }: { taskId: string; onOpen?: () => void }) {
         onOpen?.();
         open({ type: "task", taskId });
       }}
-    >查看任务</Button>
+    >
+      查看任务
+    </Button>
   );
 }
 function IdeaCard({ idea }: { idea: Idea }) {
@@ -1076,11 +1186,15 @@ function IdeaCard({ idea }: { idea: Idea }) {
               busy={busy}
               disabled={!prompt.trim()}
               onPress={() => void act("accept")}
-            >开始这个</Button>
+            >
+              开始这个
+            </Button>
             <Button disabled={busy} onPress={() => setEditing(!editing)}>
               {editing ? "保留修改" : "编辑"}
             </Button>
-            <Button disabled={busy} onPress={() => void act("dismiss")}>忽略</Button>
+            <Button disabled={busy} onPress={() => void act("dismiss")}>
+              忽略
+            </Button>
           </View>
         </View>
       )}
@@ -1114,7 +1228,9 @@ export function GoalsScreen() {
             />
             <Text style={[s.heading, { color: "#189A58" }]}>跟踪中</Text>
           </View>
-          <Button small icon={Plus} onPress={() => setAdding("跟踪中")}>跟踪</Button>
+          <Button small icon={Plus} onPress={() => setAdding("跟踪中")}>
+            跟踪
+          </Button>
         </View>
         {(showAll ? monitors : monitors.slice(0, 3)).map((item) => (
           <Pressable
@@ -1266,20 +1382,12 @@ function GoalForm({ onDone, category }: { onDone: () => void; category?: string 
         onChangeText={setTitle}
         placeholder="攒出一笔三个月的应急金"
       />
-      <Field
-        label="怎样算成功？"
-        value={description}
-        onChangeText={setDescription}
-        multiline
-      />
-      <Field
-        label="里程碑（每行一个）"
-        value={milestones}
-        onChangeText={setMilestones}
-        multiline
-      />
+      <Field label="怎样算成功？" value={description} onChangeText={setDescription} multiline />
+      <Field label="里程碑（每行一个）" value={milestones} onChangeText={setMilestones} multiline />
       <ErrorNotice error={error} />
-      <Button primary disabled={!title.trim()} busy={busy} onPress={() => void save()}>新建目标</Button>
+      <Button primary disabled={!title.trim()} busy={busy} onPress={() => void save()}>
+        新建目标
+      </Button>
     </Card>
   );
 }
@@ -1329,7 +1437,7 @@ function GoalCard({ goal, onOpenTask }: { goal: Goal; onOpenTask?: () => void })
       </View>
       <Text style={s.muted}>{goal.description}</Text>
       <Text style={s.small}>
-        {done} of {goal.milestones.length} milestones
+        {done} / {goal.milestones.length} 个里程碑
       </Text>
       {goal.milestones.map((milestone) => (
         <CheckRow
@@ -1356,9 +1464,13 @@ function GoalCard({ goal, onOpenTask }: { goal: Goal; onOpenTask?: () => void })
           {goal.status === "active" ? "暂停" : "继续"}
         </Button>
         {goal.status !== "completed" && (
-          <Button small busy={busy} onPress={() => void update({ status: "completed" })}>完成目标</Button>
+          <Button small busy={busy} onPress={() => void update({ status: "completed" })}>
+            完成目标
+          </Button>
         )}
-        <Button small primary busy={busy} onPress={() => void plan()}>规划下一步</Button>
+        <Button small primary busy={busy} onPress={() => void plan()}>
+          规划下一步
+        </Button>
       </View>
       {data?.tasks
         .filter((task) => task.goalId === goal.id)
@@ -1430,11 +1542,7 @@ function MonitorForm({ onDone }: { onDone: () => void }) {
       <View style={[s.row, { gap: 7, flexWrap: "wrap", marginBottom: 16 }]}>
         {(["change", "contains", "price_below"] as const).map((item) => (
           <Button small primary={condition === item} key={item} onPress={() => setCondition(item)}>
-            {item === "change"
-              ? "页面变更"
-              : item === "contains"
-                ? "出现文字"
-                : "价格低于"}
+            {item === "change" ? "页面变更" : item === "contains" ? "出现文字" : "价格低于"}
           </Button>
         ))}
       </View>
@@ -1464,7 +1572,9 @@ function MonitorForm({ onDone }: { onDone: () => void }) {
           !title.trim() || (!sample && !url.trim()) || (condition !== "change" && !value.trim())
         }
         onPress={() => void save()}
-      >开始跟踪</Button>
+      >
+        开始跟踪
+      </Button>
     </Card>
   );
 }
@@ -1510,15 +1620,15 @@ function MonitorCard({ monitor, onOpenTask }: { monitor: Monitor; onOpenTask?: (
         {monitor.condition === "change"
           ? "监控页面变更"
           : monitor.condition === "contains"
-            ? `Watch for “${monitor.value}”`
-            : `Price below ${monitor.value}`}
+            ? `监控是否出现「${monitor.value}」`
+            : `价格低于 ${monitor.value}`}
       </Text>
       <Text style={s.small}>
-        Every {monitor.intervalMinutes} min · {monitor.checks} checks
+        每 {monitor.intervalMinutes} 分钟检查一次 · 已检查 {monitor.checks} 次
       </Text>
       <Text style={s.small}>
-        Last check: {stamp(monitor.lastCheckedAt)}
-        {monitor.status === "active" ? `\nNext check: ${stamp(monitor.nextCheckAt)}` : ""}
+        上次检查：{stamp(monitor.lastCheckedAt)}
+        {monitor.status === "active" ? `\n下次检查：${stamp(monitor.nextCheckAt)}` : ""}
       </Text>
       {!!monitor.lastValue && (
         <Text selectable numberOfLines={5} style={s.muted}>
@@ -1535,21 +1645,72 @@ function MonitorCard({ monitor, onOpenTask }: { monitor: Monitor; onOpenTask?: (
           >
             {monitor.status === "active" ? "暂停" : "继续"}
           </Button>
-          <Button small busy={busy} onPress={() => void act("check")}>立即检查</Button>
-          <Button small danger busy={busy} onPress={() => void act("stop")}>停止跟踪</Button>
+          <Button small busy={busy} onPress={() => void act("check")}>
+            立即检查
+          </Button>
+          <Button small danger busy={busy} onPress={() => void act("stop")}>
+            停止跟踪
+          </Button>
         </View>
       )}
       {monitor.url.startsWith("sample:") && monitor.status !== "stopped" && (
-        <Button small busy={busy} onPress={() => void changeSample()}>修改可约时间</Button>
+        <Button small busy={busy} onPress={() => void changeSample()}>
+          修改可约时间
+        </Button>
       )}
       <TaskLink taskId={monitor.taskId} onOpen={onOpenTask} />
     </Card>
   );
 }
+/**
+ * 待复核动作的行列表：铃铛面板与活动页共用同一套渲染，
+ * 保证"红点数量 = 进去能看到的待办数量"。
+ */
+function PendingActionCards({
+  actions,
+  onOpen,
+}: {
+  actions: ActionProposal[];
+  onOpen: (action: ActionProposal, rect?: HeroRect) => void;
+}) {
+  return (
+    <Card style={{ backgroundColor: colors.lavender }}>
+      <SectionHeading title={`等你复核 · ${actions.length}`} />
+      {actions.map((action) => (
+        <MeasureCard
+          key={action.id}
+          label={`复核：${action.title}`}
+          style={[
+            s.row,
+            { gap: 15, paddingVertical: 17, borderTopWidth: 1, borderTopColor: colors.line },
+          ]}
+          onPress={(rect) => onOpen(action, rect)}
+        >
+          <View style={[s.iconBox, { backgroundColor: colors.lavender }]}>
+            <ShieldCheck size={18} color={colors.text} />
+          </View>
+          <View style={{ flex: 1, gap: 4 }}>
+            <Text style={s.text}>{action.title}</Text>
+            <Text style={s.small}>
+              {actionKindLabel(action.kind)}
+              {action.account ? ` · ${action.account}` : ""}
+            </Text>
+          </View>
+          <Button primary small onPress={() => onOpen(action)}>
+            复核
+          </Button>
+        </MeasureCard>
+      ))}
+    </Card>
+  );
+}
+
 export function NotificationsSheet() {
   const { data, mutate } = useAgentWorkspace();
-  const { close, open } = useWorkspace();
+  const { workspace: w, close, open } = useWorkspace();
   const [error, setError] = useState("");
+  const pendingActions = w.actions.filter((action) => action.status === "awaiting_review");
+  const unread = (data?.notifications || []).filter((item) => !item.read).length;
   async function read(id: string, taskId?: string) {
     try {
       await mutate(`/notifications/${id}/read`, {});
@@ -1560,12 +1721,35 @@ export function NotificationsSheet() {
   }
   return (
     <Sheet
-      title="通知"
-      subtitle="需要你处理的结果与决策。"
+      title="待你处理"
+      subtitle={pendingSummary(pendingActions.length, unread)}
       onClose={close}
     >
       <View style={{ gap: 14 }}>
         <ErrorNotice error={error} />
+        {!!pendingActions.length && (
+          <PendingActionCards
+            actions={pendingActions}
+            onOpen={(action, rect) =>
+              open({
+                type: "review",
+                action,
+                ...(rect
+                  ? {
+                      hero: {
+                        rect,
+                        title: action.title,
+                        subtitle: actionKindLabel(action.kind),
+                        icon: ShieldCheck,
+                        tint: colors.lavender,
+                      },
+                    }
+                  : {}),
+              })
+            }
+          />
+        )}
+        {!!pendingActions.length && !!data?.notifications.length && <SectionHeading title="更新" />}
         {data?.notifications.map((item) => (
           <Card
             key={item.id}
@@ -1578,15 +1762,15 @@ export function NotificationsSheet() {
             <Text style={s.muted}>{item.body}</Text>
             <Text style={s.small}>{stamp(item.createdAt)}</Text>
             <Button small onPress={() => void read(item.id, item.taskId)}>
-              {item.taskId ? "查看任务" : item.read ? "Read" : "标记已读"}
+              {item.taskId ? "查看任务" : item.read ? "已读" : "标记已读"}
             </Button>
           </Card>
         ))}
-        {!data?.notifications.length && (
+        {!pendingActions.length && !data?.notifications.length && (
           <Empty
             icon={Bell}
             title="都处理完了"
-            detail="结果、有意义的变更和需要你输入的内容都会出现在这里。"
+            detail="需要你确认的操作、结果和缺信息的任务都会出现在这里。"
           />
         )}
       </View>
@@ -1659,12 +1843,7 @@ export function AppsScreen() {
   return (
     <View style={{ gap: 22 }}>
       <AgentStatus />
-      <Field
-        label="搜索应用"
-        value={query}
-        onChangeText={setQuery}
-        placeholder="搜索连接器"
-      />
+      <Field label="搜索应用" value={query} onChangeText={setQuery} placeholder="搜索连接器" />
       <ConnectionsScreen query={query} />
       <Text style={s.heading}>在你的电脑上</Text>
       <Card style={{ paddingVertical: 3, backgroundColor: "#F4F5F6" }}>
@@ -1729,7 +1908,9 @@ export function AppsScreen() {
               onPress={() =>
                 void save("/identity", { name: name.trim(), tone, avatar, showChatUpdates })
               }
-            >保存偏好</Button>
+            >
+              保存偏好
+            </Button>
           </Card>
           <Card style={{ gap: 12 }}>
             <SectionHeading title="记忆" />
@@ -1749,7 +1930,9 @@ export function AppsScreen() {
               onPress={() =>
                 void save("/memories", { text: memory.trim(), source: "用户已在「应用」中添加" })
               }
-            >记住</Button>
+            >
+              记住
+            </Button>
           </Card>
         </>
       )}
@@ -1789,11 +1972,17 @@ function MemoryRow({ memory }: { memory: AgentMemory }) {
       </Text>
       <View style={[s.row, { gap: 8 }]}>
         {editing ? (
-          <Button small busy={busy} disabled={!text.trim()} onPress={() => void act(false)}>保存修正</Button>
+          <Button small busy={busy} disabled={!text.trim()} onPress={() => void act(false)}>
+            保存修正
+          </Button>
         ) : (
-          <Button small onPress={() => setEditing(true)}>编辑</Button>
+          <Button small onPress={() => setEditing(true)}>
+            编辑
+          </Button>
         )}
-        <Button small danger busy={busy} onPress={() => void act(true)}>遗忘</Button>
+        <Button small danger busy={busy} onPress={() => void act(true)}>
+          遗忘
+        </Button>
       </View>
       <ErrorNotice error={error} />
     </View>

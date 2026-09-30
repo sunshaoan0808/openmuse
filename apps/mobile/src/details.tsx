@@ -38,6 +38,9 @@ import { browserAddress, browserSite } from "./browser-address";
 import { ComputerSheet } from "./computer";
 import DateTimeEditor from "./DateTimeEditor";
 import { localDateTime, zonedInstant } from "./date-time";
+import { fieldLabel, proposalStatusLabel } from "./labels";
+import type { HeroCard } from "./motion";
+import OfficeReader from "./OfficeReader";
 import PdfReader from "./PdfReader";
 import {
   Button,
@@ -63,13 +66,14 @@ export function Details({ detail }: { detail: Detail }) {
   if (detail.type === "task") return <TaskDetail taskId={detail.taskId} />;
   if (detail.type === "delegate") return <DelegateSheet />;
   if (detail.type === "notifications") return <NotificationsSheet />;
-  if (detail.type === "mail") return <MailDetail mail={detail.mail} />;
+  if (detail.type === "mail") return <MailDetail mail={detail.mail} hero={detail.hero} />;
   if (detail.type === "email") return <EmailEditor draft={detail.draft} />;
   if (detail.type === "event")
     return <EventEditor event={detail.event} draft={detail.draft} neighbors={detail.neighbors} />;
-  if (detail.type === "file") return <FileDetail file={detail.file} />;
-  if (detail.type === "review") return <ReviewDetail initial={detail.action} />;
-  if (detail.type === "browser") return <BrowserDetail initial={detail.browser} />;
+  if (detail.type === "file") return <FileDetail file={detail.file} hero={detail.hero} />;
+  if (detail.type === "review") return <ReviewDetail initial={detail.action} hero={detail.hero} />;
+  if (detail.type === "browser")
+    return <BrowserDetail initial={detail.browser} hero={detail.hero} />;
   return (
     <Sheet title="你的工作区" subtitle="什么都放得下的小空间。" onClose={close}>
       {[
@@ -93,7 +97,7 @@ export function Details({ detail }: { detail: Detail }) {
     </Sheet>
   );
 }
-function MailDetail({ mail: m }: { mail: Mail }) {
+function MailDetail({ mail: m, hero }: { mail: Mail; hero?: HeroCard }) {
   const { workspace: w, api, refresh, open, close } = useWorkspace();
   const [error, setError] = useState("");
   const [importing, setImporting] = useState("");
@@ -137,6 +141,7 @@ function MailDetail({ mail: m }: { mail: Mail }) {
       title={m.subject}
       subtitle={`${thread.length} message${thread.length === 1 ? "" : "s"} in this conversation`}
       onClose={close}
+      hero={hero}
     >
       {loading && (
         <View style={[s.row, { gap: 10, paddingBottom: 20 }]}>
@@ -204,7 +209,9 @@ function MailDetail({ mail: m }: { mail: Mail }) {
             },
           })
         }
-      >写回复</Button>
+      >
+        写回复
+      </Button>
     </Sheet>
   );
 }
@@ -298,12 +305,7 @@ function EmailEditor({ draft }: { draft?: Partial<EmailDraft> & { id?: string } 
           />
         </View>
       </View>
-      <Field
-        label="主题"
-        value={subject}
-        onChangeText={setSubject}
-        placeholder="在想什么？"
-      />
+      <Field label="主题" value={subject} onChangeText={setSubject} placeholder="在想什么？" />
       <Field
         label="消息 "
         value={body}
@@ -339,13 +341,17 @@ function EmailEditor({ draft }: { draft?: Partial<EmailDraft> & { id?: string } 
           busy={busy === "review"}
           disabled={!!busy}
           onPress={() => void save(true)}
-        >复核邮件</Button>
+        >
+          复核邮件
+        </Button>
         <Button
           icon={Save}
           busy={busy === "draft"}
           disabled={!!busy}
           onPress={() => void save(false)}
-        >保存草稿</Button>
+        >
+          保存草稿
+        </Button>
       </View>
       <Text style={[s.small, { marginTop: 13 }]}>发送之前，你会复核具体的收件人、正文与附件。</Text>
     </Sheet>
@@ -430,9 +436,7 @@ function EventEditor({
   return (
     <Sheet
       title={e ? "腾出一点时间" : "值得期待的事"}
-      subtitle={
-        e ? "修改这个事件，然后复核你的改动。" : "在你的日历里建一个事件。"
-      }
+      subtitle={e ? "修改这个事件，然后复核你的改动。" : "在你的日历里建一个事件。"}
       onClose={close}
     >
       <Field
@@ -474,12 +478,7 @@ function EventEditor({
       {allDay && (
         <Text style={[s.small, { marginBottom: 15 }]}>结束日期是你事件最后一天的后一天。</Text>
       )}
-      <Field
-        label="时区"
-        value={zone}
-        onChangeText={setZone}
-        placeholder="America/Los_Angeles"
-      />
+      <Field label="时区" value={zone} onChangeText={setZone} placeholder="America/Los_Angeles" />
       <Field
         label="地点或会议链接"
         value={location}
@@ -515,19 +514,27 @@ function EventEditor({
           Review {e ? "changes" : "event"}
         </Button>
         {e && (
-          <Button icon={Trash2} disabled={busy} danger onPress={() => void propose(true)}>复核删除</Button>
+          <Button icon={Trash2} disabled={busy} danger onPress={() => void propose(true)}>
+            复核删除
+          </Button>
         )}
       </View>
     </Sheet>
   );
 }
-function ReviewDetail({ initial }: { initial: ActionProposal }) {
+function ReviewDetail({ initial, hero }: { initial: ActionProposal; hero?: HeroCard }) {
   const { workspace: w, api, refresh, close, open } = useWorkspace();
   const [local, setLocal] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // 优先用手上最新的一份：服务端重发过提案时 hash 会变，用旧的批准会失败
+  const fresh = w.actions.find((a) => a.id === initial.id);
   const action =
-    local.status !== initial.status ? local : w.actions.find((a) => a.id === initial.id) || local;
+    local.status !== initial.status
+      ? local
+      : fresh && fresh.hash !== initial.hash
+        ? fresh
+        : fresh || local;
   const d = action.data;
   const pending = action.status === "awaiting_review";
   async function decide(decision: "approve" | "deny") {
@@ -583,6 +590,7 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
           ? "此操作只留在你的本地工作区。"
           : "在这次操作改动你已连接的账号之前，先复核具体内容。"
       }
+      hero={hero}
       onClose={close}
     >
       <View style={[s.row, { gap: 13, marginBottom: 21 }]}>
@@ -594,7 +602,7 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
           <Text style={s.small}>{action.kind.replace(".", " · ")}</Text>
         </View>
         <Chip tint={pending ? colors.lavender : colors.green}>
-          {action.status.replace(/_/g, " ")}
+          {proposalStatusLabel(action.status)}
         </Chip>
       </View>
       <Card style={{ gap: 13 }}>
@@ -652,7 +660,7 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
                 <ReviewLine label="备注" value={String(d.description || "无")} />
               </>
             )}
-            <ReviewLine label="Calendar" value={String(d.calendarId || "primary")} />
+            <ReviewLine label="日历" value={String(d.calendarId || "primary")} />
             <Text style={s.small}>
               {action.kind === "calendar.delete"
                 ? "这会删除该事件，并可能通知参与者。"
@@ -672,7 +680,7 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
       {pending ? (
         <>
           <Text style={[s.small, { marginVertical: 17 }]}>
-            Review expires{" "}
+            复核有效期至{" "}
             {new Date(action.expiresAt).toLocaleString(undefined, {
               year: "numeric",
               month: "short",
@@ -681,24 +689,26 @@ function ReviewDetail({ initial }: { initial: ActionProposal }) {
               minute: "2-digit",
               timeZoneName: "short",
             })}
-            . Your approval applies only to the details shown above.
+            。你的批准只对上面这些内容生效。
           </Text>
           <View style={[s.row, { gap: 10, flexWrap: "wrap" }]}>
             <Button primary icon={Check} busy={busy} onPress={() => void decide("approve")}>
-              {w.mode === "sample"
-                ? "在本地批准"
-                : email
-                  ? "批准并发送"
-                  : "批准变更"}
+              {w.mode === "sample" ? "在本地批准" : email ? "批准并发送" : "批准变更"}
             </Button>
             {action.kind !== "calendar.delete" && (
-              <Button icon={Edit3} disabled={busy} onPress={() => void edit()}>编辑详情</Button>
+              <Button icon={Edit3} disabled={busy} onPress={() => void edit()}>
+                编辑详情
+              </Button>
             )}
-            <Button icon={X} disabled={busy} onPress={() => void decide("deny")}>不继续</Button>
+            <Button icon={X} disabled={busy} onPress={() => void decide("deny")}>
+              不继续
+            </Button>
           </View>
         </>
       ) : (
-        <Button style={{ alignSelf: "flex-start", marginTop: 19 }} onPress={close}>完成</Button>
+        <Button style={{ alignSelf: "flex-start", marginTop: 19 }} onPress={close}>
+          完成
+        </Button>
       )}
     </Sheet>
   );
@@ -716,7 +726,10 @@ function ReviewLine({ label, value }: { label: string; value: string }) {
     </View>
   );
 }
-function FileDetail({ file: f }: { file: Artifact }) {
+function isPdf(file: Artifact) {
+  return file.mimeType === "application/pdf" || /\.pdf$/i.test(file.name.trim());
+}
+function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
   const { api, refresh, open, close } = useWorkspace();
   const [values, setValues] = useState<Record<string, string | boolean>>(() =>
     Object.fromEntries(
@@ -724,7 +737,9 @@ function FileDetail({ file: f }: { file: Artifact }) {
         .filter((field) => field.type !== "unsupported")
         .map((field) => [
           field.name,
-          field.type === "checkbox" ? field.value === "true" || field.value === "是" || field.value === "是" : field.value,
+          field.type === "checkbox"
+            ? field.value === "true" || field.value === "是" || field.value === "是"
+            : field.value,
         ]),
     ),
   );
@@ -768,8 +783,14 @@ function FileDetail({ file: f }: { file: Artifact }) {
       subtitle={`${f.pageCount} pages · ${Math.max(1, Math.round(f.size / 1024))} KB · ${f.source}`}
       onClose={close}
       wide
+      hero={hero}
     >
-      <PdfReader url={url} token={api.token} pageCount={f.pageCount} />
+      {isPdf(f) ? (
+        <PdfReader url={url} token={api.token} pageCount={f.pageCount} />
+      ) : (
+        // Word / Excel / PowerPoint 走离线渲染（pptx 会降级为“用外部应用打开”）
+        <OfficeReader url={url} token={api.token} name={f.name} size={f.size} />
+      )}
       <View style={[s.row, { gap: 10, marginVertical: 18, flexWrap: "wrap" }]}>
         <Button icon={Download} onPress={() => void share()}>
           {Platform.OS === "web" ? "打开 / 下载" : "保存或分享"}
@@ -777,34 +798,40 @@ function FileDetail({ file: f }: { file: Artifact }) {
         <Button
           icon={Send}
           onPress={() => open({ type: "email", draft: { attachmentIds: [f.id] } })}
-        >附加到邮件</Button>
+        >
+          附加到邮件
+        </Button>
       </View>
       {f.fields && f.fields.length > 0 && (
         <Card>
           <SectionHeading title="填写这个表单" />
-          <Text style={[s.muted, { marginBottom: 18 }]}>在下面填写你的信息。保存会生成新副本，原文件保持不变。</Text>
+          <Text style={[s.muted, { marginBottom: 18 }]}>
+            在下面填写你的信息。保存会生成新副本，原文件保持不变。
+          </Text>
           {f.fields.map((field) =>
             field.type === "unsupported" ? (
               <Text key={field.name} style={s.muted}>
-                {field.name} · this field type is not supported
+                {fieldLabel(field.name)} · 这种字段暂不支持
               </Text>
             ) : field.type === "checkbox" ? (
               <CheckRow
                 key={field.name}
                 checked={!!values[field.name]}
-                label={field.name.replace(/_/g, " ").replace(/^./, (s) => s.toUpperCase())}
+                label={fieldLabel(field.name)}
                 onPress={() => setValues({ ...values, [field.name]: !values[field.name] })}
               />
             ) : (
               <Field
                 key={field.name}
-                label={field.name.replace(/_/g, " ").replace(/^./, (s) => s.toUpperCase())}
+                label={fieldLabel(field.name)}
                 value={String(values[field.name] || "")}
                 onChangeText={(value) => setValues({ ...values, [field.name]: value })}
               />
             ),
           )}
-          <Button primary icon={Save} busy={busy} onPress={() => void fill()}>保存已填写的副本</Button>
+          <Button primary icon={Save} busy={busy} onPress={() => void fill()}>
+            保存已填写的副本
+          </Button>
         </Card>
       )}
       <ErrorNotice error={error} />
@@ -815,7 +842,7 @@ function FileDetail({ file: f }: { file: Artifact }) {
     </Sheet>
   );
 }
-function BrowserDetail({ initial }: { initial: BrowserSession }) {
+function BrowserDetail({ initial, hero }: { initial: BrowserSession; hero?: HeroCard }) {
   const { workspace: w, api, refresh, close, notify } = useWorkspace();
   const [local, setLocal] = useState(initial);
   const [url, setUrl] = useState(initial.url);
@@ -898,6 +925,7 @@ function BrowserDetail({ initial }: { initial: BrowserSession }) {
       subtitle={`${browser.status} · updated ${timeLabel(browser.updatedAt)}`}
       onClose={close}
       wide
+      hero={hero}
     >
       <View style={[s.row, { gap: 10, marginBottom: 16 }]}>
         <View style={{ flex: 1 }}>
@@ -937,9 +965,7 @@ function BrowserDetail({ initial }: { initial: BrowserSession }) {
       ) : (
         <Empty
           icon={Globe2}
-          title={
-            browser.status === "closed" ? "此会话已关闭" : "预览不可用"
-          }
+          title={browser.status === "closed" ? "此会话已关闭" : "预览不可用"}
           detail={
             browser.status === "closed"
               ? "你的配置与下载已保存，重新打开即可接着来。"
@@ -952,16 +978,24 @@ function BrowserDetail({ initial }: { initial: BrowserSession }) {
           <Button
             icon={ExternalLink}
             onPress={() => void Linking.openURL(api.url(browser.consoleUrl || ""))}
-          >在窗口中打开浏览器</Button>
+          >
+            在窗口中打开浏览器
+          </Button>
         )}
         {!loading && (
-          <Button icon={RotateCw} disabled={busy} onPress={() => setRetry(retry + 1)}>刷新连接</Button>
+          <Button icon={RotateCw} disabled={busy} onPress={() => setRetry(retry + 1)}>
+            刷新连接
+          </Button>
         )}
         {!loading && browser.status !== "closed" && (
-          <Button icon={Download} busy={busy} onPress={() => void importDownloads()}>导入 PDF 下载</Button>
+          <Button icon={Download} busy={busy} onPress={() => void importDownloads()}>
+            导入 PDF 下载
+          </Button>
         )}
         {!loading && browser.status !== "closed" && (
-          <Button icon={X} danger busy={busy} onPress={() => void mutate(true)}>关闭会话</Button>
+          <Button icon={X} danger busy={busy} onPress={() => void mutate(true)}>
+            关闭会话
+          </Button>
         )}
       </View>
     </Sheet>

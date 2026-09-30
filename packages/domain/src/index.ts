@@ -92,7 +92,7 @@ export const eventDraftSchema = z
       !Number.isFinite(Date.parse(value.end)) ||
       Date.parse(value.end) <= Date.parse(value.start)
     ) {
-      ctx.addIssue({ code: "custom", message: "End must be after a valid start", path: ["end"] });
+      ctx.addIssue({ code: "custom", message: "结束时间必须晚于有效的开始时间", path: ["end"] });
     }
     const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
     const timed = /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/;
@@ -111,7 +111,7 @@ export const eventDraftSchema = z
     try {
       new Intl.DateTimeFormat("en", { timeZone: value.timeZone });
     } catch {
-      ctx.addIssue({ code: "custom", message: "Invalid time zone", path: ["timeZone"] });
+      ctx.addIssue({ code: "custom", message: "无效的时区", path: ["timeZone"] });
     }
   });
 export const proposalSchema = z.discriminatedUnion("kind", [
@@ -133,6 +133,8 @@ export interface ActionProposal {
   target?: CalendarEvent;
   targetVersion?: string;
   taskId?: string;
+  /** 提出这次操作的那条会话（聊天里就地复核用） */
+  threadId?: string;
   account?: string;
   connectionId?: string;
   id: string;

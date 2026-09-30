@@ -1,0 +1,8 @@
+{
+  "query": "openmuse",
+  "results": [
+    { "title": "CopilotKit/openmuse", "url": "https://github.com/CopilotKit/openmuse", "content": "A personal agent with a browser and terminal." },
+    { "title": "OpenMuse docs", "url": "https://example.org/docs", "content": "Setup guide." },
+    { "title": "Broken", "url": "not-a-url", "content": "dropped" }
+  ]
+}
