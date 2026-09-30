@@ -12,6 +12,7 @@ import type { Config } from "./config.ts";
 import { ConversationAgent } from "./engine/conversation.ts";
 import { createMastraChatAgent } from "./engine/mastra-engine.ts";
 import type { AgentService } from "./engine/service.ts";
+import { createJevAdapter, type JevAdapter } from "./jev/adapter.ts";
 
 export function agentConfigured(config: Config) {
   return (
@@ -35,6 +36,9 @@ export function makeRuntime(
   intelligence: CopilotKitIntelligence | undefined,
   runner?: AgentRunner,
 ) {
+  // Built on first use, then shared so live mode reuses one TypeSafe client across requests.
+  let jevAdapter: JevAdapter | undefined;
+  const sharedJevAdapter = () => (jevAdapter ??= createJevAdapter(config));
   const agents: AgentsFactory = async ({ request }) => {
     const owner = await auth.owner(request.headers.get("authorization") ?? undefined);
     return {
@@ -52,7 +56,7 @@ export function makeRuntime(
               return mastra;
             })()
           : config.agentBackend === "sample"
-            ? new ConversationAgent(config, service, owner)
+            ? new ConversationAgent(config, service, owner, sharedJevAdapter())
             : config.agentBackend === "agui"
               ? new HttpAgent({
                   url: config.agentUrl ?? "http://127.0.0.1:1/unconfigured",
@@ -60,7 +64,7 @@ export function makeRuntime(
                     ? { Authorization: `Bearer ${config.agentToken}` }
                     : {},
                 })
-              : new ConversationAgent(config, service, owner),
+              : new ConversationAgent(config, service, owner, sharedJevAdapter()),
     };
   };
   // 两条分支对应官方两种运行时模式：

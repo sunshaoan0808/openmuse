@@ -36,6 +36,9 @@ export interface Config {
   accessKey?: string;
   encryptionKey?: string;
   model?: string;
+  jevMode?: "off" | "sample" | "live";
+  typesafeApiKey?: string;
+  jevModel?: string;
   agentBackend: "sample" | "model" | "agui";
   /** 对话引擎：自带（默认）或 Mastra（用于双引擎对比）。 */
   agentEngine?: "openmuse" | "mastra";
@@ -61,6 +64,9 @@ export interface Config {
   allowedOrigins: string[];
 }
 
+/** Pinned so live rankings do not shift when TypeSafe moves the `jev-latest` alias. */
+export const defaultJevModel = "jev-1.13.0";
+
 export const intelligenceKeyRequiredMessage =
   "OpenMuse requires CPK_INTELLIGENCE_API_KEY. " +
   "Run `npx copilotkit@latest login` and `npx copilotkit@latest project select`, " +
@@ -83,6 +89,7 @@ export function intelligenceConfigured(config: Config): boolean {
   return Boolean(config.intelligenceApiKey ?? config.intelligenceApiUrl);
 }
 
+/** Accept a full worker URL, or host:port from a platform that omits the scheme. */
 /** Accept a full worker URL, or host:port from a platform that omits the scheme. */
 export function browserWorkerUrl(value?: string): string | undefined {
   const trimmed = value?.trim();
@@ -107,6 +114,12 @@ export function readConfig(): Config {
     throw new Error("AGENT_BACKEND must be sample, model or agui");
   if (mode === "live" && backend === "sample")
     throw new Error("Live workspaces cannot use the sample agent");
+  const jevMode = process.env.JEV_MODE ?? "off";
+  if (jevMode !== "off" && jevMode !== "sample" && jevMode !== "live")
+    throw new Error("JEV_MODE must be off, sample or live");
+  const typesafeApiKey = process.env.TYPESAFE_API_KEY?.trim();
+  if (jevMode === "live" && !typesafeApiKey)
+    throw new Error("JEV_MODE=live requires a nonblank TYPESAFE_API_KEY");
   const port = Number(process.env.PORT ?? 8787);
   const publicUrl = process.env.PUBLIC_API_URL ?? `http://localhost:${port}`;
   const config: Config = {
@@ -119,6 +132,9 @@ export function readConfig(): Config {
     accessKey: process.env.OPENMUSE_ACCESS_KEY,
     encryptionKey: process.env.TOKEN_ENCRYPTION_KEY,
     model: process.env.MODEL,
+    jevMode,
+    typesafeApiKey,
+    jevModel: process.env.JEV_MODEL?.trim() || defaultJevModel,
     agentBackend: backend,
     agentEngine: process.env.AGENT_ENGINE === "mastra" ? "mastra" : "openmuse",
     agentUrl: process.env.AGENT_URL,

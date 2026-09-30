@@ -7,7 +7,10 @@ import { Observable } from "rxjs";
 import { computerTools } from "../computer-tools.ts";
 import type { Config } from "../config.ts";
 import { MODEL_MAX_RETRIES } from "../config.ts";
-import { chatInstructions } from "./chat-prompt.ts";
+import { createJevAdapter } from "../jev/adapter.ts";
+import { JevService } from "../jev/service.ts";
+import { presentChoicesSpec } from "../jev/tools.ts";
+import { chatInstructions, jevInstructions } from "./chat-prompt.ts";
 import { chatTools, lastUserText } from "./chat-tools.ts";
 import { forMastra } from "./mastra-tools.ts";
 import { mcpTools } from "./mcp-tools.ts";
@@ -66,6 +69,17 @@ export function createMastraChatAgent(
   // worker 的 maxSessions 上限（自带引擎的历史遗留问题，见 docs/自建后端可行性评估.md §9）。
   // 用户原话在 stream() 里才拿到，工具构造在前，所以用一个可变变量承接（同一作用域）
   let currentUserText: string | undefined;
+  // JEV 与自带引擎同源：面板/证据都存在同一个 store 里，两条引擎看到的是同一份数据。
+  const jevMode = config.jevMode ?? "off";
+  const jevAdapter = jevMode === "off" ? undefined : createJevAdapter(config);
+  // 用"off 优先"的三元写法，TS 才能在分支里把 jevMode 收窄成 sample|live
+  const jev =
+    jevMode === "off" || !jevAdapter
+      ? undefined
+      : new JevService({ store: ctx.service.db, adapter: jevAdapter, mode: jevMode });
+  // 有 adapter 就说明不是 off；收窄给工具用
+  const activeJevMode = jevMode === "live" ? ("live" as const) : ("sample" as const);
+  const jevThreadId = `mastra:${ctx.owner}`;
   const tools = forMastra([
     ...computerTools(ctx.service.computer, ctx.service.files, ctx.owner, `mastra:${requestKey}`, {
       signal,
@@ -73,12 +87,54 @@ export function createMastraChatAgent(
     ...chatTools({
       service: ctx.service,
       owner: ctx.owner,
-      threadId: `mastra:${ctx.owner}`,
+      threadId: jevThreadId,
       requestKey,
       key,
       signal,
       userText: () => currentUserText,
+      // JEV：记录读过的证据，present_choices 才能校验来源
+      ...(jev
+        ? {
+            noteEvidence: (kind: "mail" | "web", id: string, text?: string) =>
+              jev.noteEvidence(ctx.owner, jevThreadId, requestKey, kind, id, text),
+          }
+        : {}),
     }),
+    // 选项/对比卡工具：上游只挂在自带引擎上，这里补到 Mastra 路径，否则我们这台跑 mastra 时功能是死的。
+    // execute 里现取 latestUserText：spec 只在构造时吃一次 userMessage，而用户原话要到 stream() 才拿到。
+    ...(jev
+      ? ([
+          {
+            name: "present_choices",
+            description: presentChoicesSpec(
+              jev,
+              ctx.owner,
+              jevThreadId,
+              requestKey,
+              signal,
+              activeJevMode,
+            ).description,
+            parameters: presentChoicesSpec(
+              jev,
+              ctx.owner,
+              jevThreadId,
+              requestKey,
+              signal,
+              activeJevMode,
+            ).parameters,
+            execute: (args: unknown) =>
+              presentChoicesSpec(
+                jev,
+                ctx.owner,
+                jevThreadId,
+                requestKey,
+                signal,
+                activeJevMode,
+                currentUserText,
+              ).execute(args as never),
+          } satisfies NeutralTool,
+        ] satisfies NeutralTool[])
+      : []),
     // MCP 服务器上的工具（配置见 MCP_SERVERS；同步读缓存，连接由 startMcp 维护）
     ...mcpTools(),
     // App 状态工具：与自带引擎同名同义（自带引擎在 tanstackAgent 内部自动挂这两个）。
@@ -96,7 +152,8 @@ export function createMastraChatAgent(
   const agent = new Agent({
     id: "openmuse-mastra",
     name: "openmuse-mastra",
-    instructions: chatInstructions(),
+    // JEV 开启时把选项/对比卡的指令一并给模型（与自带引擎同一份指令）
+    instructions: `${chatInstructions()}${jev ? jevInstructions() : ""}`,
     // 用 chat() 明确走 /chat/completions：网关是 OpenAI 兼容端点，不保证实现 /responses。
     model: gateway.chat(modelId),
     tools,
