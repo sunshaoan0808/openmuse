@@ -43,7 +43,6 @@ import {
 } from "./src/api";
 import { AvatarPanel } from "./src/avatar-panel";
 import { ChatScreen, WorkspaceTools } from "./src/chat";
-import { ComputerEntry } from "./src/computer";
 import { ComputerDraftProvider } from "./src/computer-drafts";
 import { installCrashHandler } from "./src/crash-log";
 import { CrashNotice } from "./src/crash-notice";
@@ -81,6 +80,11 @@ const titles: Partial<Record<Section, { title: string; subtitle: string }>> = {
   browser: { title: "浏览器", subtitle: "你已连接的浏览会话。" },
   files: { title: "文件", subtitle: "文档、表单与已填写的副本。" },
 };
+// Muse 用一组固定几何量对齐顶栏三个控件（HatchStatusPillMetrics 的 leading/trailingChromeCenterY）：
+// 左右控件的中心与中间卡片中心同高，而不是各自贴顶。
+// 实测量得：卡片 y=33 高=51 → 中心 58.5；左圆钮 36pt、右胶囊 34pt 高，故 top = 59-18 / 59-17。
+const CHROME_CENTER_Y = 59;
+
 // 尽早接住全局异常：release 包里未捕获的 JS 异常就是无提示闪退
 installCrashHandler();
 
@@ -400,7 +404,7 @@ function WorkspaceShell({
                 opacity: headerScrimOpacity(),
               }}
             />
-            <View style={{ position: "absolute", left: 0, top: 13 }}>
+            <View style={{ position: "absolute", left: 0, top: CHROME_CENTER_Y - 18 }}>
               <IconButton icon={Menu} label="打开会话与菜单" onPress={() => setThreadsOpen(true)} />
             </View>
             <View style={{ alignItems: "center", gap: 1 }}>
@@ -419,20 +423,24 @@ function WorkspaceShell({
                     第二行可变——空闲是入口，干活时是"当前在做什么"。 */}
                 <View
                   style={{
-                    marginTop: -4,
-                    marginBottom: 6,
-                    paddingHorizontal: 16,
-                    paddingTop: 9,
-                    paddingBottom: 10,
-                    borderRadius: 20,
+                    // 叠得比之前多一点：头像像"坐在卡片上沿"，而不是贴纸一样浮在边上
+                    marginTop: -7,
+                    marginBottom: 7,
+                    paddingHorizontal: 14,
+                    paddingTop: 8,
+                    paddingBottom: 9,
+                    borderRadius: 18,
                     backgroundColor: "#FFFFFF",
                     alignItems: "center",
-                    gap: 2,
+                    gap: 1,
+                    // Muse 实测：中间卡片是可变的窄卡片（名字 + 一行状态），不是信息堆栈；
+                    // 限宽是防止长状态把它撑成一条白带（这正是之前看起来像"白色块"的原因）。
                     minWidth: 132,
+                    maxWidth: 188,
                     shadowColor: "#132631",
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.08,
-                    shadowRadius: 12,
+                    shadowOffset: { width: 0, height: 3 },
+                    shadowOpacity: 0.06,
+                    shadowRadius: 16,
                     elevation: 2,
                   }}
                 >
@@ -449,11 +457,10 @@ function WorkspaceShell({
                   <Text numberOfLines={1} style={{ fontSize: 11, color: colors.muted }}>
                     {status}
                   </Text>
-                  {section === "chat" && <ComputerEntry />}
                 </View>
               </Pressable>
             </View>
-            <View style={{ position: "absolute", right: 0, top: 16 }}>
+            <View style={{ position: "absolute", right: 0, top: CHROME_CENTER_Y - 17 }}>
               {/* 照 Muse：右侧是一个带文字的胶囊，而不是光秃秃一个图标 */}
               <Pressable
                 accessibilityRole="button"
