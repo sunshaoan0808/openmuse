@@ -664,17 +664,61 @@ export function ChatScreen({
     if (active && prompt && isReady && loaded && claimPrompt(prompt.id) && prompt.text.trim())
       enqueue(prompt.text);
   }, [active, prompt, isReady, loaded, enqueue, claimPrompt]);
+  /**
+   * 断流后把这一轮的回复捞回来。服务端把 /api/copilotkit/* 的响应用 tee() 分了后台一支
+   * （见 app.ts），客户端断开它照样把这一轮写进会话；syncConversation 返回的正是**游标之后
+   * 的增量消息**，所以只要里面出现了助手消息，就说明这一轮其实跑完了。
+   */
+  const recoverTurn = useCallback(async () => {
+    const result = await syncConversation();
+    return (result.messages ?? []).some((message) => message.role === "assistant");
+  }, [syncConversation]);
+  /**
+   * 跨境链路上长连接常被掐（真机实测：半小时里小 GET 17 次全通，长流的 run 只成功 1 次，
+   * 服务器侧一条错误都没有）。所以"流断了"不等于"这一轮失败"：先按游标捞回回复，
+   * 捞不到再自动重发一次（同一条消息 id，服务端按最后一条用户消息 id 去重，不会跑两遍），
+   * 只有两次都没结果才如实报错。之前直接弹 Network request failed，用户体验就是"每次都失败"。
+   */
+  const recovering = useRef(false);
+  const recoverDroppedTurn = useCallback(
+    async (failure: unknown) => {
+      if (recovering.current) return;
+      recovering.current = true;
+      const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+      try {
+        await wait(1500); // 给服务端那支 tee 一点时间把这一轮落库
+        if (await recoverTurn().catch(() => false)) {
+          setError("");
+          return;
+        }
+        if (!agent.isRunning && !runLock.current) {
+          const pending = queue.getSnapshot().pending.length > 0;
+          if (pending) flush();
+          else await run().catch(() => {});
+          await wait(5000);
+          if (await recoverTurn().catch(() => false)) {
+            setError("");
+            return;
+          }
+        }
+        setError(humanizeNetworkError(failure));
+      } finally {
+        recovering.current = false;
+      }
+    },
+    [agent.isRunning, flush, queue, recoverTurn, run],
+  );
   useEffect(() => {
     const subscription = copilotkit.subscribe({
       onError: (event) => {
         if (event.context?.agentId && event.context.agentId !== agentId) return;
         const failure = event.error instanceof Error ? event.error : new Error(String(event.error));
-        // 运行时客户端报的是 RN 原文（Network request failed 之类），统一翻成中文
-        setError(humanizeNetworkError(failure));
+        // 断流不等于这一轮失败：先自愈（捞回复 / 重发一次），确实没结果才翻成中文报错
+        void recoverDroppedTurn(failure);
       },
     });
     return () => subscription.unsubscribe();
-  }, [copilotkit, agentId, queue]);
+  }, [copilotkit, agentId, queue, recoverDroppedTurn]);
   async function stop() {
     hapticTap();
     queue.pause();
@@ -762,6 +806,8 @@ export function ChatScreen({
   //   改了 insets.top + 78 之后：内容提到 y=160，但**顶栏自己那 155px 仍是空的**
   // 所以避让内边距必须远小于顶栏高度 —— 只留 insets.top 即可，让顶栏直接浮在内容上。
   // 聊天滚动区的顶部本来就是历史消息，被顶栏压住不碍事（Muse 同款观感）。
+  // 第三次真机反馈"白条上移了但没干掉"：说明剩下的是**状态栏那一条**（+4 里还带着 insets.top）。
+  // 所以内边距只留 4，连状态栏那块也让内容铺上去 —— 系统图标本来就浮在内容上，Muse 亦然。
   const insets = useSafeAreaInsets();
   return (
     <View style={{ flex: 1, marginTop: -insets.top }}>
@@ -770,7 +816,7 @@ export function ChatScreen({
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
           gap: 13,
-          paddingTop: insets.top + 4,
+          paddingTop: 4,
           paddingBottom: 20,
           flexGrow: 1,
         }}
