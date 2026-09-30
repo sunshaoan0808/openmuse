@@ -358,12 +358,11 @@ export async function executeModelTask(
     });
   });
   if (runError) throw new Error(runError);
-  if (text) await ctx.event("step", "Agent update", text.slice(0, 12000));
+  if (text) await ctx.event("step", "智能体更新", text.slice(0, 12000));
   return (
     outcome ?? {
       status: "waiting_input",
-      question:
-        "The agent reached the end of this run without confirming completion. Give it a follow-up instruction to continue.",
+      question: "这一轮结束前没有拿到完成确认。给它一条后续指令即可继续。",
       state: { ...task.state, lastUpdate: text },
     }
   );
