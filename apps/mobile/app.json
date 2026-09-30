@@ -6,6 +6,12 @@
     "version": "0.1.0",
     "orientation": "default",
     "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FAEEDC"
+    },
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
@@ -13,11 +19,16 @@
     },
     "android": {
       "package": "app.openmuse.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FAEEDC"
+      },
       "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
       "bundler": "metro",
-      "name": "OpenMuse — a little room for everything"
+      "name": "OpenMuse — a little room for everything",
+      "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-document-picker",
