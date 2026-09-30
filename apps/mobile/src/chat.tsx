@@ -58,6 +58,7 @@ import { JevInteractionContext, JevToolCard } from "./jev-tool-card";
 import { actionDetail, actionKindLabel, agentActionLabel, proposalStatusLabel } from "./labels";
 import { MailToolCard } from "./mail-tool-card";
 import { type HeroRect, usePressScale, usePulse } from "./motion";
+import { RunningTasks } from "./running-tasks";
 import { SearchToolCard } from "./search-tool-card";
 import { useSpeechInput } from "./speech";
 import { FileThreadCard, TaskThreadCard } from "./thread-artifacts";
@@ -990,6 +991,8 @@ export function ChatScreen({
             )}
           </>
         }
+        {/* 并行子任务：Muse 会在聊天里按行列出现在跑的子代理，我们的派活任务也回到这里 */}
+        <RunningTasks />
         {(!savedThreads || selection.id === mainId) && <BackgroundUpdates />}
         {(busy || agent.isRunning) && (
           <View
