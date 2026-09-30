@@ -28,7 +28,16 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import type { Section, Workspace } from "../../packages/domain/src";
 import { AgentActivityScreen, AppsScreen, GoalsScreen, IdeasScreen } from "./src/agent-ui";
 import { AgentWorkspaceProvider, useAgentWorkspace } from "./src/agent-workspace";
-import { apiUrl, createSession, defaultApiUrl, loadApiUrl, MuseApi, saveApiUrl } from "./src/api";
+import {
+  apiUrl,
+  createSession,
+  defaultApiUrl,
+  loadAccessKey,
+  loadApiUrl,
+  MuseApi,
+  saveAccessKey,
+  saveApiUrl,
+} from "./src/api";
 import { AvatarPanel } from "./src/avatar-panel";
 import { ChatScreen, WorkspaceTools } from "./src/chat";
 import { ComputerEntry } from "./src/computer";
@@ -72,7 +81,8 @@ export default function App() {
   const [token, setToken] = useState("");
   const [accessKey, setAccessKey] = useState("");
   const [server, setServer] = useState(apiUrl());
-  const [busy, setBusy] = useState(true);
+  // 启动时先不起转圈：要先知道有没有存过密钥，否则就是"转圈 → 报错 → 才要密钥"
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const connect = useCallback(async (key?: string, url?: string) => {
     setBusy(true);
@@ -81,17 +91,27 @@ export default function App() {
       if (url !== undefined) setServer(await saveApiUrl(url));
       const session = await createSession(key);
       setToken(session.token);
+      if (key) {
+        setAccessKey(key);
+        await saveAccessKey(key);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      // 失败时把密钥填回表单，方便直接改，不用重敲
+      if (key) setAccessKey(key);
     } finally {
       setBusy(false);
     }
   }, []);
   useEffect(() => {
     void (async () => {
-      const saved = await loadApiUrl();
-      setServer(saved);
-      await connect();
+      const [savedUrl, savedKey] = await Promise.all([loadApiUrl(), loadAccessKey()]);
+      setServer(savedUrl);
+      // 存过密钥就自动登录；没存过就直接给表单，不发那次注定 401 的请求
+      if (savedKey) {
+        setAccessKey(savedKey);
+        await connect(savedKey);
+      }
     })();
   }, [connect]);
   return (

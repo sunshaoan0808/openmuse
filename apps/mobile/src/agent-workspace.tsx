@@ -13,6 +13,7 @@ import type {
   AgentWorkspace,
   CreateTaskInput,
 } from "../../../packages/domain/src/agent";
+import { nextPollDelay } from "./poll-cadence";
 import { useWorkspace } from "./workspace";
 
 interface AgentContextValue {
@@ -41,30 +42,42 @@ export function AgentWorkspaceProvider({ children }: { children: ReactNode }) {
       throw e;
     }
   }, [api]);
+  // 轮询按"有没有活干"自适应：在跑就 3 秒，闲着就 12 秒（跨境外链路下这一项最省时间）
+  const latest = useRef<AgentWorkspace | undefined>(undefined);
+  latest.current = data ?? latest.current;
   useEffect(() => {
     const visible = () =>
       AppState.currentState !== "background" &&
       AppState.currentState !== "inactive" &&
       (Platform.OS !== "web" || typeof document === "undefined" || !document.hidden);
     let polling = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+    const schedule = () => {
+      if (stopped) return;
+      clearTimeout(timer);
+      timer = setTimeout(poll, nextPollDelay(latest.current));
+    };
     const poll = () => {
-      if (!visible() || polling) return;
+      if (stopped) return;
+      if (!visible() || polling) return schedule();
       polling = true;
       void refresh()
         .catch(() => {})
         .finally(() => {
           polling = false;
+          schedule();
         });
     };
     poll();
-    const timer = setInterval(poll, 3000);
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") poll();
     });
     if (Platform.OS === "web" && typeof document !== "undefined")
       document.addEventListener("visibilitychange", poll);
     return () => {
-      clearInterval(timer);
+      stopped = true;
+      clearTimeout(timer);
       subscription.remove();
       requestVersion.current++;
       if (Platform.OS === "web" && typeof document !== "undefined")

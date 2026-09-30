@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "office-vendor": "node scripts/build-office-vendor.mjs",
     "android": "expo run:android",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@copilotkit/react-native": "1.70.1",

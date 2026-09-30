@@ -9,6 +9,8 @@ export const BUILD_API_URL = (
 
 const normalize = (value: string) => (value || "").trim().replace(/\/$/, "");
 const STORE = `${FileSystem.documentDirectory ?? ""}openmuse-server.json`;
+// 密钥单独存一个文件：只存服务端地址会导致每次启动都要重新输密钥
+const KEY_STORE = `${FileSystem.documentDirectory ?? ""}openmuse-key.json`;
 
 let current = BUILD_API_URL;
 
@@ -126,6 +128,24 @@ export class MuseApi {
   }
   url(path: string) {
     return path.startsWith("http") ? path : `${apiUrl()}${path}`;
+  }
+}
+
+export async function loadAccessKey(): Promise<string> {
+  try {
+    const raw = await FileSystem.readAsStringAsync(KEY_STORE);
+    const parsed = JSON.parse(raw) as { accessKey?: string };
+    return typeof parsed.accessKey === "string" ? parsed.accessKey : "";
+  } catch {
+    return "";
+  }
+}
+
+export async function saveAccessKey(accessKey: string): Promise<void> {
+  try {
+    await FileSystem.writeAsStringAsync(KEY_STORE, JSON.stringify({ accessKey }));
+  } catch {
+    // 存不下也不该挡住这次连接
   }
 }
 
