@@ -32,7 +32,43 @@ const ACTIVITY_TEXT: Record<string, string> = {
   create_goal: "正在定目标",
   remember_fact: "正在记下这条",
   agent_status: "正在看自己的状态",
+  // 派活（任务引擎）用的工具
+  set_plan: "正在排计划",
+  read_workspace: "正在读工作区",
+  import_pdf: "正在导入 PDF",
+  inspect_pdf: "正在检查表单字段",
+  fill_pdf: "正在填写 PDF",
+  read_web: "正在读网页",
+  save_artifact: "正在保存产物",
+  prepare_email: "正在准备邮件",
+  prepare_event: "正在准备日程",
+  ask_user: "正在向你提问",
+  finish_task: "正在交付结果",
+  // 智能体电脑（沙箱）工具
+  computer_status: "正在看电脑状态",
+  write_computer_file: "正在电脑上写文件",
+  read_computer_file: "正在读电脑上的文件",
+  list_computer_files: "正在列电脑上的文件",
+  run_computer_command: "正在电脑上执行命令",
 };
+
+/**
+ * 任务时间线里的一步：标题=中文动作名，细节=参数里最能说明问题的那段。
+ * 之前 model.ts 直接把工具的**英文描述**当标题写进事件（"Search the public web and get
+ * ranked results with title, URL and snippet…"），于是任务详情里每一步都不可读。
+ */
+export function stepEventFor(
+  tool: string,
+  args: unknown,
+  fallbackTitle?: string,
+): { title: string; detail: string } {
+  const live = ACTIVITY_TEXT[tool] ?? fallbackTitle ?? `使用工具 ${tool}`;
+  return {
+    // 时间线里是"已经发生的一步"，不是"此刻正在做"：把进行时的"正在"去掉
+    title: live.startsWith("正在") ? live.slice(2) : live,
+    detail: detailOf(args),
+  };
+}
 
 /** 参数里最能说明"在干什么"的那个：查询词、网址、动作。 */
 function detailOf(args: unknown): string {
