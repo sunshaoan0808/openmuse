@@ -756,10 +756,12 @@ export function ChatScreen({
     hydratedMessages.current = true;
   }
   const replying = busy || agent.isRunning;
-  // 顶栏是浮在内容上的玻璃层，内容必须**从屏幕最顶端开始**（含状态栏那块）。
-  // 否则顶栏背后是一片空底色 = 真机上看到的那条"白带"（实测：顶部 224px 全是 #FCFCFC，
-  // 内容从 232px 才开始）。这里上移一个 insets.top，再用内边距把首条内容压到顶栏下沿附近，
-  // 于是滚动时内容从控件背后穿过（Muse 的观感），静止时首条也不被遮住。
+  // 顶栏是浮在内容上的玻璃层，内容必须**从屏幕最顶端开始**（含状态栏那块），
+  // 否则顶栏背后就是一片空底色 = 真机上那条"白带"。两次实测（截图逐行取色）：
+  //   改之前：中线 y=0..224 全空，内容从 y=232 才开始
+  //   改了 insets.top + 78 之后：内容提到 y=160，但**顶栏自己那 155px 仍是空的**
+  // 所以避让内边距必须远小于顶栏高度 —— 只留 insets.top 即可，让顶栏直接浮在内容上。
+  // 聊天滚动区的顶部本来就是历史消息，被顶栏压住不碍事（Muse 同款观感）。
   const insets = useSafeAreaInsets();
   return (
     <View style={{ flex: 1, marginTop: -insets.top }}>
@@ -768,7 +770,7 @@ export function ChatScreen({
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
           gap: 13,
-          paddingTop: insets.top + 78,
+          paddingTop: insets.top + 4,
           paddingBottom: 20,
           flexGrow: 1,
         }}
