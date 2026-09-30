@@ -204,7 +204,7 @@ export class AgentService {
           ? ["Check the source", "Compare with the last observation", "Report a meaningful change"]
           : input.kind === "finance"
             ? ["Validate transactions", "Calculate the summary", "Save your tracker"]
-            : ["Understand the outcome", "Plan the work", "Use connected tools", "Return a result"];
+            : ["理解目标", "规划步骤", "使用已连接的工具", "交付结果"];
     const task: AgentTask = {
       id,
       title: input.title ?? input.prompt.slice(0, 90),
@@ -733,16 +733,12 @@ export class AgentService {
     task: AgentTask,
     context: TaskContext,
   ): Promise<Partial<AgentTask>> {
-    await context.event(
-      "status",
-      task.attempts === 1 ? "Started working" : "Resumed work",
-      task.prompt,
-    );
+    await context.event("status", task.attempts === 1 ? "开始工作" : "继续工作", task.prompt);
     if (task.actionId) {
       const action = await this.db.get<ActionProposal>(owner, "actions", task.actionId);
       if (!action) throw new Error("找不到关联的复核");
       if (action.status === "succeeded") {
-        await context.event("result", "Approved action completed", action.result);
+        await context.event("result", "已批准的操作已完成", action.result);
         if (task.kind === "document")
           return this.finish(task, context, action.result ?? "Reply completed");
         task = await context.checkpoint({
@@ -800,7 +796,7 @@ export class AgentService {
       }
     }
     if (task.kind === "finance") {
-      await context.event("step", "Analyzing the imported transactions");
+      await context.event("step", "正在分析导入的账目");
       const csv = z.string().parse(task.input.csv);
       const data = analyzeSpending(csv);
       const artifact = await this.artifact(
@@ -828,7 +824,7 @@ export class AgentService {
   }
   async finish(task: AgentTask, context: TaskContext, result: string) {
     await context.guard();
-    await context.event("result", "Work completed", result);
+    await context.event("result", "工作已完成", result);
     return {
       status: "succeeded" as const,
       result,
@@ -841,7 +837,7 @@ export class AgentService {
       await this.notify(
         owner,
         task.title,
-        task.result ?? "Work completed",
+        task.result ?? "工作已完成",
         task.id,
         `task-done:${task.id}`,
       );
@@ -929,7 +925,7 @@ export class AgentService {
         evidence: [this.mailEvidence(mail)],
         plan: task.plan.map((s, i) => ({ ...s, status: i === 0 ? "succeeded" : "pending" })),
       });
-      await ctx.event("step", "Found the document", file.name);
+      await ctx.event("step", "找到了文档", file.name);
     }
     const fields = z
       .record(z.string(), z.union([z.string(), z.boolean()]))
@@ -965,7 +961,7 @@ export class AgentService {
         artifactIds: [filledId],
         plan: task.plan.map((s, i) => ({ ...s, status: i <= 1 ? "succeeded" : "pending" })),
       });
-      await ctx.event("step", "Saved a filled copy", filled.name);
+      await ctx.event("step", "已保存填写好的副本", filled.name);
     }
     const input: ProposalInput = {
       kind: "email.send",
@@ -1058,7 +1054,7 @@ export class AgentService {
     );
     if (shouldNotify) {
       await ctx.guard();
-      await ctx.event("result", "A meaningful change was found", text.slice(0, 500));
+      await ctx.event("result", "发现了一处有意义的变化", text.slice(0, 500));
     }
     return {
       status: "scheduled",

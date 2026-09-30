@@ -155,7 +155,7 @@ test("the model worker keeps the text a model replies with when it calls no tool
     assert.ok(
       result.events.some(
         (event) =>
-          event.title === "Agent update" && /Find cool stuff on Hacker News/.test(event.detail),
+          event.title === "智能体更新" && /Find cool stuff on Hacker News/.test(event.detail),
       ),
       "the reply is recorded in the task timeline",
     );
