@@ -1,5 +1,4 @@
 import { CopilotKitProvider } from "@copilotkit/react-native/headless";
-import { BlurView } from "expo-blur";
 import { StatusBar } from "expo-status-bar";
 import {
   Bell,
@@ -346,12 +345,9 @@ function WorkspaceShell({
       <WorkspaceTools />
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.canvas }} edges={["top", "bottom"]}>
         <View style={{ flex: 1, width: "100%", maxWidth: 760, alignSelf: "center" }}>
-          <BlurView
-            // Muse 原版的"悬浮"是原生模糊（RenderEffect）+ scrim：内容从玻璃下面滚过去。
-            // Android 上必须指定 dimezisBlurView，否则 expo-blur 只会加一层半透明底色（等于没模糊）。
-            intensity={desktop ? 80 : 70}
-            tint="light"
-            experimentalBlurMethod="dimezisBlurView"
+          <View
+            // 【对照分支】刻意不用 expo-blur：验证闪退是否来自原生模糊（dimezisBlurView）。
+            // 视觉上是半透明底色，不是模糊。
             pointerEvents="box-none"
             style={{
               position: "absolute",
@@ -362,6 +358,7 @@ function WorkspaceShell({
               height: desktop ? 124 : 104,
               paddingTop: desktop ? 12 : 2,
               paddingHorizontal: 20,
+              backgroundColor: "rgba(252,252,252,0.86)",
             }}
           >
             {/* 遮罩跟着滚动加厚（照 Muse 的 scrim 滚动联动）：停在顶部几乎透明，一滚就厚起来 */}
@@ -457,7 +454,7 @@ function WorkspaceShell({
                 </Text>
               </Pressable>
             </View>
-          </BlurView>
+          </View>
           <View style={{ flex: 1, minHeight: 0, paddingTop: desktop ? 92 : 74 }}>
             {section !== "chat" && (
               <ScrollView
