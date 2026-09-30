@@ -15,7 +15,6 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Animated,
   AppState,
   Pressable,
   ScrollView,
@@ -23,7 +22,7 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import type { Section, Workspace } from "../../packages/domain/src";
 import { AgentActivityScreen, AppsScreen, GoalsScreen, IdeasScreen } from "./src/agent-ui";
 import { AgentWorkspaceProvider, useAgentWorkspace } from "./src/agent-workspace";
@@ -48,7 +47,7 @@ import { CrashNotice } from "./src/crash-notice";
 import { Details } from "./src/details";
 import { ErrorBoundary } from "./src/error-boundary";
 import { hapticTap } from "./src/haptics";
-import { headerScrimOpacity, headerScrollHandler } from "./src/header-scrim";
+import { headerScrollHandler } from "./src/header-scrim";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
 import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from "./src/ui";
@@ -314,6 +313,8 @@ function WorkspaceShell({
 }) {
   const { workspace, section, navigate, open } = useWorkspace();
   const { data } = useAgentWorkspace();
+  // 顶栏要覆盖状态栏那条区域（否则会露出一条"窄白带"），所以需要顶部安全区高度
+  const insets = useSafeAreaInsets();
   const {
     selection,
     visited,
@@ -382,29 +383,18 @@ function WorkspaceShell({
             pointerEvents="box-none"
             style={{
               position: "absolute",
-              top: 0,
+              // 从屏幕最顶端开始（覆盖状态栏那条区域）：否则状态栏处会露出一条"窄白带"，
+              // 与下面顶栏区形成两块白底。
+              top: -insets.top,
               left: 0,
               right: 0,
               zIndex: 6,
-              height: desktop ? 124 : 104,
-              paddingTop: desktop ? 12 : 2,
+              height: (desktop ? 124 : 104) + insets.top,
+              paddingTop: insets.top + (desktop ? 12 : 2),
               paddingHorizontal: 20,
             }}
           >
-            {/* 遮罩跟着滚动加厚（照 Muse 的 scrim 滚动联动）：停在顶部几乎透明，一滚就厚起来 */}
-            <Animated.View
-              pointerEvents="none"
-              style={{
-                position: "absolute",
-                left: 0,
-                right: 0,
-                top: 0,
-                bottom: 0,
-                backgroundColor: colors.canvas,
-                opacity: headerScrimOpacity(),
-              }}
-            />
-            <View style={{ position: "absolute", left: 0, top: CHROME_CENTER_Y - 18 }}>
+            <View style={{ position: "absolute", left: 0, top: insets.top + CHROME_CENTER_Y - 18 }}>
               <IconButton icon={Menu} label="打开会话与菜单" onPress={() => setThreadsOpen(true)} />
             </View>
             <View style={{ alignItems: "center", gap: 1 }}>
@@ -460,7 +450,9 @@ function WorkspaceShell({
                 </View>
               </Pressable>
             </View>
-            <View style={{ position: "absolute", right: 0, top: CHROME_CENTER_Y - 17 }}>
+            <View
+              style={{ position: "absolute", right: 0, top: insets.top + CHROME_CENTER_Y - 17 }}
+            >
               {/* 照 Muse：右侧是一个带文字的胶囊，而不是光秃秃一个图标 */}
               <Pressable
                 accessibilityRole="button"
