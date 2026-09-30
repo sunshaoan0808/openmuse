@@ -312,7 +312,7 @@ function WorkspaceShell({
   prompt?: { id: number; text: string };
 }) {
   const { workspace, section, navigate, open } = useWorkspace();
-  const { data } = useAgentWorkspace();
+  const { data, chatTrouble } = useAgentWorkspace();
   // 顶栏要覆盖状态栏那条区域（否则会露出一条"窄白带"），所以需要顶部安全区高度
   const insets = useSafeAreaInsets();
   const {
@@ -339,7 +339,9 @@ function WorkspaceShell({
   // 本会话此刻在干什么（服务端每次工具调用都会更新）；没有就退回任务状态
   const live = data?.live?.find((activity) => activity.threadId === selection.id);
   const liveStatus = live ? `${live.text}${live.detail ? ` · ${live.detail}` : ""}` : "";
+  // 聊天出问题时，顶栏必须先说实话：否则会出现"屏幕上是红色报错、顶栏还说正在搜索"
   const status =
+    (chatTrouble ? `刚才出错了 · ${chatTrouble}` : "") ||
     liveStatus ||
     (activeTask
       ? activeTask.status === "waiting_approval"

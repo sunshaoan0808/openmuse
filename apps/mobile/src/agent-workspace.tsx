@@ -22,11 +22,19 @@ interface AgentContextValue {
   refresh: () => Promise<void>;
   mutate: <T>(path: string, body: unknown, idempotencyKey?: string) => Promise<T>;
   delegate: (input: CreateTaskInput) => Promise<AgentTask>;
+  /**
+   * 聊天这一层最近一次"出问题了"（连不上/这一轮失败），顶栏状态行要优先说这个。
+   * 原因：顶栏读的是服务端的实时活动，客户端把流断了它并不知道，于是界面上
+   * 弹着红色报错、顶栏却还在说"正在搜索网页…"（真机上就是这么被发现的）。
+   */
+  chatTrouble: string;
+  setChatTrouble: (text: string) => void;
 }
 const AgentContext = createContext<AgentContextValue | null>(null);
 export function AgentWorkspaceProvider({ children }: { children: ReactNode }) {
   const { api } = useWorkspace();
   const [data, setData] = useState<AgentWorkspace>();
+  const [chatTrouble, setChatTrouble] = useState("");
   const [error, setError] = useState("");
   const requestVersion = useRef(0);
   const refresh = useCallback(async () => {
@@ -104,7 +112,9 @@ export function AgentWorkspaceProvider({ children }: { children: ReactNode }) {
     [mutate],
   );
   return (
-    <AgentContext.Provider value={{ data, error, refresh, mutate, delegate }}>
+    <AgentContext.Provider
+      value={{ data, error, refresh, mutate, delegate, chatTrouble, setChatTrouble }}
+    >
       {children}
     </AgentContext.Provider>
   );

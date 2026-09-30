@@ -33,6 +33,7 @@ import {
   type TextStyle,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { z } from "zod";
 import type { ActionProposal } from "../../../packages/domain/src";
 import { ArtifactCard } from "./agent-ui";
@@ -430,6 +431,7 @@ export function ChatScreen({
   const [showResults, setShowResults] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const { setChatTrouble } = useAgentWorkspace();
   const [loaded, setLoaded] = useState(false);
   const [picking, setPicking] = useState(false);
   const [attachments, setAttachments] = useState<string[]>([]);
@@ -473,6 +475,17 @@ export function ChatScreen({
    * 同时用"服务端已存到哪些消息"给本地待发队列清账（ACK）。
    */
   const [lastTurn, setLastTurn] = useState<{ status: string } | null>(null);
+  // 顶栏状态行跟着聊天的真实状态走：出错/被中断时，顶栏不许再说"正在搜索网页…"
+  // （顶栏读的是服务端的实时活动；客户端把流断了它并不知道 —— 真机上撞到过）
+  useEffect(() => {
+    const stuck =
+      !busy && !agent.isRunning && lastTurn && ["failed", "interrupted"].includes(lastTurn.status)
+        ? lastTurn.status === "interrupted"
+          ? "上一轮被中断"
+          : "上一轮出错"
+        : "";
+    setChatTrouble(error || stuck);
+  }, [error, busy, agent.isRunning, lastTurn, setChatTrouble]);
   const syncConversation = useCallback(async () => {
     const since = await loadCursor(threadId);
     const result = await api.request<{
@@ -743,12 +756,22 @@ export function ChatScreen({
     hydratedMessages.current = true;
   }
   const replying = busy || agent.isRunning;
+  // 顶栏是浮在内容上的玻璃层，内容必须**从屏幕最顶端开始**（含状态栏那块）。
+  // 否则顶栏背后是一片空底色 = 真机上看到的那条"白带"（实测：顶部 224px 全是 #FCFCFC，
+  // 内容从 232px 才开始）。这里上移一个 insets.top，再用内边距把首条内容压到顶栏下沿附近，
+  // 于是滚动时内容从控件背后穿过（Muse 的观感），静止时首条也不被遮住。
+  const insets = useSafeAreaInsets();
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, marginTop: -insets.top }}>
       <ScrollView
         ref={list}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ gap: 13, paddingTop: 15, paddingBottom: 20, flexGrow: 1 }}
+        contentContainerStyle={{
+          gap: 13,
+          paddingTop: insets.top + 78,
+          paddingBottom: 20,
+          flexGrow: 1,
+        }}
         onScroll={headerScrollHandler(
           ({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
             const nearEnd = contentSize.height - contentOffset.y - layoutMeasurement.height < 100;
