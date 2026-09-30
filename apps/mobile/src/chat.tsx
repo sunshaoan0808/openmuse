@@ -37,6 +37,7 @@ import { z } from "zod";
 import type { ActionProposal } from "../../../packages/domain/src";
 import { ArtifactCard } from "./agent-ui";
 import { useAgentWorkspace } from "./agent-workspace";
+import { humanizeNetworkError } from "./api";
 import { AssistantResponse } from "./assistant-response";
 import { BackgroundUpdates } from "./background-updates";
 import { BrowserActionCard } from "./browser-action-card";
@@ -655,7 +656,8 @@ export function ChatScreen({
       onError: (event) => {
         if (event.context?.agentId && event.context.agentId !== agentId) return;
         const failure = event.error instanceof Error ? event.error : new Error(String(event.error));
-        setError(failure.message);
+        // 运行时客户端报的是 RN 原文（Network request failed 之类），统一翻成中文
+        setError(humanizeNetworkError(failure));
       },
     });
     return () => subscription.unsubscribe();

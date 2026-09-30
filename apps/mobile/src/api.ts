@@ -61,6 +61,12 @@ function networkErrorText(url: string) {
   return `连不上服务器 ${url}（网络被中断或地址不可达）。你的消息没有丢，稍后会自己重试。`;
 }
 
+/** 把网络层错误翻成一句能看懂的中文（界面各处统一用它，别漏出 RN 的英文原文）。 */
+export function humanizeNetworkError(error: unknown): string {
+  if (isNetworkError(error)) return networkErrorText(apiUrl());
+  return error instanceof Error ? error.message : String(error);
+}
+
 function isNetworkError(error: unknown) {
   const text = error instanceof Error ? error.message : String(error);
   return /Network request failed|Failed to fetch|fetch failed|NetworkError|timed out|status 0|ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED/i.test(
@@ -93,18 +99,29 @@ async function withRetry<T>(
 
 export class MuseApi {
   constructor(public token: string) {}
-  async request<T>(path: string, body?: unknown, method?: string): Promise<T> {
+  async request<T>(
+    path: string,
+    body?: unknown,
+    method?: string,
+    options?: { idempotencyKey?: string },
+  ): Promise<T> {
     const verb = method ?? (body === undefined ? "GET" : "POST");
     const url = `${apiUrl()}${path}`;
-    // 会话读写是幂等的（服务端按消息 id 去重），重试安全；其它 POST 不盲目重试
+    // 会话读写是幂等的（服务端按消息 id 去重），重试安全；
+    // 带幂等键的 POST 也安全（服务端按 key 去重）——派活走这条，链路抖一下不会一次就废。
     const idempotent =
-      verb === "GET" || verb === "PUT" || verb === "DELETE" || path.startsWith("/api/conversation");
+      verb === "GET" ||
+      verb === "PUT" ||
+      verb === "DELETE" ||
+      path.startsWith("/api/conversation") ||
+      !!options?.idempotencyKey;
     return withRetry(url, idempotent, async () => {
       const call = () =>
         fetch(url, {
           method: verb,
           headers: {
             Authorization: `Bearer ${this.token}`,
+            ...(options?.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
             ...(body === undefined || body instanceof FormData
               ? {}
               : { "Content-Type": "application/json" }),

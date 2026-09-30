@@ -20,7 +20,7 @@ interface AgentContextValue {
   data?: AgentWorkspace;
   error: string;
   refresh: () => Promise<void>;
-  mutate: <T>(path: string, body: unknown) => Promise<T>;
+  mutate: <T>(path: string, body: unknown, idempotencyKey?: string) => Promise<T>;
   delegate: (input: CreateTaskInput) => Promise<AgentTask>;
 }
 const AgentContext = createContext<AgentContextValue | null>(null);
@@ -85,8 +85,8 @@ export function AgentWorkspaceProvider({ children }: { children: ReactNode }) {
     };
   }, [refresh]);
   const mutate = useCallback(
-    async <T,>(path: string, body: unknown): Promise<T> => {
-      const result = await api.request<T>(`/api/agent${path}`, body);
+    async <T,>(path: string, body: unknown, idempotencyKey?: string): Promise<T> => {
+      const result = await api.request<T>(`/api/agent${path}`, body, undefined, { idempotencyKey });
       // The successful mutation stays successful even if the following read fails.
       await refresh().catch(() => {});
       return result;
@@ -94,7 +94,13 @@ export function AgentWorkspaceProvider({ children }: { children: ReactNode }) {
     [api, refresh],
   );
   const delegate = useCallback(
-    (input: CreateTaskInput) => mutate<AgentTask>("/tasks", input),
+    // 幂等键：链路抖动重发时服务端只认一个任务（不会变成两个）
+    (input: CreateTaskInput) =>
+      mutate<AgentTask>(
+        "/tasks",
+        input,
+        `task-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      ),
     [mutate],
   );
   return (

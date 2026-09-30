@@ -37,9 +37,12 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
     // live：智能体此刻在干什么（App 的动态页显示实时状态）
     return c.json({ ...snapshot, live });
   });
-  app.post("/tasks", async (c) =>
-    c.json(await service.createTask(c.get("owner"), await c.req.json()), 201),
-  );
+  app.post("/tasks", async (c) => {
+    // 带 Idempotency-Key 的派活可以安全重试：同一个 key 只会产生一个任务
+    // （手机网络抖动时 App 会重发，不会变成两个任务）。
+    const key = c.req.header("Idempotency-Key")?.trim() || undefined;
+    return c.json(await service.createTask(c.get("owner"), await c.req.json(), key), 201);
+  });
   app.get("/tasks/:id", async (c) =>
     c.json(await service.detail(c.get("owner"), c.req.param("id"))),
   );
