@@ -13,3 +13,5 @@ minimumReleaseAgeExclude:
   - '@tanstack/ai-openai@0.23.2'
   - '@tanstack/ai@0.59.0'
   - '@tanstack/openai-base@0.10.16'
+patchedDependencies:
+  '@copilotkit/react-native@1.70.1': patches/@copilotkit__react-native@1.70.1.patch

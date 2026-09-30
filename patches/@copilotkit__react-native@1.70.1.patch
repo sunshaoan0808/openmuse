@@ -1,0 +1,45 @@
+diff --git a/src/streaming-fetch.ts b/src/streaming-fetch.ts
+index df5e0beccc89d14c88a6b4e2bc32abee1332bb51..952a81230549225e593aedaf41b602c05b8795a0 100644
+--- a/src/streaming-fetch.ts
++++ b/src/streaming-fetch.ts
+@@ -264,18 +264,7 @@ export function installStreamingFetch(): void {
+         const rawHeaders = xhr.getAllResponseHeaders() || "";
+ 
+         setTimeout(() => {
+-          // Safety net: if XHR completed but we never resolved/rejected, fail explicitly.
+-          // This can happen when status === 0 and onerror doesn't fire (some RN networking impls).
+-          if (readyState === 4 && !settled && !resp) {
+-            fail(
+-              new TypeError(
+-                `Network request to ${url} completed with status ${xhrStatus} but no response was produced. ` +
+-                  `This may indicate a CORS failure, DNS error, or React Native networking issue.`,
+-              ),
+-            );
+-            return;
+-          }
+-
++          // 先判这条：readyState >= 2 且有状态码，就能组装响应并 resolve
+           if (readyState >= 2 && !resp && xhrStatus !== 0) {
+             const respHeaders: Record<string, string> = {};
+             for (const line of rawHeaders.trim().split("\r\n")) {
+@@ -355,6 +344,20 @@ export function installStreamingFetch(): void {
+             // in terminal handlers (onload, onerror, ontimeout) or onAbort itself.
+             resolve(resp as unknown as Response);
+           }
++
++          // 安全网必须放在"能组装响应"分支之后：RN 的 XHR 在整个响应体一次到达时会跳过中间态
++          // 直接到 readyState 4，原来的顺序会让安全网先命中 —— 服务端明明 200，客户端却报
++          // "completed with status 200 but no response was produced"。只有真的没能组装出响应
++          // （例如 status 0 且 onerror 未触发）才该失败。
++          if (readyState === 4 && !settled && !resp) {
++            fail(
++              new TypeError(
++                `Network request to ${url} completed with status ${xhrStatus} but no response was produced. ` +
++                  `This may indicate a CORS failure, DNS error, or React Native networking issue.`,
++              ),
++            );
++            return;
++          }
+         }, 0);
+       };
+ 
