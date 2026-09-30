@@ -32,6 +32,7 @@ import { AgentService } from "./engine/service.ts";
 import { AppError } from "./errors.ts";
 import { Files } from "./files.ts";
 import { GoogleAuth } from "./google-auth.ts";
+import { friendlyToolError, recordActivity } from "./live-activity";
 import { backgroundFailure } from "./log.ts";
 import { SearchService } from "./search.ts";
 import {
@@ -610,6 +611,18 @@ export async function createApp(
           await ensureThread(owner, activeTurn.threadId, { messageCount: next.messages.length });
         }
         await db.put(owner, "turns", finishTurn(activeTurn, { ...outcome, now }));
+        // 这一轮没成功时把实时状态改成"出错了"：否则界面上那条"正在搜索网页…"会一直挂到
+        // 90 秒窗口过期，而屏幕上其实已经弹了红色报错（真机撞到过："状态正在搜索，实际已经报错"）
+        if (outcome.status === "failed" || outcome.status === "interrupted") {
+          await recordActivity(db, owner, {
+            id: "current",
+            threadId: activeTurn.threadId,
+            tool: "error",
+            text: outcome.status === "failed" ? "刚才出错了" : "这一轮被打断了",
+            detail: friendlyToolError(outcome.error ?? ""),
+            at: now,
+          });
+        }
       } catch (failure) {
         backgroundFailure("chat-turn-persist", failure);
       }
