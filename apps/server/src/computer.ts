@@ -131,10 +131,10 @@ export function workspacePath(path: string): string {
     !path.startsWith("/workspace") ||
     path.split("/").includes("..")
   )
-    throw new AppError("Choose an absolute path inside /workspace", 422);
+    throw new AppError("请选择 /workspace 内的绝对路径", 422);
   const normalized = posix.normalize(path);
   if (normalized !== "/workspace" && !normalized.startsWith("/workspace/"))
-    throw new AppError("Choose an absolute path inside /workspace", 422);
+    throw new AppError("请选择 /workspace 内的绝对路径", 422);
   return normalized;
 }
 const inspectionSchema = z.object({
@@ -200,26 +200,19 @@ export class ComputerService {
   ) {}
   private enabled() {
     if (!this.config.computerEnabled)
-      throw new AppError(
-        "电脑未配置。请启用 COMPUTER_ENABLED 并构建本地电脑镜像。",
-        503,
-      );
+      throw new AppError("电脑未配置。请启用 COMPUTER_ENABLED 并构建本地电脑镜像。", 503);
   }
   private image() {
     const image = this.config.computerImage ?? "openmuse-computer:local";
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,250}$/.test(image))
-      throw new AppError("COMPUTER_IMAGE is invalid", 503);
+      throw new AppError("COMPUTER_IMAGE 无效", 503);
     return image;
   }
   private async checked(args: string[]) {
     const result = await this.docker(args, { timeoutMs: controlTimeout });
-    if (result.timedOut)
-      throw new AppError("Docker did not respond within 10 seconds. Check the Docker engine.", 503);
+    if (result.timedOut) throw new AppError("Docker 10 秒内没有响应，检查 Docker 引擎。", 503);
     if (result.interrupted || result.exitCode !== 0 || result.truncated)
-      throw new AppError(
-        "Docker operation failed. Check that the engine is running and the computer image is built locally.",
-        503,
-      );
+      throw new AppError("Docker 操作失败：检查引擎是否在运行、电脑镜像是否已在本地构建。", 503);
     return result.stdout;
   }
   private async inspect(owner: string): Promise<Inspection | undefined> {
@@ -238,8 +231,7 @@ export class ComputerService {
     if (!found) return undefined;
     const raw = JSON.parse(await this.checked(["container", "inspect", identity.container]));
     const result = z.array(inspectionSchema).length(1).safeParse(raw);
-    if (!result.success)
-      throw new AppError("Computer isolation inspection failed; refusing to attach", 409);
+    if (!result.success) throw new AppError("电脑隔离检查失败，拒绝挂载", 409);
     const c = result.data[0],
       h = c.HostConfig;
     const empty = (list: unknown[] | null) => !list?.length;
@@ -284,11 +276,7 @@ export class ComputerService {
       c.Mounts[0].Destination === "/workspace" &&
       c.Mounts[0].RW &&
       Object.keys(c.NetworkSettings.Networks).every((network) => network === "none");
-    if (!safe)
-      throw new AppError(
-        "Computer ownership or isolation does not match this deployment; refusing to attach",
-        409,
-      );
+    if (!safe) throw new AppError("电脑归属或隔离与本部署不匹配，拒绝挂载", 409);
     await this.verifyVolume(owner);
     return c;
   }
@@ -306,7 +294,7 @@ export class ComputerService {
       )
       .length(1)
       .safeParse(JSON.parse(await this.checked(["volume", "inspect", identity.volume])));
-    if (!parsed.success) throw new AppError("Computer workspace ownership inspection failed", 409);
+    if (!parsed.success) throw new AppError("电脑工作区归属检查失败", 409);
     const v = parsed.data[0];
     if (
       v.Name !== identity.volume ||
@@ -315,7 +303,7 @@ export class ComputerService {
       Object.keys(v.Options ?? {}).length ||
       !Object.entries(identity.labels).every(([key, value]) => v.Labels?.[key] === value)
     )
-      throw new AppError("Computer workspace ownership or isolation does not match", 409);
+      throw new AppError("电脑工作区归属或隔离不匹配", 409);
   }
   private async acquire(owner: string, operation: Lease["operation"] = "operation") {
     this.enabled();
@@ -332,7 +320,7 @@ export class ComputerService {
       operation,
     };
     if (previous && previous.expiresAt > Date.now())
-      throw new AppError("Computer is busy. Wait for the current operation to finish.", 409);
+      throw new AppError("电脑忙，等当前操作结束。", 409);
     const claimed = previous
       ? await this.db.compareAndSwap<Lease>(
           owner,
@@ -342,8 +330,7 @@ export class ComputerService {
           lease,
         )
       : await this.db.insertIfAbsent(owner, "computer-state", lease);
-    if (!claimed)
-      throw new AppError("Computer is busy. Wait for the current operation to finish.", 409);
+    if (!claimed) throw new AppError("电脑忙，等当前操作结束。", 409);
     return lease;
   }
   private async exclusive<T>(
@@ -419,8 +406,7 @@ export class ComputerService {
       return {
         ...base,
         status: "unconfigured",
-        message:
-          "请在服务端启用 Docker 电脑，以使用它的终端与工作区文件。",
+        message: "请在服务端启用 Docker 电脑，以使用它的终端与工作区文件。",
       };
     try {
       return {
@@ -431,10 +417,7 @@ export class ComputerService {
       return {
         ...base,
         status: "error",
-        message:
-          error instanceof AppError
-            ? error.message
-            : "电脑检查失败，请检查 Docker 配置。",
+        message: error instanceof AppError ? error.message : "电脑检查失败，请检查 Docker 配置。",
       };
     }
   }
@@ -516,7 +499,7 @@ export class ComputerService {
     let lease = await this.db.get<Lease>(owner, "computer-state", "lease");
     if (!lease || lease.expiresAt <= Date.now()) lease = await this.acquire(owner);
     else if ((lease.operation !== "command" && !lease.stopping) || lease.stopInFlight)
-      throw new AppError("Computer is busy with another operation. Try Stop again shortly.", 409);
+      throw new AppError("电脑正在执行另一个操作，稍后再试停止。", 409);
     const attempt = randomUUID();
     const stopping = await this.db.compareAndSwap<Lease>(
       owner,
@@ -535,7 +518,7 @@ export class ComputerService {
         expiresAt: Date.now() + leaseDuration,
       },
     );
-    if (!stopping) throw new AppError("Computer is busy with another Stop request", 409);
+    if (!stopping) throw new AppError("电脑正忙于处理另一个停止请求", 409);
     try {
       // Record intent before Docker Stop so a concurrently exiting command
       // cannot report success over the user's interruption.
@@ -585,7 +568,7 @@ export class ComputerService {
   private async running(owner: string) {
     this.enabled();
     if (!(await this.inspect(owner))?.State.Running)
-      throw new AppError("Start the computer before using its terminal or files", 409);
+      throw new AppError("先启动电脑，再使用它的终端或文件", 409);
     return computerIdentity(this.config, owner).container;
   }
   async execute(
@@ -602,7 +585,7 @@ export class ComputerService {
     const previous = await this.db.get<ComputerCommand>(owner, "computer-commands", id);
     if (previous) {
       if (previous.command !== args.command || previous.cwd !== cwd)
-        throw new AppError("This operation ID already belongs to a different command", 409);
+        throw new AppError("这个操作 ID 已属于另一条命令", 409);
       await this.commands(owner);
       return (await this.db.get<ComputerCommand>(owner, "computer-commands", id)) ?? previous;
     }
@@ -610,8 +593,7 @@ export class ComputerService {
       owner,
       async (lease) => {
         const container = await this.running(owner);
-        if (options.signal?.aborted)
-          throw new AppError("Computer command was interrupted before execution", 409);
+        if (options.signal?.aborted) throw new AppError("电脑命令在执行前被中断", 409);
         const command: ComputerCommand = {
           id,
           command: args.command,
@@ -626,7 +608,7 @@ export class ComputerService {
         if (!saved) {
           const existing = await this.db.get<ComputerCommand>(owner, "computer-commands", id);
           if (existing) return existing;
-          throw new AppError("Computer receipt could not be saved", 500);
+          throw new AppError("电脑回执保存失败", 500);
         }
         const active = await this.db.get<Lease>(owner, "computer-state", "lease");
         if (
@@ -758,7 +740,7 @@ export class ComputerService {
   ): Promise<T> {
     const path = workspacePath(rawPath);
     if (text !== undefined && Buffer.byteLength(text) > fileLimit)
-      throw new AppError("Text files must be 256 KB or smaller", 413);
+      throw new AppError("文本文件不能超过 256 KB", 413);
     return this.exclusive(owner, async () => {
       const container = await this.running(owner);
       const result = await this.docker(
@@ -782,14 +764,11 @@ export class ComputerService {
         },
       );
       if (result.exitCode !== 0 || result.timedOut || result.interrupted || result.truncated)
-        throw new AppError(
-          "Computer file operation failed. Check the path, permissions and file size; symlinks cannot be opened.",
-          422,
-        );
+        throw new AppError("电脑文件操作失败：检查路径、权限和文件大小（符号链接无法打开）。", 422);
       try {
         return JSON.parse(result.stdout) as T;
       } catch {
-        throw new AppError("Computer returned an invalid file response", 502);
+        throw new AppError("电脑返回了无效的文件响应", 502);
       }
     });
   }
@@ -807,7 +786,7 @@ export class ComputerService {
   }
   async writePdf(owner: string, path: string, bytes: Uint8Array) {
     if (bytes.length > 10 * 1024 * 1024 || Buffer.from(bytes.subarray(0, 5)).toString() !== "%PDF-")
-      throw new AppError("Choose a PDF of 10 MB or smaller", 422);
+      throw new AppError("请选择 10 MB 以内的 PDF", 422);
     return this.file<{ path: string }>(
       owner,
       "write_pdf",

@@ -1,0 +1,23 @@
+{
+  "query": "openmuse",
+  "answer": null,
+  "results": [
+    {
+      "url": "https://github.com/CopilotKit/openmuse",
+      "title": "GitHub - CopilotKit/openmuse: A personal agent",
+      "content": "A personal agent with a browser, terminal, files.",
+      "score": 0.93,
+      "raw_content": null,
+      "id": "1"
+    },
+    {
+      "url": "https://www.copilotkit.ai/openmuse",
+      "title": "OpenMuse | CopilotKit",
+      "content": "Open-source personal agent.",
+      "score": 0.8,
+      "raw_content": null,
+      "id": "2"
+    }
+  ],
+  "response_time": 1.2
+}

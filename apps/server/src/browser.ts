@@ -21,6 +21,32 @@ const readSchema = z.object({
   text: z.string().max(100_000),
   truncated: z.boolean(),
 });
+const contentSchema = z.object({
+  url: z.string(),
+  title: z.string().max(300),
+  html: z.string().max(700_000),
+  truncated: z.boolean(),
+});
+/** worker 的"元素编号"结果：模型按 ref 点击/填表，而不是猜像素坐标。 */
+const pageSchema = z.object({
+  url: z.string(),
+  title: z.string().max(300),
+  elements: z
+    .array(
+      z.object({
+        ref: z.number().int().positive(),
+        role: z.string().max(40),
+        tag: z.string().max(20).optional(),
+        label: z.string().max(200),
+        value: z.string().max(100).optional(),
+        checked: z.boolean().optional(),
+        disabled: z.boolean().optional(),
+        inView: z.boolean().optional(),
+      }),
+    )
+    .max(120),
+  text: z.string().max(8_000).optional(),
+});
 const failureSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -66,7 +92,7 @@ export class BrowserService {
   private async request(path: string, body?: unknown, signal?: AbortSignal) {
     signal?.throwIfAborted();
     if (!this.config.workerUrl || !this.config.workerToken)
-      throw new AppError("Browser worker is not configured. Start it using the setup guide.", 503);
+      throw new AppError("浏览器工作进程未配置，按安装指南启动它。", 503);
     let response: Response;
     try {
       response = await fetch(`${this.config.workerUrl}${path}`, {
@@ -82,17 +108,12 @@ export class BrowserService {
       });
     } catch {
       signal?.throwIfAborted();
-      throw new AppError(
-        "Browser worker is unavailable. Check that its container is running.",
-        503,
-      );
+      throw new AppError("浏览器工作进程不可用，检查它的容器是否在运行。", 503);
     }
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
       throw new AppError(
-        typeof payload?.error?.message === "string"
-          ? payload.error.message
-          : "浏览器请求失败",
+        typeof payload?.error?.message === "string" ? payload.error.message : "浏览器请求失败",
         502,
       );
     }
@@ -100,7 +121,7 @@ export class BrowserService {
   }
   async get(owner: string, id: string) {
     const value = await this.db.get<BrowserSession>(owner, "browsers", id);
-    if (!value) throw new AppError("Browser session not found", 404);
+    if (!value) throw new AppError("找不到这个浏览器会话", 404);
     return value;
   }
   decorate(owner: string, session: BrowserSession) {
@@ -112,8 +133,7 @@ export class BrowserService {
   }
   private async save(owner: string, payload: unknown, expectedId: string) {
     const session = sessionSchema.parse(payload);
-    if (session.id !== expectedId)
-      throw new AppError("Browser worker returned a different session", 502);
+    if (session.id !== expectedId) throw new AppError("浏览器工作进程返回了另一个会话", 502);
     await this.db.put(owner, "browsers", session);
     return this.decorate(owner, session);
   }
@@ -178,10 +198,11 @@ export class BrowserService {
       return { sessionId: id, ...(await this.readOwned(owner, id)) };
     });
   }
-  async observeForThread(owner: string, threadId: string, url: string, signal?: AbortSignal) {
-    signal?.throwIfAborted();
-    // Persist the association before contacting the worker so failed/lost responses
-    // and later chat turns keep using the same profile instead of exhausting its limit.
+  /**
+   * 一条会话一个浏览器 profile：先落库再联系 worker，
+   * 这样失败/丢响应之后的对话轮次仍复用同一个 profile，不会把额度耗尽。
+   */
+  private async threadSession(owner: string, threadId: string, url: string) {
     const association =
       (await this.db.get<ChatBrowser>(owner, "chat-browsers", threadId)) ??
       (await this.db.insertIfAbsent(owner, "chat-browsers", {
@@ -198,6 +219,11 @@ export class BrowserService {
       status: "idle",
       updatedAt: new Date().toISOString(),
     });
+    return id;
+  }
+  async observeForThread(owner: string, threadId: string, url: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const id = await this.threadSession(owner, threadId, url);
     return this.serial(id, async () => {
       signal?.throwIfAborted();
       await this.openOwned(owner, id, url, signal);
@@ -212,24 +238,101 @@ export class BrowserService {
       };
     });
   }
+  /**
+   * 结构化抓取：把当前页的 HTML 交给调用方解析（搜索结果页要抠链接与摘要，
+   * innerText 抠不出来）。复用这条会话的浏览器配置，所以和 browse_web 同一个出口。
+   */
+  async htmlForThread(owner: string, threadId: string, url: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const id = await this.threadSession(owner, threadId, url);
+    return this.serial(id, async () => {
+      signal?.throwIfAborted();
+      await this.openOwned(owner, id, url, signal);
+      signal?.throwIfAborted();
+      const response = contentSchema.parse(
+        await (await this.request(`/sessions/${id}/content`, undefined, signal)).json(),
+      );
+      await this.save(
+        owner,
+        {
+          id,
+          url: response.url,
+          title: response.title,
+          status: "active",
+          updatedAt: new Date().toISOString(),
+        },
+        id,
+      );
+      return { sessionId: id, ...response };
+    });
+  }
+  /**
+   * 聊天里"看得见、点得动"的入口：复用该线程的浏览器会话（与 browse_web 同一个 profile、同一个出口），
+   * 需要时先导航到 url。人和 agent 用的是同一个会话，所以 App 控制台里能实时看到 agent 的操作。
+   */
+  private async threadPage(
+    owner: string,
+    threadId: string,
+    url: string | undefined,
+    run: (id: string) => Promise<Response>,
+  ) {
+    const id = await this.threadSession(owner, threadId, url ?? "about:blank");
+    return this.serial(id, async () => {
+      if (url) await this.openOwned(owner, id, url);
+      const payload = pageSchema.parse(await (await run(id)).json());
+      await this.save(
+        owner,
+        {
+          id,
+          url: payload.url,
+          title: payload.title,
+          status: "active",
+          updatedAt: new Date().toISOString(),
+        },
+        id,
+      );
+      return { sessionId: id, ...payload };
+    });
+  }
+  pageElementsForThread(owner: string, threadId: string, url?: string) {
+    return this.threadPage(owner, threadId, url, (id) => this.request(`/sessions/${id}/elements`));
+  }
+  actForThread(owner: string, threadId: string, action: Record<string, unknown>, url?: string) {
+    return this.threadPage(owner, threadId, url, (id) =>
+      this.request(`/sessions/${id}/act`, action),
+    );
+  }
+  /** 截图交给视觉模型用：JPEG 比 PNG 小得多，8k 文本量级的一张图仍能看清版面。 */
+  async screenshotForThread(owner: string, threadId: string, url?: string) {
+    const id = await this.threadSession(owner, threadId, url ?? "about:blank");
+    return this.serial(id, async () => {
+      if (url) await this.openOwned(owner, id, url);
+      const response = await this.request(`/sessions/${id}/screenshot?format=jpeg&quality=70`);
+      const state = await this.get(owner, id);
+      return { bytes: new Uint8Array(await response.arrayBuffer()), session: state };
+    });
+  }
   async close(owner: string, id: string) {
     return this.serial(id, async () => {
       await this.get(owner, id);
       return this.save(owner, await (await this.request(`/sessions/${id}/close`, {})).json(), id);
     });
   }
-  async preview(owner: string, id: string) {
-    await this.get(owner, id);
-    return this.request(`/sessions/${id}/screenshot`);
+  async preview(owner: string, id: string, options: { quality?: number } = {}) {
+    const session = await this.get(owner, id);
+    const query = options.quality ? `?format=jpeg&quality=${options.quality}` : "";
+    return { response: await this.request(`/sessions/${id}/screenshot${query}`), session };
   }
   async input(owner: string, id: string, value: unknown) {
     return this.serial(id, async () => {
       await this.get(owner, id);
-      return this.save(
-        owner,
-        await (await this.request(`/sessions/${id}/input`, value)).json(),
-        id,
-      );
+      // 控制台的历史导航/视口：worker 上是独立端点，这里按 type 分流（老坐标点击仍走 /input）。
+      const type = (value as { type?: unknown } | null)?.type;
+      const path =
+        type === "back" || type === "forward" || type === "reload" || type === "viewport"
+          ? `/sessions/${id}/${type}`
+          : `/sessions/${id}/input`;
+      return this.save(owner, await (await this.request(path, value)).json(), id);
     });
   }
   async imports(owner: string, id: string) {

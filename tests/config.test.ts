@@ -29,9 +29,7 @@ function liveConfig(intelligenceApiKey?: string): Config {
 test("every API mode runs without an Intelligence key (local SSE mode)", () => {
   for (const mode of [sampleConfig, liveConfig()]) {
     for (const key of [undefined, "", "   "]) {
-      assert.doesNotThrow(() =>
-        assertApiDeploymentConfig({ ...mode, intelligenceApiKey: key }),
-      );
+      assert.doesNotThrow(() => assertApiDeploymentConfig({ ...mode, intelligenceApiKey: key }));
     }
   }
 });

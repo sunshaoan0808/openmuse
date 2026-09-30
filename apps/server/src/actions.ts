@@ -41,6 +41,7 @@ export class ActionService {
     raw: unknown,
     idempotencyKey?: string,
     taskId?: string,
+    threadId?: string,
   ): Promise<ActionProposal> {
     const id =
       idempotencyKey === undefined
@@ -53,7 +54,7 @@ export class ActionService {
     const parsed = proposalSchema.parse(raw);
     const connection = await this.options.connection?.(owner);
     if (this.options.connection && !connection)
-      throw new AppError("Connect Google before preparing an action", 409);
+      throw new AppError("先连接 Google 才能准备操作", 409);
     const prepared = await this.options.prepare?.(owner, parsed, connection?.id);
     const input = proposalSchema.parse(prepared?.input ?? parsed);
     const title =
@@ -66,6 +67,7 @@ export class ActionService {
     const proposal: ActionProposal = {
       id,
       taskId,
+      threadId,
       title,
       kind: input.kind,
       data: input.data,
@@ -93,7 +95,7 @@ export class ActionService {
         : await this.db.insertIfAbsent(owner, "actions", proposal);
     if (!saved) {
       const existing = await this.db.get<ActionProposal>(owner, "actions", id);
-      if (!existing) throw new AppError("Prepared action could not be loaded", 409);
+      if (!existing) throw new AppError("准备好的操作加载失败", 409);
       return existing;
     }
     await this.record(owner, saved, "Ready for your review");
@@ -106,17 +108,13 @@ export class ActionService {
     decision: "approve" | "deny",
   ): Promise<ActionProposal> {
     const proposal = await this.db.get<ActionProposal>(owner, "actions", id);
-    if (!proposal) throw new AppError("Action not found", 404);
-    if (proposal.hash !== hash)
-      throw new AppError("This proposal changed. Open its latest review before deciding.", 409);
+    if (!proposal) throw new AppError("找不到这次操作", 404);
+    if (proposal.hash !== hash) throw new AppError("这次提案已变更，请打开最新的一份再决定。", 409);
     if (proposal.status !== "awaiting_review") return proposal;
     if (decision === "approve" && proposal.taskId) {
       const task = await this.db.get<{ status: string }>(owner, "tasks", proposal.taskId);
       if (!task || !["running", "waiting_approval"].includes(task.status))
-        throw new AppError(
-          "Resume the task before approving this action. Cancelled tasks cannot execute.",
-          409,
-        );
+        throw new AppError("批准前请先恢复任务；已取消的任务无法执行。", 409);
     }
     if (Date.parse(proposal.expiresAt) <= this.now()) {
       const expired = await this.db.compareAndSwap<ActionProposal>(
@@ -128,13 +126,13 @@ export class ActionService {
       );
       if (!expired) {
         const current = await this.db.get<ActionProposal>(owner, "actions", id);
-        if (!current) throw new AppError("Action not found", 404);
+        if (!current) throw new AppError("找不到这次操作", 404);
         return current;
       }
-      throw new AppError("This review expired. Create a fresh proposal.", 409);
+      throw new AppError("这次复核已过期，请重新准备一次提案。", 409);
     }
     if (decision === "approve" && !(await this.options.connected(owner)))
-      throw new AppError("Google is disconnected. Reconnect before approving this action.", 409);
+      throw new AppError("Google 未连接，批准这次操作前请重新连接。", 409);
     if (decision === "approve" && this.options.connection) {
       const connection = await this.options.connection(owner);
       if (
@@ -142,10 +140,7 @@ export class ActionService {
         connection.id !== proposal.connectionId ||
         connection.account !== proposal.account
       )
-        throw new AppError(
-          "Google account or connection changed. Prepare a new action for the connected account.",
-          409,
-        );
+        throw new AppError("Google 账号或连接已变更，请为当前账号重新准备操作。", 409);
     }
     const claimed = await this.db.claim<ActionProposal>(
       owner,
@@ -155,7 +150,7 @@ export class ActionService {
     );
     if (!claimed) {
       const current = await this.db.get<ActionProposal>(owner, "actions", id);
-      if (!current) throw new AppError("Action not found", 404);
+      if (!current) throw new AppError("找不到这次操作", 404);
       return current;
     }
     await this.record(

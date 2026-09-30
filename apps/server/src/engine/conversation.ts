@@ -2,22 +2,15 @@ import "../config.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { AbstractAgent } from "@ag-ui/client";
 import { type BaseEvent, EventType, type RunAgentInput } from "@ag-ui/core";
-import { defineTool } from "@copilotkit/runtime/v2";
 import { Observable } from "rxjs";
-import { z } from "zod";
-import {
-  createTaskSchema,
-  goalInputSchema,
-  monitorInputSchema,
-} from "../../../../packages/domain/src/agent.ts";
 import { computerTools } from "../computer-tools.ts";
-import { chatInstructions } from "./chat-prompt.ts";
-import { mcpTools } from "./mcp-tools.ts";
-import { chatTools } from "./chat-tools.ts";
-import { forAgUi } from "./tool-kit.ts";
 import type { Config } from "../config.ts";
+import { chatInstructions } from "./chat-prompt.ts";
+import { chatTools, lastUserText } from "./chat-tools.ts";
+import { mcpTools } from "./mcp-tools.ts";
 import type { AgentService } from "./service.ts";
 import { tanstackAgent } from "./tanstack-agent.ts";
+import { forAgUi } from "./tool-kit.ts";
 
 export class ConversationAgent extends AbstractAgent {
   constructor(
@@ -40,7 +33,11 @@ export class ConversationAgent extends AbstractAgent {
           threadId: input.threadId,
           runId: input.runId,
         });
-        void this.sample(typeof latest?.content === "string" ? latest.content : "", requestKey)
+        void this.sample(
+          typeof latest?.content === "string" ? latest.content : "",
+          requestKey,
+          input.threadId,
+        )
           .then(({ content, task }) => {
             const id = randomUUID();
             subscriber.next({
@@ -95,7 +92,9 @@ export class ConversationAgent extends AbstractAgent {
       `${requestKey}:${name}:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
     const browserAbort = new AbortController();
     const tools = [
-      ...forAgUi(computerTools(this.service.computer, this.service.files, this.owner, `chat:${requestKey}`)),
+      ...forAgUi(
+        computerTools(this.service.computer, this.service.files, this.owner, `chat:${requestKey}`),
+      ),
       ...forAgUi(mcpTools()),
       ...forAgUi(
         chatTools({
@@ -105,14 +104,15 @@ export class ConversationAgent extends AbstractAgent {
           requestKey,
           key,
           signal: browserAbort.signal,
+          // 跨语言兜底要用用户原话，所以按需从本轮输入里取（不把消息塞进工具构造参数）
+          userText: () => lastUserText(input.messages),
         }),
       ),
     ];
     const agent = tanstackAgent({
       model: this.config.model ?? "openai/unconfigured",
       maxSteps: 10,
-      stepLimitNote:
-        "我达到了本轮步数上限还没收尾。回复“继续”，我接着做。",
+      stepLimitNote: "我达到了本轮步数上限还没收尾。回复“继续”，我接着做。",
       tools,
       prompt: chatInstructions(),
     });
@@ -127,7 +127,7 @@ export class ConversationAgent extends AbstractAgent {
       };
     });
   }
-  private async sample(prompt: string, key: string) {
+  private async sample(prompt: string, key: string, threadId?: string) {
     if (/show.*calendar|what.*calendar|plan my day/i.test(prompt)) {
       const w = await this.service.workspace.snapshot(this.owner);
       return {
@@ -153,6 +153,7 @@ export class ConversationAgent extends AbstractAgent {
           kind: "document",
           prompt,
           title: "Complete the permission slip",
+          threadId,
           input: { messageId: mail.id },
         },
         key,
@@ -165,7 +166,7 @@ export class ConversationAgent extends AbstractAgent {
     }
     const task = await this.service.createTask(
       this.owner,
-      { kind: "agent", prompt: prompt || "Help with my next task" },
+      { kind: "agent", prompt: prompt || "Help with my next task", threadId },
       key,
     );
     return {

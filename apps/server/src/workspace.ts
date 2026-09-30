@@ -13,7 +13,6 @@ import { GoogleClient } from "../../../packages/integrations/src/google.ts";
 import { createSamplePdf } from "../../../packages/integrations/src/pdf.ts";
 import type { ActionService } from "./actions.ts";
 import { agentConfigured } from "./agent.ts";
-import { intelligenceConfigured } from "./config.ts";
 import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
@@ -99,7 +98,7 @@ export class WorkspaceService {
   }
   async thread(owner: string, id: string) {
     const connection = await this.connection(owner);
-    if (!connection) throw new AppError("Google is disconnected", 409);
+    if (!connection) throw new AppError("Google 未连接", 409);
     const mail =
       this.config.mode === "sample"
         ? (await this.db.list<Mail>(owner, "mail")).filter((m) => m.threadId === id)
@@ -108,12 +107,12 @@ export class WorkspaceService {
             await this.google(owner, connection.id).getThread(id),
             connection.id,
           );
-    if (!mail.length) throw new AppError("Mail thread not found", 404);
+    if (!mail.length) throw new AppError("找不到这个邮件会话", 404);
     return mail.sort((a, b) => a.date.localeCompare(b.date));
   }
   async searchMail(owner: string, query: string) {
     const connection = await this.connection(owner);
-    if (!connection) throw new AppError("Google is disconnected", 409);
+    if (!connection) throw new AppError("Google 未连接", 409);
     if (this.config.mode === "live")
       return this.cacheMail(
         owner,
@@ -264,7 +263,7 @@ export class WorkspaceService {
     const connected = await this.connected(owner);
     if (this.config.mode === "live" && connected) {
       const connection = await this.connection(owner);
-      if (!connection) throw new AppError("Google is disconnected", 409);
+      if (!connection) throw new AppError("Google 未连接", 409);
       const google = this.google(owner, connection.id);
       [mail, events] = await Promise.all([google.listMail(query), google.listEvents()]);
       mail = await this.cacheMail(owner, mail, connection.id);
@@ -384,18 +383,15 @@ export class WorkspaceService {
       return `Saved to local calendar · ${id}`;
     }
     const tokens = await this.googleAuth.tokens(owner);
-    if (!tokens) throw new AppError("Google is disconnected", 409);
+    if (!tokens) throw new AppError("Google 未连接", 409);
     const capability = input.kind === "email.send" ? "gmail.send" : "calendar.events";
     if (!tokens.scopes.includes(`https://www.googleapis.com/auth/${capability}`))
-      throw new AppError("Enable Google write access in Connections before approving", 403);
+      throw new AppError("批准前请在「连接」里开启 Google 写入权限", 403);
     if (tokens.connectionId !== connectionId)
-      throw new AppError("Google account or connection changed. Prepare a new action.", 409);
+      throw new AppError("Google 账号或连接已变更，请重新准备操作。", 409);
     const google = this.google(owner, connectionId);
     if ((input.kind === "calendar.update" || input.kind === "calendar.delete") && !targetVersion)
-      throw new AppError(
-        "This calendar review predates target-version checks. Prepare a new review.",
-        409,
-      );
+      throw new AppError("这次日历复核早于版本校验机制，请重新准备一次复核。", 409);
     if (input.kind === "email.send") {
       const attachments = await Promise.all(
         input.data.attachmentIds.map(async (id) => {
@@ -424,7 +420,7 @@ export class WorkspaceService {
   }
   async importAttachment(owner: string, reference: string): Promise<Artifact> {
     const connection = await this.connection(owner);
-    if (!connection) throw new AppError("Google is disconnected", 409);
+    if (!connection) throw new AppError("Google 未连接", 409);
     const cached = await this.db.get<{ artifactId: string; connectionId?: string }>(
       owner,
       "imports",
@@ -433,11 +429,10 @@ export class WorkspaceService {
     if (cached && cached.connectionId === connection.id)
       return this.files.signed(owner, await this.files.get(owner, cached.artifactId));
     const [messageId, attachmentId, filename] = reference.split(":");
-    if (!messageId || !attachmentId || !filename)
-      throw new AppError("Attachment reference is invalid");
+    if (!messageId || !attachmentId || !filename) throw new AppError("附件引用无效");
     const message = await this.db.get<Mail & { connectionId?: string }>(owner, "mail", messageId);
     if (!message?.attachments.includes(reference) || message.connectionId !== connection.id)
-      throw new AppError("Attachment not found. Refresh the current account's inbox.", 404);
+      throw new AppError("找不到这个附件，刷新当前账号的收件箱。", 404);
     const file = await this.files.import(
       owner,
       decodeURIComponent(filename),

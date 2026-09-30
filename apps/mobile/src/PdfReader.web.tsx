@@ -32,7 +32,7 @@ export default function PdfReader({ url, pageCount }: PdfReaderProps) {
         </View>
         <View style={[s.row, { gap: 8 }]}>
           <Button small icon={Minus} disabled={zoom <= 50} onPress={() => setZoom(zoom - 25)}>
-            Zoom out
+            缩小
           </Button>
           <Text style={s.small}>{zoom}%</Text>
           <Button small icon={Plus} disabled={zoom >= 200} onPress={() => setZoom(zoom + 25)}>
@@ -42,11 +42,11 @@ export default function PdfReader({ url, pageCount }: PdfReaderProps) {
       </View>
       <iframe
         key={`${page}:${zoom}`}
-        title="PDF document reader"
+        title="PDF 阅读器"
         src={`${url}#page=${page}&zoom=${zoom}`}
         style={{ height: 570, width: "100%", border: 0, borderRadius: 12, background: "#e7e9e3" }}
       />
-      <Text style={s.small}>Use the reader toolbar to download or print a copy.</Text>
+      <Text style={s.small}>用上方工具栏下载或打印。</Text>
     </View>
   );
 }

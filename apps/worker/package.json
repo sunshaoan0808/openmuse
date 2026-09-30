@@ -9,7 +9,7 @@
     "test:docker": "node tests/run-docker.mjs"
   },
   "dependencies": {
-    "playwright": "1.62.1"
+    "patchright": "^1.63.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

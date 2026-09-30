@@ -8,23 +8,20 @@ import { z } from "zod";
 import { emailDraftSchema, proposalSchema } from "../../../packages/domain/src/index.ts";
 import { ActionService } from "./actions.ts";
 import { agentConfigured, makeRuntime } from "./agent.ts";
-import { DurableAgentRunner } from "./engine/durable-runner.ts";
 import { createAuth } from "./auth.ts";
 import { BrowserService } from "./browser.ts";
 import { ComputerService, type DockerRunner } from "./computer.ts";
 import { computerRoutes } from "./computer-routes.ts";
-import {
-  assertApiDeploymentConfig,
-  type Config,
-  intelligenceConfigured,
-} from "./config.ts";
+import { assertApiDeploymentConfig, type Config, intelligenceConfigured } from "./config.ts";
 import type { Store } from "./db.ts";
+import { DurableAgentRunner } from "./engine/durable-runner.ts";
 import { agentRoutes } from "./engine/routes.ts";
 import { AgentService } from "./engine/service.ts";
 import { AppError } from "./errors.ts";
 import { Files } from "./files.ts";
 import { GoogleAuth } from "./google-auth.ts";
 import { backgroundFailure } from "./log.ts";
+import { SearchService } from "./search.ts";
 import { WorkspaceService } from "./workspace.ts";
 
 export async function createApp(
@@ -46,7 +43,8 @@ export async function createApp(
   });
   const browser = new BrowserService(db, config, auth, files);
   const computer = new ComputerService(db, config, options.docker);
-  const agent = new AgentService(db, config, workspace, files, actions, browser, computer);
+  const search = new SearchService(config, browser);
+  const agent = new AgentService(db, config, workspace, files, actions, browser, computer, search);
   const intelligence = intelligenceConfigured(config)
     ? new CopilotKitIntelligence({
         apiKey: config.intelligenceApiKey ?? "local-shim",
@@ -78,7 +76,7 @@ export async function createApp(
     "*",
     bodyLimit({
       maxSize: 12 * 1024 * 1024,
-      onError: (c) => c.json({ error: "Request is too large; PDFs must be 10 MB or smaller" }, 413),
+      onError: (c) => c.json({ error: "请求过大；PDF 需在 10 MB 以内" }, 413),
     }),
   );
   app.onError((error, c) => {
@@ -87,7 +85,7 @@ export async function createApp(
     if (error instanceof AppError) return c.json({ error: error.message }, error.status);
     if (error.name === "PdfError" || error.name === "RecurringEventError")
       return c.json({ error: error.message }, 422);
-    if (error instanceof SyntaxError) return c.json({ error: "Invalid request data" }, 400);
+    if (error instanceof SyntaxError) return c.json({ error: "请求数据无效" }, 400);
     // Provider and document errors are useful, but raw stack traces and token-bearing responses are not.
     console.error(`[OpenMuse] ${error.name}`);
     return c.json(
@@ -115,8 +113,7 @@ export async function createApp(
       loginWindow = Date.now();
       loginAttempts = 0;
     }
-    if (++loginAttempts > 30)
-      throw new AppError("Too many sign-in attempts. Try again in a minute.", 429);
+    if (++loginAttempts > 30) throw new AppError("登录尝试过于频繁，请一分钟后再试。", 429);
     const body = z.object({ accessKey: z.string().optional() }).parse(await c.req.json());
     const session = await auth.session(body.accessKey);
     await workspace.ensureSample("local-user", actions);
@@ -129,7 +126,7 @@ export async function createApp(
       return c.html("<h1>Google connection cancelled</h1><p>You can return to OpenMuse.</p>", 400);
     const state = c.req.query("state"),
       code = c.req.query("code");
-    if (!state || !code) throw new AppError("Google callback is incomplete");
+    if (!state || !code) throw new AppError("Google 回调不完整");
     await google.callback(state, code);
     return c.html(
       "<h1>Google is connected</h1><p>Return to OpenMuse and refresh your workspace.</p>",
@@ -178,7 +175,7 @@ export async function createApp(
       (Date.parse(query.timeMax) <= Date.parse(query.timeMin) ||
         Date.parse(query.timeMax) - Date.parse(query.timeMin) > 366 * 86400000)
     )
-      throw new AppError("Choose a calendar range between one moment and 366 days", 422);
+      throw new AppError("日历范围请选 1 个时刻到 366 天之间", 422);
     return c.json(await workspace.events(c.get("owner"), query));
   });
   app.get("/api/mail/threads/:id", async (c) =>
@@ -204,7 +201,7 @@ export async function createApp(
     const existing = body.id
       ? await db.get<{ createdAt: string }>(c.get("owner"), "drafts", body.id)
       : null;
-    if (body.id && !existing) throw new AppError("Draft not found", 404);
+    if (body.id && !existing) throw new AppError("找不到这份草稿", 404);
     return c.json(
       await db.put(c.get("owner"), "drafts", {
         ...body,
@@ -224,7 +221,7 @@ export async function createApp(
       existing: false,
     });
     const main = await db.get<{ threadId: string }>(owner, "conversation-settings", "main");
-    if (!main) throw new AppError("Main conversation could not be loaded", 503);
+    if (!main) throw new AppError("主会话加载失败", 503);
     try {
       await intelligence.getOrCreateThread({
         threadId: main.threadId,
@@ -232,10 +229,7 @@ export async function createApp(
         agentId: "default",
       });
     } catch {
-      throw new AppError(
-        "Main conversation is unavailable. Check the Rich Threads connection and try again.",
-        502,
-      );
+      throw new AppError("主会话不可用，检查多会话线程连接后重试。", 502);
     }
     return c.json({ threadId: main.threadId, existing: true });
   });
@@ -324,8 +318,17 @@ export async function createApp(
     c.json(await browser.imports(c.get("owner"), c.req.param("id"))),
   );
   app.get("/api/browsers/:id/preview", async (c) => {
-    const response = await browser.preview(c.get("owner"), c.req.param("id"));
-    c.header("Content-Type", "image/png");
+    const quality = Number(c.req.query("quality") ?? "");
+    const { response, session } = await browser.preview(
+      c.get("owner"),
+      c.req.param("id"),
+      Number.isFinite(quality) && quality >= 20 && quality <= 90 ? { quality } : {},
+    );
+    c.header("Content-Type", response.headers.get("content-type") ?? "image/png");
+    // 控制台每帧都要显示"当前在哪"，跟截图同一响应带回去，省一次往返。
+    // HTTP 头只能是 ASCII，标题要 encodeURIComponent（控制台那边 decode）。
+    c.header("x-page-url", session.url);
+    c.header("x-page-title", encodeURIComponent(session.title));
     return c.body(await response.arrayBuffer());
   });
   app.get("/api/browsers/:id/console", async (c) => {
@@ -344,13 +347,11 @@ export async function createApp(
   // THREAD_NOT_FOUND，用户看到的就是"发了消息没有任何回复"。这里先 get-or-create 建好平台
   // 线程再交给运行时。已建过的记在内存里，避免每个请求都多打一次平台。
   const knownThreads = new Set<string>();
-  const THREAD_ID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  const THREAD_ID_RE =
+    /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
   app.all("/api/copilotkit/*", async (c) => {
     if (!agentConfigured(config))
-      throw new AppError(
-        "Configure a model and provider API key, or a valid AG-UI endpoint, to start chat",
-        503,
-      );
+      throw new AppError("要开始聊天，请配置模型与供应商 API key，或一个有效的 AG-UI 端点", 503);
     try {
       let threadId: string | undefined;
       if (c.req.method !== "GET" && c.req.method !== "HEAD") {

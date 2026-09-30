@@ -7,9 +7,23 @@ import {
   useRenderTool,
   useRenderToolCall,
 } from "@copilotkit/react-native/headless";
-import { ArrowDown, ArrowUp, FileText, RotateCcw, Square, X } from "lucide-react-native";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
+  ArrowDown,
+  ArrowUp,
+  Camera,
+  Check,
+  FileText,
+  ImagePlus,
+  Mic,
+  RotateCcw,
+  ShieldCheck,
+  Square,
+  X,
+} from "lucide-react-native";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  ActivityIndicator,
+  Animated,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -19,21 +33,88 @@ import {
   View,
 } from "react-native";
 import { z } from "zod";
+import type { ActionProposal } from "../../../packages/domain/src";
 import { ArtifactCard } from "./agent-ui";
 import { useAgentWorkspace } from "./agent-workspace";
 import { AssistantResponse } from "./assistant-response";
 import { BackgroundUpdates } from "./background-updates";
+import { BrowserActionCard } from "./browser-action-card";
 import { BrowserRunContext, BrowserToolCard } from "./browser-tool-card";
 import { BrowserThreadCard } from "./computer";
 import { ConversationQueue, type QueuedMessage } from "./conversation-queue";
 import { runConversationTurn } from "./conversation-run";
+import { hapticPress, hapticSuccess, hapticTap, hapticWarn } from "./haptics";
+import {
+  captureImage,
+  type ImageSource,
+  imageUploadMessage,
+  uploadImage,
+} from "./image-attachment";
+import { actionKindLabel, proposalStatusLabel } from "./labels";
 import { MailToolCard } from "./mail-tool-card";
+import { type HeroRect, usePressScale, usePulse } from "./motion";
+import { SearchToolCard } from "./search-tool-card";
+import { useSpeechInput } from "./speech";
 import { FileThreadCard, TaskThreadCard } from "./thread-artifacts";
 import { type Selection, useMuseThread } from "./threads";
-import { Button, Card, CheckRow, colors, ErrorNotice, s } from "./ui";
+import { Button, Card, CheckRow, colors, ErrorNotice, MeasureCard, RiseIn, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 const displayParameters = z.record(z.string(), z.unknown());
+
+/** 按压缩放交给 spring（回弹比写死的 scale 更像"实物"）。 */
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+/** 智能体思考中的三个小圆点：真实循环跳动，而不是静态的三种透明度。 */
+function ThinkingDots() {
+  const first = usePulse({ duration: 760, delay: 0 });
+  const second = usePulse({ duration: 760, delay: 130 });
+  const third = usePulse({ duration: 760, delay: 260 });
+  const dots = [
+    { id: "dot-1", value: first },
+    { id: "dot-2", value: second },
+    { id: "dot-3", value: third },
+  ];
+  return (
+    <>
+      {dots.map((dot) => (
+        <Animated.View
+          key={dot.id}
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: 4,
+            backgroundColor: colors.muted,
+            opacity: dot.value.interpolate({ inputRange: [0, 1], outputRange: [0.32, 0.95] }),
+            transform: [
+              { translateY: dot.value.interpolate({ inputRange: [0, 1], outputRange: [0, -3.5] }) },
+            ],
+          }}
+        />
+      ))}
+    </>
+  );
+}
+
+/** 聆听中扩散的光圈：让"正在听"这件事在余光里也能看见。 */
+function MicPulse() {
+  const value = usePulse({ duration: 1100 });
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        width: 44,
+        height: 44,
+        borderRadius: 24,
+        backgroundColor: colors.danger,
+        opacity: value.interpolate({ inputRange: [0, 1], outputRange: [0.42, 0] }),
+        transform: [{ scale: value.interpolate({ inputRange: [0, 1], outputRange: [1, 1.5] }) }],
+      }}
+    />
+  );
+}
+
 export function WorkspaceTools() {
   const { workspace, section } = useWorkspace();
   useAgentContext({
@@ -63,6 +144,51 @@ export function WorkspaceTools() {
     parameters: displayParameters,
     render: ({ args, result, status }) => (
       <BrowserToolCard url={args.url} result={result} loading={status !== "complete"} />
+    ),
+  });
+  useRenderTool({
+    name: "page_elements",
+    description: "看智能体列出的页面元素",
+    parameters: displayParameters,
+    render: ({ args, result, status }) => (
+      <BrowserActionCard
+        kind="elements"
+        args={args}
+        result={result}
+        loading={status !== "complete"}
+      />
+    ),
+  });
+  useRenderTool({
+    name: "page_act",
+    description: "看智能体在页面上做了什么",
+    parameters: displayParameters,
+    render: ({ args, result, status }) => (
+      <BrowserActionCard kind="act" args={args} result={result} loading={status !== "complete"} />
+    ),
+  });
+  useRenderTool({
+    name: "look_page",
+    description: "看智能体看到的页面画面",
+    parameters: displayParameters,
+    render: ({ args, result, status }) => (
+      <BrowserActionCard kind="look" args={args} result={result} loading={status !== "complete"} />
+    ),
+  });
+  useRenderTool({
+    name: "search_web",
+    description: "看智能体搜到了什么",
+    parameters: displayParameters,
+    render: ({ args, result, status }) => (
+      <SearchToolCard query={args.query} result={result} loading={status !== "complete"} />
+    ),
+  });
+  useRenderTool({
+    name: "read_pages",
+    description: "看智能体读了哪些页面",
+    parameters: displayParameters,
+    render: ({ result, status }) => (
+      <SearchToolCard result={result} loading={status !== "complete"} />
     ),
   });
   useRenderTool({
@@ -143,19 +269,13 @@ function ServerToolCard({
       {parsed.success && parsed.data.error ? (
         <ErrorNotice error={parsed.data.error} />
       ) : (
-        <Text style={s.muted}>
-          {loading ? "正在等待服务器。" : "打开工作区查看已保存的结果。"}
-        </Text>
+        <Text style={s.muted}>{loading ? "正在等待服务器。" : "打开工作区查看已保存的结果。"}</Text>
       )}
       <Button
         small
         onPress={() =>
           navigate(
-            name === "目标" || name === "跟踪中"
-              ? "goals"
-              : name === "记忆"
-                ? "apps"
-                : "activity",
+            name === "目标" || name === "跟踪中" ? "goals" : name === "记忆" ? "apps" : "activity",
           )
         }
       >
@@ -164,6 +284,83 @@ function ServerToolCard({
     </Card>
   );
 }
+/**
+ * 聊天流里的待复核卡：智能体提出操作后，把"要你点头的那件事"直接摆在这里，
+ * 一个主动作（复核）→ 打开复核面板看具体内容。
+ */
+function ApprovalCard({
+  action,
+  onOpen,
+}: {
+  action: ActionProposal;
+  onOpen: (rect?: HeroRect) => void;
+}) {
+  // 整张卡可点（比只点按钮好按），按钮复用同一段矩形做过渡；没量到就不飞，照样能开
+  const rect = useRef<HeroRect | null>(null);
+  return (
+    <MeasureCard
+      label={`复核：${action.title}`}
+      style={{ maxWidth: 460 }}
+      onPress={(box) => {
+        rect.current = box;
+        onOpen(box);
+      }}
+    >
+      <Card style={{ backgroundColor: colors.lavender, gap: 12 }}>
+        <View style={[s.row, { gap: 13 }]}>
+          <View style={[s.iconBox, { backgroundColor: "#FFF" }]}>
+            <ShieldCheck size={19} color={colors.text} />
+          </View>
+          <View style={{ flex: 1, gap: 4 }}>
+            <Text style={s.heading}>{action.title}</Text>
+            <Text style={s.small}>
+              {actionKindLabel(action.kind)}
+              {action.account ? ` · ${action.account}` : ""} · 确认前不会发出去
+            </Text>
+          </View>
+        </View>
+        <Button
+          primary
+          small
+          style={{ alignSelf: "flex-start" }}
+          onPress={() => onOpen(rect.current ?? undefined)}
+        >
+          复核
+        </Button>
+      </Card>
+    </MeasureCard>
+  );
+}
+
+/** 复核回执：本次会话里刚处理完的操作，在聊天流里留一句可点开的结果。 */
+function ReceiptRow({ action, onPress }: { action: ActionProposal; onPress: () => void }) {
+  const done = action.status === "succeeded";
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={[s.row, { gap: 9, alignSelf: "flex-start" }]}
+    >
+      <View
+        style={[
+          s.iconBox,
+          {
+            width: 26,
+            height: 26,
+            borderRadius: 9,
+            backgroundColor: done ? colors.green : colors.canvas,
+          },
+        ]}
+      >
+        <Check size={13} color={colors.text} />
+      </View>
+      <Text style={[s.small, { flex: 1 }]} numberOfLines={1}>
+        {proposalStatusLabel(action.status)} · {action.title}
+      </Text>
+    </Pressable>
+  );
+}
+
 export function ChatScreen({
   prompt,
   thread,
@@ -173,7 +370,7 @@ export function ChatScreen({
   thread?: Selection;
   active?: boolean;
 }) {
-  const { api, workspace: w, refresh, navigate } = useWorkspace();
+  const { api, open, workspace: w, refresh, navigate } = useWorkspace();
   const { data: agentWorkspace, refresh: refreshAgent } = useAgentWorkspace();
   const { enabled: richThreads, mainId, claimPrompt } = useMuseThread();
   const selection = thread || { id: "local", existing: false };
@@ -182,6 +379,31 @@ export function ChatScreen({
   const { agent, isReady } = useAgent({ agentId, runtimeAgentId: "default", threadId });
   const { copilotkit } = useCopilotKit();
   const renderToolCall = useRenderToolCall();
+  // 属于这条会话的待办：标了 threadId 的只在本会话显示；
+  // 没标的（从交办、灵感、目标等非聊天入口提出的）留在主会话，避免漏掉。
+  const threadApprovals = useMemo(
+    () =>
+      w.actions
+        .filter(
+          (action) =>
+            action.status === "awaiting_review" &&
+            (action.threadId
+              ? action.threadId === threadId
+              : !richThreads || selection.id === mainId),
+        )
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [w.actions, threadId, richThreads, mainId, selection.id],
+  );
+  useEffect(() => {
+    const previous = seenPending.current;
+    seenPending.current = new Set(threadApprovals.map((action) => action.id));
+    if (!previous) return;
+    const decided = w.actions.filter(
+      (action) => previous.has(action.id) && action.status !== "awaiting_review",
+    );
+    if (!decided.length) return;
+    setReceipts((current) => [...decided, ...current].slice(0, 2));
+  }, [threadApprovals, w.actions]);
   const [draft, setDraft] = useState("");
   const [focused, setFocused] = useState(false);
   const [inputHeight, setInputHeight] = useState(44);
@@ -191,6 +413,14 @@ export function ChatScreen({
   const [loaded, setLoaded] = useState(false);
   const [picking, setPicking] = useState(false);
   const [attachments, setAttachments] = useState<string[]>([]);
+  // 复核回执：只认"本次会话里从待复核变成已处理"的那些，首帧只记基线不误报
+  const [receipts, setReceipts] = useState<ActionProposal[]>([]);
+  const [allApprovals, setAllApprovals] = useState(false);
+  const seenPending = useRef<Set<string> | null>(null);
+  // 图片输入（拍照 / 相册）与语音输入的状态
+  const [imageMenu, setImageMenu] = useState(false);
+  const [imageBusy, setImageBusy] = useState<ImageSource | "">("");
+  const [attachError, setAttachError] = useState("");
   const list = useRef<ScrollView>(null);
   const [queue] = useState(() => new ConversationQueue());
   const outbox = useSyncExternalStore(queue.subscribe, queue.getSnapshot, queue.getSnapshot);
@@ -200,6 +430,17 @@ export function ChatScreen({
   const [saveError, setSaveError] = useState("");
   const [historyError, setHistoryError] = useState("");
   const [historyAttempt, setHistoryAttempt] = useState(0);
+  // 语音输入：识别中的文字只回填到草稿里，不自动发送；再点一次麦克风停止。
+  const speechBase = useRef("");
+  const speech = useSpeechInput({
+    onTranscript: (text) => setDraft(speechBase.current ? `${speechBase.current} ${text}` : text),
+  });
+  // 发送 / 麦克风的弹簧按压（替代写死的 scale）；麦克风聆听时还有一圈扩散光
+  const sendPress = usePressScale(0.93);
+  const micPress = usePressScale(0.92);
+  // 历史消息进场不逐个播动画，只有"新来的"才淡入上浮
+  const animatedMessages = useRef(new Set<string>());
+  const hydratedMessages = useRef(false);
   useEffect(() => {
     if (!isReady) return;
     let active = true;
@@ -306,6 +547,7 @@ export function ChatScreen({
     return () => subscription.unsubscribe();
   }, [copilotkit, agentId, queue]);
   async function stop() {
+    hapticTap();
     queue.pause();
     try {
       await copilotkit.stopAgent({ agent });
@@ -316,6 +558,7 @@ export function ChatScreen({
   function send() {
     const text = draft.trim();
     if (!text || !isReady || !loaded) return;
+    hapticPress();
     // A new submission can continue after Stop; held follow-ups still need explicit resume.
     if (!busy && !agent.isRunning && !saveError && !queue.getSnapshot().pending.length)
       queue.resume();
@@ -332,12 +575,52 @@ export function ChatScreen({
     setAttachments([]);
     setPicking(false);
   }
+  /** 拍照 / 相册 → 上传到已有的文件接口 → 把服务端返回的文件名发给智能体（read_image 靠文件名读图）。 */
+  async function attachImage(source: ImageSource) {
+    setImageMenu(false);
+    setAttachError("");
+    setImageBusy(source);
+    try {
+      const asset = await captureImage(source);
+      if (!asset) return;
+      const artifact = await uploadImage(api, asset);
+      await refresh().catch(() => {});
+      hapticSuccess();
+      if (!isReady || !loaded) {
+        setAttachError(`图片「${artifact.name}」已上传，但会话还没准备好，请稍后再发一次消息。`);
+        return;
+      }
+      enqueue(imageUploadMessage(artifact));
+    } catch (e) {
+      hapticWarn();
+      setAttachError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setImageBusy("");
+    }
+  }
+  /** 开始语音识别前记下已输入的草稿，识别结果接在后面。 */
+  function toggleSpeech() {
+    setAttachError("");
+    if (speech.listening) {
+      hapticTap();
+      speech.toggle();
+      return;
+    }
+    hapticPress();
+    speechBase.current = draft.trim();
+    speech.toggle();
+  }
   const messages = agent.messages || [];
   const latestUserIndex = messages.reduce(
     (last, message, index) => (message.role === "user" ? index : last),
     -1,
   );
   const visible = messages.filter((m) => m.role === "user" || m.role === "assistant");
+  // 第一次拿到消息时只登记、不播动画（历史记录一次刷出几十条气泡并不好看）
+  if (visible.length && !hydratedMessages.current) {
+    for (const message of visible) animatedMessages.current.add(message.id);
+    hydratedMessages.current = true;
+  }
   const replying = busy || agent.isRunning;
   return (
     <View style={{ flex: 1 }}>
@@ -360,7 +643,9 @@ export function ChatScreen({
         {!!historyError && (
           <>
             <ErrorNotice error={historyError} />
-            <Button onPress={() => setHistoryAttempt((attempt) => attempt + 1)}>重试加载对话</Button>
+            <Button onPress={() => setHistoryAttempt((attempt) => attempt + 1)}>
+              重试加载对话
+            </Button>
           </>
         )}
         {!visible.length ? (
@@ -382,8 +667,12 @@ export function ChatScreen({
                 textAlign: "center",
                 maxWidth: 350,
               }}
-            >有人搭把手，生活多出很多空间。</Text>
-            <Text style={[s.muted, { maxWidth: 320, textAlign: "center", lineHeight: 23 }]}>说说你在想什么。我可以做计划、操作你的应用，也能用我的电脑帮忙。</Text>
+            >
+              有人搭把手，生活多出很多空间。
+            </Text>
+            <Text style={[s.muted, { maxWidth: 320, textAlign: "center", lineHeight: 23 }]}>
+              说说你在想什么。我可以做计划、操作你的应用，也能用我的电脑帮忙。
+            </Text>
             <View style={{ width: "100%", maxWidth: 360, marginTop: 14, gap: 8 }}>
               {[
                 {
@@ -407,9 +696,12 @@ export function ChatScreen({
             const user = message.role === "user";
             const text = typeof message.content === "string" ? message.content : "";
             const toolCalls = "toolCalls" in message ? message.toolCalls || [] : [];
+            const fresh = !animatedMessages.current.has(message.id);
+            animatedMessages.current.add(message.id);
             return (
-              <View
+              <RiseIn
                 key={message.id}
+                enabled={fresh}
                 style={{
                   alignSelf: user ? "flex-end" : "flex-start",
                   maxWidth: user ? "85%" : "95%",
@@ -454,9 +746,53 @@ export function ChatScreen({
                     );
                   })}
                 </BrowserRunContext>
-              </View>
+              </RiseIn>
             );
           })
+        )}
+        {!!(threadApprovals.length || receipts.length) && (
+          <View style={{ gap: 12 }}>
+            {(allApprovals ? threadApprovals : threadApprovals.slice(0, 2)).map((action) => (
+              <RiseIn key={action.id}>
+                <ApprovalCard
+                  action={action}
+                  onOpen={(rect) =>
+                    open({
+                      type: "review",
+                      action,
+                      ...(rect
+                        ? {
+                            hero: {
+                              rect,
+                              title: action.title,
+                              subtitle: actionKindLabel(action.kind),
+                              icon: ShieldCheck,
+                              tint: colors.lavender,
+                            },
+                          }
+                        : {}),
+                    })
+                  }
+                />
+              </RiseIn>
+            ))}
+            {threadApprovals.length > 2 && (
+              <Button
+                small
+                style={{ alignSelf: "flex-start" }}
+                onPress={() => setAllApprovals(!allApprovals)}
+              >
+                {allApprovals ? "收起" : `展开全部 ${threadApprovals.length} 件`}
+              </Button>
+            )}
+            {receipts.map((action) => (
+              <ReceiptRow
+                key={action.id}
+                action={action}
+                onPress={() => open({ type: "review", action })}
+              />
+            ))}
+          </View>
         )}
         {!richThreads && (
           <>
@@ -518,18 +854,7 @@ export function ChatScreen({
               },
             ]}
           >
-            {[0.4, 0.75, 0.5].map((opacity) => (
-              <View
-                key={opacity}
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor: colors.muted,
-                  opacity,
-                }}
-              />
-            ))}
+            <ThinkingDots />
           </View>
         )}
         <ErrorNotice error={error} />
@@ -545,7 +870,9 @@ export function ChatScreen({
                 })
                 .catch((e) => setError(e instanceof Error ? e.message : String(e)));
             }}
-          >重试回复</Button>
+          >
+            重试回复
+          </Button>
         )}
       </ScrollView>
       {awayFromLatest && (
@@ -558,12 +885,13 @@ export function ChatScreen({
             setAwayFromLatest(false);
             list.current?.scrollToEnd({ animated: true });
           }}
-        >最新消息</Button>
+        >
+          最新消息
+        </Button>
       )}
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ErrorNotice error={saveError} />
+        <ErrorNotice error={attachError} />
         {!!saveError && (
           <Button
             small
@@ -571,12 +899,14 @@ export function ChatScreen({
             onPress={() => {
               void saveHistory().catch((e) => setSaveError(String(e)));
             }}
-          >重试保存对话</Button>
+          >
+            重试保存对话
+          </Button>
         )}
         {!!outbox.pending.length && (
           <View style={{ padding: 12, gap: 6 }}>
             <Text style={s.small}>
-              {outbox.paused ? "消息已暂缓" : "接下来"} · Keep the app open until sent
+              {outbox.paused ? "消息已暂缓" : "接下来"} · 发送前请保持应用在前台
             </Text>
             {outbox.pending.map((message) => (
               <View key={message.id} style={[s.row, { gap: 8 }]}>
@@ -602,39 +932,84 @@ export function ChatScreen({
                   queue.resume();
                   flush();
                 }}
-              >发送排队中的消息</Button>
+              >
+                发送排队中的消息
+              </Button>
             )}
           </View>
         )}
         {picking && (
-          <Card style={{ marginBottom: 12, padding: 15 }}>
-            <Text style={s.heading}>添加文档</Text>
-            <ScrollView style={{ maxHeight: 230 }} keyboardShouldPersistTaps="handled">
-              {w.files.length ? (
-                w.files.map((f) => (
-                  <CheckRow
-                    key={f.id}
-                    checked={attachments.includes(f.id)}
-                    label={f.name}
-                    onPress={() =>
-                      setAttachments(
-                        attachments.includes(f.id)
-                          ? attachments.filter((id) => id !== f.id)
-                          : [...attachments, f.id],
-                      )
-                    }
-                  />
-                ))
-              ) : (
-                <Text style={s.muted}>在「文件」里导入 PDF，即可在对话中使用。</Text>
-              )}
-            </ScrollView>
-            <Button
-              small
-              onPress={() => setPicking(false)}
-              style={{ alignSelf: "flex-end", marginTop: 8 }}
-            >完成</Button>
-          </Card>
+          <RiseIn style={{ marginBottom: 12 }}>
+            <Card style={{ padding: 15 }}>
+              <Text style={s.heading}>添加文档</Text>
+              <ScrollView style={{ maxHeight: 230 }} keyboardShouldPersistTaps="handled">
+                {w.files.length ? (
+                  w.files.map((f) => (
+                    <CheckRow
+                      key={f.id}
+                      checked={attachments.includes(f.id)}
+                      label={f.name}
+                      onPress={() =>
+                        setAttachments(
+                          attachments.includes(f.id)
+                            ? attachments.filter((id) => id !== f.id)
+                            : [...attachments, f.id],
+                        )
+                      }
+                    />
+                  ))
+                ) : (
+                  <Text style={s.muted}>在「文件」里导入 PDF，即可在对话中使用。</Text>
+                )}
+              </ScrollView>
+              <Button
+                small
+                onPress={() => setPicking(false)}
+                style={{ alignSelf: "flex-end", marginTop: 8 }}
+              >
+                完成
+              </Button>
+            </Card>
+          </RiseIn>
+        )}
+        {imageMenu && (
+          <RiseIn style={{ marginBottom: 12 }}>
+            <Card style={{ padding: 15, gap: 10 }}>
+              <Text style={s.heading}>添加图片</Text>
+              <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
+                <Button
+                  small
+                  icon={Camera}
+                  disabled={!!imageBusy}
+                  busy={imageBusy === "camera"}
+                  onPress={() => void attachImage("camera")}
+                >
+                  拍照
+                </Button>
+                <Button
+                  small
+                  icon={ImagePlus}
+                  disabled={!!imageBusy}
+                  busy={imageBusy === "library"}
+                  onPress={() => void attachImage("library")}
+                >
+                  从相册选择
+                </Button>
+              </View>
+              <Text style={s.small}>图片会存进你的工作区，并把文件名交给智能体识别。</Text>
+            </Card>
+          </RiseIn>
+        )}
+        {!!speech.status && (
+          <RiseIn style={[s.row, { gap: 8, paddingHorizontal: 14, paddingBottom: 8 }]}>
+            {speech.listening && <ActivityIndicator size="small" color={colors.blueDark} />}
+            <Text style={[s.small, { flex: 1 }]}>{speech.status}</Text>
+            {speech.listening && (
+              <Button small onPress={toggleSpeech}>
+                停止
+              </Button>
+            )}
+          </RiseIn>
         )}
         <View
           style={{
@@ -703,6 +1078,27 @@ export function ChatScreen({
                 +
               </Text>
             </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="添加图片"
+              accessibilityState={{ expanded: imageMenu, disabled: !!imageBusy }}
+              disabled={!!imageBusy}
+              onPress={() => {
+                setImageMenu(!imageMenu);
+                setPicking(false);
+              }}
+              style={({ pressed }) => ({
+                width: 44,
+                height: 44,
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: 24,
+                backgroundColor: imageMenu || pressed ? colors.sky : "transparent",
+                opacity: imageBusy ? 0.5 : 1,
+              })}
+            >
+              <ImagePlus size={21} strokeWidth={1.7} color={colors.text} />
+            </Pressable>
             <TextInput
               accessibilityLabel="给 OpenMuse 发消息"
               value={draft}
@@ -751,20 +1147,44 @@ export function ChatScreen({
                   : undefined
               }
             />
-            <Pressable
+            <AnimatedPressable
+              accessibilityRole="button"
+              accessibilityLabel={speech.listening ? "停止语音输入" : "语音输入"}
+              accessibilityState={{ selected: speech.listening, disabled: !loaded || !isReady }}
+              disabled={!loaded || !isReady}
+              onPressIn={micPress.onPressIn}
+              onPressOut={micPress.onPressOut}
+              onPress={toggleSpeech}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 24,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: speech.listening ? colors.danger : "transparent",
+                opacity: !loaded || !isReady ? 0.4 : 1,
+                transform: [{ scale: micPress.scale }],
+              }}
+            >
+              {speech.listening && <MicPulse />}
+              <Mic size={21} strokeWidth={1.8} color={speech.listening ? "#FFF" : colors.text} />
+            </AnimatedPressable>
+            <AnimatedPressable
               accessibilityRole="button"
               accessibilityLabel={replying ? "停止回复" : "发送消息"}
               disabled={!replying && (!draft.trim() || !loaded || !isReady)}
+              onPressIn={sendPress.onPressIn}
+              onPressOut={sendPress.onPressOut}
               onPress={replying ? () => void stop() : send}
-              style={({ pressed }) => ({
+              style={{
                 width: 44,
                 height: 44,
                 borderRadius: 24,
                 backgroundColor: replying || draft.trim() ? colors.blue : "#F3F5F6",
                 alignItems: "center",
                 justifyContent: "center",
-                transform: [{ scale: pressed ? 0.94 : 1 }],
-              })}
+                transform: [{ scale: sendPress.scale }],
+              }}
             >
               {replying ? (
                 <Square size={18} fill={colors.text} strokeWidth={0} />
@@ -775,7 +1195,7 @@ export function ChatScreen({
                   color={draft.trim() ? colors.text : "#9CB5C5"}
                 />
               )}
-            </Pressable>
+            </AnimatedPressable>
           </View>
         </View>
       </KeyboardAvoidingView>

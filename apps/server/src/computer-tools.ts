@@ -1,11 +1,11 @@
 import { z } from "zod";
-import type { NeutralTool } from "./engine/tool-kit.ts";
 import {
   type ComputerService,
   computerCommandSchema,
   computerPathSchema,
   computerWriteSchema,
 } from "./computer.ts";
+import type { NeutralTool } from "./engine/tool-kit.ts";
 import type { Files } from "./files.ts";
 
 export const computerInstructions =

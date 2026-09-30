@@ -23,7 +23,6 @@ import {
   View,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
-import { useAndroidKeyboardInset } from "./src/use-android-keyboard-inset";
 import type { Section, Workspace } from "../../packages/domain/src";
 import {
   AgentActivityScreen,
@@ -38,9 +37,11 @@ import { ChatScreen, WorkspaceTools } from "./src/chat";
 import { ComputerEntry } from "./src/computer";
 import { ComputerDraftProvider } from "./src/computer-drafts";
 import { Details } from "./src/details";
+import { hapticTap } from "./src/haptics";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
 import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from "./src/ui";
+import { useAndroidKeyboardInset } from "./src/use-android-keyboard-inset";
 import { type Detail, useWorkspace, WorkspaceContext } from "./src/workspace";
 
 const nav: { id: Section; label: string; icon: LucideIcon }[] = [
@@ -100,56 +101,63 @@ export default function App() {
       <StatusBar style="dark" />
       <View style={{ flex: 1, paddingBottom: keyboardInset }}>
         {token ? (
-        <CopilotKitProvider
-          runtimeUrl={`${server}/api/copilotkit`}
-          headers={{ Authorization: `Bearer ${token}` }}
-        >
-          <WorkspaceApp token={token} />
-        </CopilotKitProvider>
-      ) : (
-        <SafeAreaView
-          style={{
-            flex: 1,
-            backgroundColor: colors.canvas,
-            justifyContent: "center",
-            alignItems: "center",
-            padding: 24,
-          }}
-        >
-          <View style={{ width: "100%", maxWidth: 420, gap: 22, alignItems: "center" }}>
-            <Mascot size={72} />
-            <Text
-              style={{ fontSize: 32, color: colors.text, letterSpacing: -1, fontWeight: "500" }}
-            >欢迎使用 OpenMuse。</Text>
-            <Text style={[s.muted, { textAlign: "center" }]}>给你的一天留点空间。</Text>
-            {busy ? (
-              <ActivityIndicator color={colors.blueDark} />
-            ) : (
-              <Card style={{ width: "100%" }}>
-                <ErrorNotice error={error} />
-                <Field
-                  label="服务器地址"
-                  value={server}
-                  onChangeText={setServer}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="url"
-                  placeholder={defaultApiUrl()}
-                />
-                <Field
-                  label="工作区访问密钥"
-                  value={accessKey}
-                  onChangeText={setAccessKey}
-                  secureTextEntry
-                  placeholder="实时工作区必填"
-                />
-                <Button primary onPress={() => void connect(accessKey || undefined, server)}>打开工作区</Button>
-                <Text style={[s.small, { marginTop: 15 }]}>填你的 OpenMuse 服务器地址（例如 http://10.7.0.6:8787）。它会记在这台设备上。本地工作区无需密钥。</Text>
-              </Card>
-            )}
-          </View>
-        </SafeAreaView>
-      )}
+          <CopilotKitProvider
+            runtimeUrl={`${server}/api/copilotkit`}
+            headers={{ Authorization: `Bearer ${token}` }}
+          >
+            <WorkspaceApp token={token} />
+          </CopilotKitProvider>
+        ) : (
+          <SafeAreaView
+            style={{
+              flex: 1,
+              backgroundColor: colors.canvas,
+              justifyContent: "center",
+              alignItems: "center",
+              padding: 24,
+            }}
+          >
+            <View style={{ width: "100%", maxWidth: 420, gap: 22, alignItems: "center" }}>
+              <Mascot size={72} />
+              <Text
+                style={{ fontSize: 32, color: colors.text, letterSpacing: -1, fontWeight: "500" }}
+              >
+                欢迎使用 OpenMuse。
+              </Text>
+              <Text style={[s.muted, { textAlign: "center" }]}>给你的一天留点空间。</Text>
+              {busy ? (
+                <ActivityIndicator color={colors.blueDark} />
+              ) : (
+                <Card style={{ width: "100%" }}>
+                  <ErrorNotice error={error} />
+                  <Field
+                    label="服务器地址"
+                    value={server}
+                    onChangeText={setServer}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                    placeholder={defaultApiUrl()}
+                  />
+                  <Field
+                    label="工作区访问密钥"
+                    value={accessKey}
+                    onChangeText={setAccessKey}
+                    secureTextEntry
+                    placeholder="实时工作区必填"
+                  />
+                  <Button primary onPress={() => void connect(accessKey || undefined, server)}>
+                    打开工作区
+                  </Button>
+                  <Text style={[s.small, { marginTop: 15 }]}>
+                    填你的 OpenMuse 服务器地址（例如
+                    http://10.7.0.6:8787）。它会记在这台设备上。本地工作区无需密钥。
+                  </Text>
+                </Card>
+              )}
+            </View>
+          </SafeAreaView>
+        )}
       </View>
     </SafeAreaProvider>
   );
@@ -275,9 +283,9 @@ function WorkspaceShell({
   const agentName = data?.identity.name || "OpenMuse";
   const status = activeTask
     ? activeTask.status === "waiting_approval"
-      ? `Ready to review · ${activeTask.title}`
+      ? `等你确认 · ${activeTask.title}`
       : activeTask.status === "waiting_input"
-        ? `需要你的输入 · ${activeTask.title}`
+        ? `还缺信息 · ${activeTask.title}`
         : activeTask.plan.find((step) => step.status === "running")?.title || activeTask.title
     : data?.tasks.some((task) => task.status === "queued")
       ? "正在接取下一个任务…"
@@ -313,11 +321,7 @@ function WorkspaceShell({
             }}
           >
             <View style={{ position: "absolute", left: 0, top: 16 }}>
-              <IconButton
-                icon={Menu}
-                label="打开会话与菜单"
-                onPress={() => setThreadsOpen(true)}
-              />
+              <IconButton icon={Menu} label="打开会话与菜单" onPress={() => setThreadsOpen(true)} />
             </View>
             <View style={{ alignItems: "center", gap: 1 }}>
               <Pressable
@@ -385,7 +389,9 @@ function WorkspaceShell({
                     small
                     style={{ alignSelf: "flex-start", marginBottom: 18 }}
                     onPress={() => navigate("apps")}
-                  >返回应用</Button>
+                  >
+                    返回应用
+                  </Button>
                 )}
                 <Text style={[s.title, { fontSize: 25, marginBottom: 22 }]}>{title?.title}</Text>
                 <ErrorNotice error={error} />
@@ -409,7 +415,9 @@ function WorkspaceShell({
                     <ActivityIndicator color={colors.blueDark} />
                   ) : null}
                   {!threadsLoading && selection.id !== mainId && (
-                    <Text style={[s.small, { textAlign: "center", marginBottom: 8 }]}>侧边聊天</Text>
+                    <Text style={[s.small, { textAlign: "center", marginBottom: 8 }]}>
+                      侧边聊天
+                    </Text>
                   )}
                   {visited.map((thread) => (
                     <View
@@ -462,7 +470,10 @@ function WorkspaceShell({
                     accessibilityRole="tab"
                     accessibilityLabel={item.label}
                     accessibilityState={{ selected: active }}
-                    onPress={() => navigate(item.id)}
+                    onPress={() => {
+                      hapticTap();
+                      navigate(item.id);
+                    }}
                     style={{
                       flex: 1,
                       height: 47,

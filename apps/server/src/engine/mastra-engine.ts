@@ -1,18 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createOpenAI } from "@ai-sdk/openai";
 import { type BaseEvent, EventType } from "@ag-ui/core";
-import { Observable } from "rxjs";
-import { Agent } from "@mastra/core/agent";
 import { MastraAgent } from "@ag-ui/mastra";
+import { createOpenAI } from "@ai-sdk/openai";
+import { Agent } from "@mastra/core/agent";
+import { Observable } from "rxjs";
 import { computerTools } from "../computer-tools.ts";
-import { MODEL_MAX_RETRIES } from "../config.ts";
 import type { Config } from "../config.ts";
+import { MODEL_MAX_RETRIES } from "../config.ts";
 import { chatInstructions } from "./chat-prompt.ts";
-import { mcpTools } from "./mcp-tools.ts";
-import { reportStepLimit, splitTextAtToolCalls, stateTools } from "./tanstack-agent.ts";
-import { chatTools } from "./chat-tools.ts";
+import { chatTools, lastUserText } from "./chat-tools.ts";
 import { forMastra } from "./mastra-tools.ts";
+import { mcpTools } from "./mcp-tools.ts";
 import type { AgentService } from "./service.ts";
+import { reportStepLimit, splitTextAtToolCalls, stateTools } from "./tanstack-agent.ts";
 import type { NeutralTool } from "./tool-kit.ts";
 
 /**
@@ -64,14 +64,12 @@ export function createMastraChatAgent(
   // 与自带引擎同源的同一批工具，只换外壳（forMastra）。
   // threadId 用稳定的 owner 级键：Mastra 侧不做按线程的浏览器隔离，复用同一会话还能绕开
   // worker 的 maxSessions 上限（自带引擎的历史遗留问题，见 docs/自建后端可行性评估.md §9）。
+  // 用户原话在 stream() 里才拿到，工具构造在前，所以用一个可变变量承接（同一作用域）
+  let currentUserText: string | undefined;
   const tools = forMastra([
-    ...computerTools(
-      ctx.service.computer,
-      ctx.service.files,
-      ctx.owner,
-      `mastra:${requestKey}`,
-      { signal },
-    ),
+    ...computerTools(ctx.service.computer, ctx.service.files, ctx.owner, `mastra:${requestKey}`, {
+      signal,
+    }),
     ...chatTools({
       service: ctx.service,
       owner: ctx.owner,
@@ -79,6 +77,7 @@ export function createMastraChatAgent(
       requestKey,
       key,
       signal,
+      userText: () => currentUserText,
     }),
     // MCP 服务器上的工具（配置见 MCP_SERVERS；同步读缓存，连接由 startMcp 维护）
     ...mcpTools(),
@@ -108,23 +107,34 @@ export function createMastraChatAgent(
   // 不改 node_modules、不动桥的私有实现。
   const stream = agent.stream.bind(agent);
   agent.stream = ((messages: never, options?: never) => {
+    // 每轮刷新用户原话（跨语言兜底搜索要用它）
+    currentUserText = lastUserText(messages);
     const opts = (options ?? {}) as { requestContext?: { get?: (k: string) => unknown } };
     // App 传来的上下文（自带引擎拼进系统提示词；Mastra 的 instructions 不支持函数，就在这里补一条系统消息）
-    const agui = opts.requestContext?.get?.("ag-ui") as { context?: { description?: string; value?: unknown }[] } | undefined;
+    const agui = opts.requestContext?.get?.("ag-ui") as
+      | { context?: { description?: string; value?: unknown }[] }
+      | undefined;
     const extra = (agui?.context ?? [])
       .filter((c) => c && (c.description || c.value))
-      .map((c) => `${c.description ?? "Context"}:\n${typeof c.value === "string" ? c.value : JSON.stringify(c.value)}`)
+      .map(
+        (c) =>
+          `${c.description ?? "Context"}:\n${typeof c.value === "string" ? c.value : JSON.stringify(c.value)}`,
+      )
       .join("\n");
-    const withContext = extra && Array.isArray(messages)
-      ? [{ role: "system", content: `## Context from the application\n${extra}` }, ...messages]
-      : messages;
-    return stream(withContext as never, {
-      ...opts,
-      maxSteps: 10,
-      // 与自带引擎的 MODEL_MAX_RETRIES 对齐（AI SDK 侧的重试次数）
-      maxRetries: MODEL_MAX_RETRIES,
-      abortSignal: runAbort.signal,
-    } as never);
+    const withContext =
+      extra && Array.isArray(messages)
+        ? [{ role: "system", content: `## Context from the application\n${extra}` }, ...messages]
+        : messages;
+    return stream(
+      withContext as never,
+      {
+        ...opts,
+        maxSteps: 10,
+        // 与自带引擎的 MODEL_MAX_RETRIES 对齐（AI SDK 侧的重试次数）
+        maxRetries: MODEL_MAX_RETRIES,
+        abortSignal: runAbort.signal,
+      } as never,
+    );
   }) as typeof agent.stream;
   // 关键：框架每个请求都会 agent.clone()，而桥的 clone() 是 `new MastraAgent(this.config)`，
   // 在实例上直接挂的包装会在克隆时全部丢失（表现为这些增强"看似生效实则空转"）。
@@ -168,20 +178,29 @@ export function createMastraChatAgent(
             error: (error) => {
               if (!produced && n < MAX_RUN_ATTEMPTS && retryable(error)) {
                 const message = error instanceof Error ? error.message : String(error);
-                console.warn(`[mastra] 模型调用失败，第 ${n} 次重试（上限 ${MAX_RUN_ATTEMPTS - 1}）：${message}`);
+                console.warn(
+                  `[mastra] 模型调用失败，第 ${n} 次重试（上限 ${MAX_RUN_ATTEMPTS - 1}）：${message}`,
+                );
                 setTimeout(() => {
                   if (!subscriber.closed) attempt(n + 1).subscribe(subscriber);
                 }, 900 * n);
                 return;
               }
-              subscriber.next({ type: EventType.RUN_ERROR, message: friendlyError(error) } as BaseEvent);
+              subscriber.next({
+                type: EventType.RUN_ERROR,
+                message: friendlyError(error),
+              } as BaseEvent);
               subscriber.complete();
             },
             complete: () => subscriber.complete(),
           });
           return () => sub.unsubscribe();
         });
-      return reportStepLimit(attempt(1), 10, "我达到了本轮步数上限还没收尾。回复“继续”，我接着做。");
+      return reportStepLimit(
+        attempt(1),
+        10,
+        "我达到了本轮步数上限还没收尾。回复“继续”，我接着做。",
+      );
     }) as typeof target.run;
 
     // 克隆体也要带上同样的包装（否则下个请求退回裸桥）

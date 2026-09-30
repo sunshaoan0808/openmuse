@@ -108,11 +108,28 @@ Google credentials are encrypted at rest. File URLs and browser consoles use sho
 Set `BROWSER_WORKER_URL=http://127.0.0.1:8790` and a random `WORKER_TOKEN` of at least 32 characters in `.env`.
 
 ```sh
-pnpm --dir apps/worker exec playwright install chromium
+pnpm --dir apps/worker exec patchright install chromium
 pnpm dev:browser
 ```
 
-Or use `docker compose --env-file .env -f infra/compose.yaml up --build -d`. The same token must reach the API and worker. Sessions have persistent Chromium profiles; the app can open a live screenshot console and import PDF downloads. Agent tools can read public pages and hand interactive work to the person. [Worker setup and boundaries](apps/worker/README.md).
+Or use `docker compose --env-file .env -f infra/compose.yaml up --build -d`. The same token must reach the API and worker. Sessions have persistent Chromium profiles; the app can open a live screenshot console and import PDF downloads. Agent tools can read public pages, list a page's actionable elements by ref and click/fill/select/scroll through them (`page_elements`, `page_act`), look at the rendered page through a vision model (`look_page`), and hand interactive work to the person — the human console shows the same session, at desktop or phone viewport, with history navigation. [Worker setup and boundaries](apps/worker/README.md).
+
+## Web search
+
+Chat search is a server-side pipeline: it fetches a SERP, parses it into structured results (title, URL, snippet), and reads the top pages in parallel, so answers carry real source URLs instead of scraped page noise.
+
+Keyword engines block datacenter IPs, so the order is: configured API first, then scraping, and every result list passes a relevance check — an engine that answers with an unrelated "decoy" SERP (Bing does this to hosted IPs) is rejected rather than answered.
+
+```sh
+# Recommended: a real search API (Brave free tier works) …
+SEARCH_API_KEY=...
+SEARCH_PROVIDER=brave          # brave | tavily | serper
+
+# … or a self-hosted SearXNG with JSON output enabled
+SEARCH_URL=http://127.0.0.1:8888
+```
+
+Without either, search falls back to scraping (DuckDuckGo HTML over plain HTTP currently works; Brave works through the browser worker but rate-limits quickly) and reports an honest error when every backend fails, instead of inventing results.
 
 ## Persistence and operation
 
@@ -165,7 +182,7 @@ flowchart TD
 | --- | --- |
 | `apps/mobile` | Shared iOS, Android, and web UI with CopilotKit headless hooks. |
 | `apps/server` | API, CopilotKit runtime, identity boundary, task engine, reviews, files, and persistence. |
-| `apps/worker` | Token-protected Playwright browser service with persistent profiles. |
+| `apps/worker` | Token-protected [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright) browser service (Playwright fork with CDP-leak patches) with persistent profiles; runs headed under Xvfb when `BROWSER_HEADLESS=false`. |
 | `apps/computer` | Nonroot Linux image, bounded filesystem helper, and real container verification. |
 | `packages/domain` | Shared types and request validation. |
 | `packages/integrations` | Google and browser protocol adapters. |

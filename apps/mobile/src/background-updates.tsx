@@ -1,7 +1,8 @@
 import { ArrowRight, Bell, X } from "lucide-react-native";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useAgentWorkspace } from "./agent-workspace";
+import { ensureNotificationPermission, syncLocalNotifications } from "./local-notifications";
 import { Button, Card, colors, ErrorNotice, resultSummary, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -10,6 +11,14 @@ export function BackgroundUpdates() {
   const { open } = useWorkspace();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // 进入工作区时申请一次通知权限（被拒也不会反复弹系统弹窗）
+  useEffect(() => {
+    void ensureNotificationPermission();
+  }, []);
+  // 轮询到新快照时，把“新出现的通知 / 刚完成的任务”变成系统通知（同一条只弹一次）
+  useEffect(() => {
+    void syncLocalNotifications(data);
+  }, [data]);
   const updates = data?.notifications.filter((item) => !item.read && item.taskId) || [];
   const update = updates[0];
   if (!update || data?.identity.showChatUpdates === false) return null;
@@ -50,7 +59,9 @@ export function BackgroundUpdates() {
           small
           icon={ArrowRight}
           onPress={() => update.taskId && open({ type: "task", taskId: update.taskId })}
-        >查看任务</Button>
+        >
+          查看任务
+        </Button>
         {updates.length > 1 && (
           <Button small onPress={() => open({ type: "notifications" })}>
             还有 {updates.length - 1} 条更新

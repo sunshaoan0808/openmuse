@@ -1,6 +1,8 @@
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { BrowserContext, Page } from "playwright";
+// patchright 是 Playwright 的防检测分支：底层不再发 Runtime.enable，并改掉会被识别的默认启动参数。
+// API 与 Playwright 一致，所以这里只换包名，会话管理/控制台接管逻辑都不用动。
+import type { BrowserContext, Page } from "patchright";
 import {
   capturePdfDownload,
   MAX_DOWNLOAD_BYTES,
@@ -9,7 +11,32 @@ import {
 } from "./downloads.ts";
 import { WorkerError } from "./errors.ts";
 import { validatePublicUrl } from "./network.ts";
-import { startEgressProxy } from "./proxy.ts";
+import { parseUpstream, startEgressProxy } from "./proxy.ts";
+
+/** 有头模式开关：服务端用 Xvfb 提供显示，patchright 的防检测收益只在这种情况下生效。 */
+const headed = process.env.BROWSER_HEADLESS === "false";
+
+/**
+ * 等正文渲染稳定，最多 budgetMs。
+ * 实测：`domcontentloaded` 就立刻读，SPA 只会给出空壳（AP News 0 字符、x.com 0 字符、
+ * WhatsApp Web 147 字符）。这里等"连续两次正文长度一致"再返回，救回这类页面。
+ */
+async function settle(page: Page, budgetMs = 2_500) {
+  const started = Date.now();
+  let previous = -1;
+  let stable = 0;
+  while (Date.now() - started < budgetMs) {
+    const length = await page.evaluate(() => document.body?.innerText?.length ?? 0).catch(() => 0);
+    if (length > 0 && length === previous) {
+      stable += 1;
+      if (stable >= 2) return;
+    } else {
+      stable = 0;
+    }
+    previous = length;
+    await page.waitForTimeout(250);
+  }
+}
 
 export interface Session {
   id: string;
@@ -45,7 +72,12 @@ export async function createBrowserManager(options: {
   const sessions = new Map<string, Session>();
   const running = new Map<string, Running>();
   const queues = new Map<string, Promise<unknown>>();
-  const proxy = await startEgressProxy();
+  // 可选上游 SOCKS5（如 MicroWARP 提供的 Cloudflare WARP 出口）：机房 IP 被站点信誉拦时换这条出口，
+  // 公网 IP 校验仍在本地做，上游只收到已经校验过的地址。
+  const egressUpstream = process.env.EGRESS_SOCKS5?.trim();
+  const proxy = await startEgressProxy(
+    egressUpstream ? { upstream: parseUpstream(egressUpstream) } : {},
+  );
   for (const id of await readdir(dataDir)) {
     if (!SESSION_ID.test(id)) continue;
     try {
@@ -117,6 +149,7 @@ export async function createBrowserManager(options: {
     const { page } = active(id);
     try {
       await page.goto(target.url.href, { waitUntil: "domcontentloaded", timeout: 20_000 });
+      await settle(page);
       // Chromium can follow redirects outside Playwright's initial route hook.
       // The proxy blocks those sockets, but its 403 is still an HTTP response:
       // validate the final location so the API does not report it as success.
@@ -194,15 +227,20 @@ export async function createBrowserManager(options: {
     await mkdir(tempDirectory, { recursive: true, mode: 0o700 });
     let context: BrowserContext;
     try {
-      const { chromium } = await import("playwright");
+      const { chromium } = await import("patchright");
       context = await chromium.launchPersistentContext(profileDir, {
         // Chromium does not need the worker API credential in its environment.
         env: {
           HOME: process.env.HOME ?? "/tmp",
           PATH: process.env.PATH ?? "/usr/bin:/bin",
           LANG: "C.UTF-8",
+          // 这里是白名单：不给 DISPLAY，有头模式找不到 X 显示，启动直接失败（返回 BROWSER_UNAVAILABLE）。
+          ...(process.env.DISPLAY ? { DISPLAY: process.env.DISPLAY } : {}),
+          ...(process.env.XAUTHORITY ? { XAUTHORITY: process.env.XAUTHORITY } : {}),
         },
-        headless: true,
+        // 无头 shell 本身就是最强的自动化特征（实测指纹页：Chrome missing / plugins 0，DDG 直接 403）。
+        // patchright 的收益只在"有头"模式出现，服务端用 BROWSER_HEADLESS=false + Xvfb 跑有头。
+        headless: !headed,
         viewport: { width: 1280, height: 800 },
         proxy: { server: proxy.url, bypass: "<-loopback>" },
         serviceWorkers: "block",
@@ -214,6 +252,11 @@ export async function createBrowserManager(options: {
           "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
           "--disable-extensions",
           "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
+          // Xvfb 下没有 GPU，不加这两个参数 WebGL 会变成 "Canvas has no webgl context"——
+          // 那是另一个更明显的指纹窟窿（无头模式本来报的是 SwiftShader）。
+          ...(headed
+            ? ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
+            : []),
         ],
       });
     } catch {
@@ -304,6 +347,199 @@ export async function createBrowserManager(options: {
       throw error;
     }
   }
+  /** 允许的按键（与 console 的 input 保持一致，避免模型传出奇怪组合键）。 */
+  const KEY_PATTERN =
+    /^(Enter|Tab|Escape|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Control\+a|Meta\+a|Shift\+Tab)$/;
+
+  /**
+   * 把页面上"看得见、点得动"的元素编号挂到 data-om-ref 上，连同角色/名字/当前值一起返回。
+   * 这是给模型的"眼睛"：比坐标点击可靠得多（模型没法从文字里猜出按钮在哪个像素）。
+   * 与 read/content 一样，脚本固定在 worker 侧，调用方不能注入 JavaScript。
+   */
+  async function describePage(id: string, includeText: boolean) {
+    const { page } = active(id);
+    await validatePublicUrl(page.url());
+    const result = await page.evaluate(
+      ({ withText }: { withText: boolean }) => {
+        for (const node of Array.from(document.querySelectorAll("[data-om-ref]")))
+          node.removeAttribute("data-om-ref");
+        const candidate =
+          'a[href],button,input:not([type="hidden"]),select,textarea,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="switch"],[role="combobox"],[contenteditable=""],[contenteditable="true"]';
+        const baseRoles: Record<string, string> = {
+          a: "link",
+          button: "button",
+          select: "combobox",
+          textarea: "textbox",
+        };
+        const collected: {
+          node: Element;
+          tag: string;
+          role: string;
+          label: string;
+          value?: string;
+          checked?: boolean;
+          disabled?: boolean;
+          inView?: boolean;
+        }[] = [];
+        for (const node of Array.from(document.querySelectorAll(candidate))) {
+          const rect = node.getBoundingClientRect();
+          if (rect.width < 2 || rect.height < 2) continue;
+          const style = getComputedStyle(node);
+          if (style.visibility === "hidden" || style.display === "none" || style.opacity === "0")
+            continue;
+          const tag = node.tagName.toLowerCase();
+          const field = node as HTMLInputElement;
+          let role =
+            node.getAttribute("role") ?? baseRoles[tag] ?? (tag === "input" ? "textbox" : tag);
+          if (tag === "input") {
+            const type = (node.getAttribute("type") ?? "text").toLowerCase();
+            if (type === "search") role = "searchbox";
+            else if (type === "checkbox" || type === "radio") role = type;
+            else if (type === "submit" || type === "button" || type === "reset") role = "button";
+          }
+          const label = (
+            node.getAttribute("aria-label") ??
+            node.getAttribute("placeholder") ??
+            node.getAttribute("title") ??
+            node.getAttribute("name") ??
+            node.getAttribute("alt") ??
+            node.textContent ??
+            ""
+          )
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 120);
+          collected.push({
+            node,
+            tag,
+            role,
+            label,
+            ...(typeof field.value === "string" && field.value && role !== "button"
+              ? { value: field.value.slice(0, 80) }
+              : {}),
+            ...(field.checked === true ? { checked: true } : {}),
+            ...(field.disabled === true ? { disabled: true } : {}),
+            ...(rect.top < innerHeight && rect.bottom > 0 ? {} : { inView: false }),
+          });
+        }
+        // 控件排前面：链接密集的页面（搜索结果页、门户首页）里，输入框/按钮不能被链接挤出 80 个上限。
+        // 同类之间保持 DOM 顺序，所以结果链接依然是页面顺序。
+        //
+        // 注意：这段代码会被序列化后在页面里执行，**不能出现赋值给变量的函数表达式**——
+        // tsx/esbuild 的 keepNames 会给它注入 `__name()`，页面上下文没有这个助手，
+        // 于是 page.evaluate 直接抛 `ReferenceError: __name is not defined`。用循环分桶替代。
+        const controls: typeof collected = [];
+        const buttons: typeof collected = [];
+        const others: typeof collected = [];
+        for (const item of collected) {
+          const isField =
+            item.tag === "input" ||
+            item.tag === "textarea" ||
+            item.tag === "select" ||
+            item.role === "combobox";
+          const isButton = item.tag === "button" || item.role === "button";
+          (isField ? controls : isButton ? buttons : others).push(item);
+        }
+        const elements: {
+          ref: number;
+          tag: string;
+          role: string;
+          label: string;
+          value?: string;
+          checked?: boolean;
+          disabled?: boolean;
+          inView?: boolean;
+        }[] = [];
+        for (const item of controls.concat(buttons, others)) {
+          if (elements.length >= 80) break;
+          const ref = elements.length + 1;
+          item.node.setAttribute("data-om-ref", String(ref));
+          elements.push({
+            ref,
+            tag: item.tag,
+            role: item.role,
+            label: item.label,
+            ...(item.value ? { value: item.value } : {}),
+            ...(item.checked ? { checked: true } : {}),
+            ...(item.disabled ? { disabled: true } : {}),
+            ...(item.inView === false ? { inView: false } : {}),
+          });
+        }
+        return {
+          url: location.href,
+          title: document.title.slice(0, 300),
+          elements,
+          text: withText ? (document.body?.innerText ?? "").slice(0, 6_000) : undefined,
+        };
+      },
+      { withText: includeText },
+    );
+    await validatePublicUrl(result.url);
+    return result;
+  }
+
+  /**
+   * 按元素编号（page_elements 给的 ref）或 CSS 选择器执行一次动作，然后返回新的页面状态。
+   * 动作 + 观察合成一次调用，模型不用"点一下再读一次"。
+   */
+  async function performAction(id: string, body: Record<string, unknown>) {
+    const { page } = active(id);
+    const { action, ref, selector, text, key, deltaY, option } = body;
+    const target = () => {
+      if (typeof ref === "number" && Number.isInteger(ref) && ref > 0)
+        return page.locator(`[data-om-ref="${ref}"]`).first();
+      if (typeof selector === "string" && selector.length > 0 && selector.length <= 400)
+        return page.locator(selector).first();
+      throw new WorkerError(
+        "INVALID_INPUT",
+        "Pass the element ref returned by the page-elements call, or a short CSS selector.",
+      );
+    };
+    try {
+      if (action === "click") await target().click({ timeout: 8_000 });
+      else if (action === "fill" && typeof text === "string" && text.length <= 10_000)
+        await target().fill(text, { timeout: 8_000 });
+      else if (action === "select" && typeof option === "string" && option.length <= 200)
+        await target().selectOption({ label: option }, { timeout: 8_000 });
+      else if (action === "hover") await target().hover({ timeout: 8_000 });
+      else if (action === "press" && typeof key === "string" && KEY_PATTERN.test(key))
+        await page.keyboard.press(key);
+      else if (
+        action === "scroll" &&
+        typeof deltaY === "number" &&
+        Number.isFinite(deltaY) &&
+        Math.abs(deltaY) <= 5_000
+      )
+        await page.mouse.wheel(0, deltaY);
+      else if (action === "back")
+        await page.goBack({ waitUntil: "domcontentloaded", timeout: 20_000 });
+      else throw new WorkerError("INVALID_INPUT", "Unsupported browser action.");
+    } catch (error) {
+      if (error instanceof WorkerError) throw error;
+      throw new WorkerError(
+        "ACTION_FAILED",
+        `The action could not be completed: ${
+          error instanceof Error
+            ? (error.message.split("\n")[0] ?? "unknown error").slice(0, 200)
+            : "unknown error"
+        }`,
+        409,
+      );
+    }
+    await settle(page);
+    const state = await describePage(id, false);
+    const session: Session = {
+      id,
+      title: state.title,
+      url: state.url,
+      status: "active",
+      updatedAt: new Date().toISOString(),
+    };
+    sessions.set(id, session);
+    await persist(session);
+    return state;
+  }
+
   const sweeper = setInterval(() => {
     for (const [id, instance] of running)
       if (Date.now() - instance.touched > idleTimeoutMs) {
@@ -317,8 +553,46 @@ export async function createBrowserManager(options: {
       serial("create", () => serial(id, () => createSession(id, url))),
     navigate: (id: string, url: string) => serial(id, () => navigate(id, url)),
     closeSession: (id: string) => serial(id, () => closeSession(id)),
-    screenshot: (id: string) =>
-      serial(id, () => active(id).page.screenshot({ type: "png", timeout: 10_000 })),
+    screenshot: (id: string, options: { format?: "png" | "jpeg"; quality?: number } = {}) =>
+      serial(id, () =>
+        active(id).page.screenshot({
+          ...(options.format === "jpeg"
+            ? // 控制台每几百毫秒拉一帧：JPEG + 降质能在同一延迟下少传 5-10 倍字节
+              { type: "jpeg" as const, quality: Math.min(90, Math.max(20, options.quality ?? 55)) }
+            : { type: "png" as const }),
+          timeout: 10_000,
+        }),
+      ),
+    back: (id: string) =>
+      serial(id, async () => {
+        const { page } = active(id);
+        await page.goBack({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+        await settle(page);
+        return refresh(id);
+      }),
+    forward: (id: string) =>
+      serial(id, async () => {
+        const { page } = active(id);
+        await page.goForward({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+        await settle(page);
+        return refresh(id);
+      }),
+    reload: (id: string) =>
+      serial(id, async () => {
+        const { page } = active(id);
+        await page.reload({ waitUntil: "domcontentloaded", timeout: 20_000 }).catch(() => {});
+        await settle(page);
+        return refresh(id);
+      }),
+    viewport: (id: string, width: number, height: number) =>
+      serial(id, async () => {
+        const { page } = active(id);
+        await page.setViewportSize({ width, height });
+        await page.waitForTimeout(200);
+        return refresh(id);
+      }),
+    elements: (id: string) => serial(id, () => describePage(id, false)),
+    act: (id: string, body: Record<string, unknown>) => serial(id, () => performAction(id, body)),
     read: (id: string) =>
       serial(id, async () => {
         const { page } = active(id);
@@ -331,6 +605,32 @@ export async function createBrowserManager(options: {
             title: document.title.slice(0, 300),
             text: text.slice(0, 100_000),
             truncated: text.length > 100_000,
+          };
+        });
+        await validatePublicUrl(result.url);
+        const session: Session = {
+          id,
+          url: result.url,
+          title: result.title,
+          status: "active",
+          updatedAt: new Date().toISOString(),
+        };
+        sessions.set(id, session);
+        await persist(session);
+        return result;
+      }),
+    content: (id: string) =>
+      serial(id, async () => {
+        const { page } = active(id);
+        await validatePublicUrl(page.url());
+        // 只读 DOM：不注入调用方脚本，把当前文档序列化出来交给服务端做结构化解析
+        const result = await page.evaluate(() => {
+          const html = document.documentElement ? document.documentElement.outerHTML : "";
+          return {
+            url: location.href,
+            title: document.title.slice(0, 300),
+            html: html.slice(0, 600_000),
+            truncated: html.length > 600_000,
           };
         });
         await validatePublicUrl(result.url);

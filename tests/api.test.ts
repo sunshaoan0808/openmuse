@@ -206,11 +206,13 @@ test("guided document delegation streams a rich tool result bound to its saved t
   assert.equal(result?.toolCallId, start?.toolCallId);
   assert.ok(result && typeof result.content === "string");
   const { id } = JSON.parse(result.content);
-  const task = await db.get<{ input: { messageId: string }; kind: string }>(
+  const task = await db.get<{ input: { messageId: string }; kind: string; threadId?: string }>(
     "local-user",
     "tasks",
     id,
   );
   assert.equal(task?.kind, "document");
   assert.equal(task?.input.messageId, "mail-fieldtrip");
+  // 从聊天派出去的活，要记住是哪条会话提的（供审批和结果回到原处）
+  assert.equal(task?.threadId, "document-thread");
 });

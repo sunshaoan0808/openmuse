@@ -1,0 +1,23 @@
+{
+  "success": true,
+  "data": {
+    "web": [
+      {
+        "title": "CopilotKit/openmuse",
+        "url": "https://github.com/CopilotKit/openmuse",
+        "description": "A personal agent with a browser, terminal and files."
+      },
+      {
+        "title": "OpenMuse | CopilotKit",
+        "url": "https://www.copilotkit.ai/openmuse",
+        "description": "Open-source personal agent."
+      },
+      {
+        "title": "Broken row",
+        "url": "not-a-url",
+        "description": "dropped"
+      }
+    ]
+  },
+  "creditsUsed": 2
+}

@@ -1,5 +1,5 @@
 import { createTool } from "@mastra/core/tools";
-import type { NeutralTool } from "./tool-kit.ts";
+import { instrument, type NeutralTool } from "./tool-kit.ts";
 
 /**
  * 把中性工具转成 Mastra 工具。
@@ -12,7 +12,7 @@ import type { NeutralTool } from "./tool-kit.ts";
  */
 export function forMastra(tools: readonly NeutralTool[]) {
   return Object.fromEntries(
-    tools.map((tool) => [
+    tools.map(instrument).map((tool) => [
       tool.name,
       createTool({
         id: tool.name,
