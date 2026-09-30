@@ -19,10 +19,16 @@ export function headerScrollHandler(
     };
   }) => void,
 ) {
-  return Animated.event([{ nativeEvent: { contentOffset: { y: headerScrollY } } }], {
-    useNativeDriver: true,
+  const handler = Animated.event([{ nativeEvent: { contentOffset: { y: headerScrollY } } }], {
+    // 必须用 JS 驱动：useNativeDriver: true 时 Animated.event 返回的是 AnimatedEvent **对象**
+    // （只有 Animated.ScrollView / createAnimatedComponent 会调它的 __getHandler 取出函数），
+    // 而这里是普通 ScrollView，React 派发滚动事件时会直接把它当函数调用，
+    // release 包里就是 TypeError: Object is not a function → 无提示闪退。
+    useNativeDriver: false,
     listener,
   });
+  // 兜底：万一以后有人把它改回原生驱动，这里也不会把对象交给 ScrollView
+  return typeof handler === "function" ? handler : () => {};
 }
 
 /** 遮罩不透明度：0 → 0.92（48px 之内渐变完）。 */
