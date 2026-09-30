@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
+import type { ChatTurn } from "./chat-turns.ts";
 import { readConfig } from "./config.ts";
 import { createStore } from "./db.ts";
 
@@ -9,6 +10,18 @@ const db = await createStore({
   databaseUrl: config.databaseUrl,
 });
 await db.recoverInterruptedActions();
+// 上次没跑完的对话轮次：进程已经重启，它们不可能还在跑——标成 interrupted，
+// 免得 App 重连后一直等一条永远不会来的回复。
+const now = new Date().toISOString();
+for (const record of await db.scan<ChatTurn>("turns")) {
+  if (record.value.status !== "running") continue;
+  await db.put(record.owner, "turns", {
+    ...record.value,
+    status: "interrupted",
+    error: "服务重启，这一轮没有跑完",
+    finishedAt: now,
+  });
+}
 const { app, agent } = await createApp(db, config);
 if (config.taskWorkerEnabled) agent.start();
 const server = serve({ fetch: app.fetch, port: config.port, hostname: config.host }, () =>

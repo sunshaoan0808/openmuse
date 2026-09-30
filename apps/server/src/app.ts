@@ -10,6 +10,18 @@ import { ActionService } from "./actions.ts";
 import { agentConfigured, makeRuntime } from "./agent.ts";
 import { createAuth } from "./auth.ts";
 import { BrowserService } from "./browser.ts";
+import {
+  type AgUiLikeEvent,
+  appendMessages,
+  assembleTurnMessages,
+  type ChatTurn,
+  type Conversation,
+  consumeSse,
+  finishTurn,
+  messagesSince,
+  newTurn,
+  turnOutcome,
+} from "./chat-turns.ts";
 import { ComputerService, type DockerRunner } from "./computer.ts";
 import { computerRoutes } from "./computer-routes.ts";
 import { assertApiDeploymentConfig, type Config, intelligenceConfigured } from "./config.ts";
@@ -219,6 +231,8 @@ export async function createApp(
       201,
     );
   });
+  // 一轮对话最多跑这么久；超过就认为被上游卡住（模型网关内部重试可能很久）
+  const TURN_TIMEOUT_MS = 5 * 60_000;
   // ---- 本地已保存会话（不走 CopilotKit 云线程）----
   const ensureThread = async (
     owner: string,
@@ -293,30 +307,88 @@ export async function createApp(
     }
     return c.json({ threadId: main.threadId, existing: true });
   });
+  const latestTurn = async (owner: string, threadId: string): Promise<ChatTurn | null> => {
+    const turns = await db.list<ChatTurn>(owner, "turns");
+    const mine = turns
+      .filter((turn) => turn.threadId === threadId)
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+    const turn = mine[0] ?? null;
+    if (!turn || turn.status !== "running") return turn;
+    // 看门狗：一轮跑够久了要么被上游拖住、要么早没了下文。
+    // 不标它，App 会一直显示"正在生成"等一条永远不来的回复。
+    if (Date.parse(turn.startedAt) + TURN_TIMEOUT_MS > Date.now()) return turn;
+    const interrupted: ChatTurn = {
+      ...turn,
+      status: "interrupted",
+      error: "这一轮太久没有结果（上游可能卡住了）",
+      finishedAt: new Date().toISOString(),
+    };
+    await db.put(owner, "turns", interrupted);
+    return interrupted;
+  };
+  // 带游标的读取：客户端记着自己看到哪（lastSeq），重连时只拉漏掉的（Telegram 那套 offset）
   app.get("/api/conversation", async (c) => {
     const owner = c.get("owner");
     const threadId = c.req.query("threadId");
-    return c.json(
-      (await db.get(owner, "conversations", conversationRecordId(threadId))) ?? { messages: [] },
+    const since = c.req.query("since");
+    const stored = await db.get<Conversation>(
+      owner,
+      "conversations",
+      conversationRecordId(threadId),
     );
+    const { messages, seq } = messagesSince(
+      stored,
+      conversationRecordId(threadId),
+      since === undefined ? undefined : Number(since),
+    );
+    const turn = threadId ? await latestTurn(owner, threadId) : null;
+    return c.json({ messages, seq, turn });
   });
-  app.put("/api/conversation", async (c) => {
-    const owner = c.get("owner");
-    const threadId = c.req.query("threadId");
-    const body = await c.req.json();
-    const messages = z.array(z.unknown()).max(1000).parse(body.messages);
-    for (const message of messages) MessageSchema.parse(message);
-    await db.put(owner, "conversations", {
-      id: conversationRecordId(threadId),
-      messages,
-    });
-    if (threadId)
+  // 追加语义 + 按 id 幂等：重复送同一条不会变两条（至少一次投递要求）
+  const appendConversation = async (
+    owner: string,
+    threadId: string | undefined,
+    body: { messages?: unknown },
+  ) => {
+    const incoming = z.array(z.unknown()).max(1000).parse(body.messages);
+    for (const message of incoming) MessageSchema.parse(message);
+    const recordId = conversationRecordId(threadId);
+    const current = await db.get<Conversation>(owner, "conversations", recordId);
+    const { next, added } = appendMessages(current, recordId, incoming, new Date().toISOString());
+    await db.put(owner, "conversations", next);
+    if (threadId && added.length)
       await ensureThread(owner, threadId, {
-        autoTitle: titleFromMessages(messages),
-        messageCount: messages.length,
+        autoTitle: titleFromMessages(next.messages),
+        messageCount: next.messages.length,
       });
-    return c.json({ ok: true });
-  });
+    await db.put(owner, "conversations", next);
+    return { ok: true, seq: next.seq, added: added.length };
+  };
+  const conversationBody = async (request: { json: () => Promise<unknown> }) => {
+    try {
+      return (await request.json()) as { messages?: unknown };
+    } catch {
+      return {} as { messages?: unknown };
+    }
+  };
+  app.post("/api/conversation", async (c) =>
+    c.json(
+      await appendConversation(
+        c.get("owner"),
+        c.req.query("threadId"),
+        await conversationBody(c.req),
+      ),
+    ),
+  );
+  app.put("/api/conversation", async (c) =>
+    c.json(
+      await appendConversation(
+        c.get("owner"),
+        c.req.query("threadId"),
+        await conversationBody(c.req),
+      ),
+    ),
+  );
   app.post("/api/files", async (c) => {
     const data = await c.req.parseBody();
     const file = data.file;
@@ -424,17 +496,25 @@ export async function createApp(
   const THREAD_ID_RE =
     /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
   app.all("/api/copilotkit/*", async (c) => {
+    // 本轮对话的 turn 记录（请求内局部，避免并发互相覆盖）
+    let turn: ChatTurn | undefined;
     if (!agentConfigured(config))
       throw new AppError("要开始聊天，请配置模型与供应商 API key，或一个有效的 AG-UI 端点", 503);
     try {
       let threadId: string | undefined;
+      let runId: string | undefined;
       let messages: unknown[] | undefined;
       if (c.req.method !== "GET" && c.req.method !== "HEAD") {
         const text = await c.req.raw.clone().text();
         if (text) {
           try {
-            const body = JSON.parse(text) as { threadId?: unknown; messages?: unknown };
+            const body = JSON.parse(text) as {
+              threadId?: unknown;
+              runId?: unknown;
+              messages?: unknown;
+            };
             if (typeof body.threadId === "string") threadId = body.threadId;
+            if (typeof body.runId === "string") runId = body.runId;
             if (Array.isArray(body.messages)) messages = body.messages;
           } catch {
             // 非 JSON 请求体，忽略
@@ -452,6 +532,11 @@ export async function createApp(
       }
       // 本地会话：进一次对话就把会话登记下来（带上自动标题与消息），
       // 这样侧会话会自己出现在列表里，历史也不依赖 App 主动保存。
+      // 一轮对话独立成 turn 记录：即便客户端断开，下面的后台分支也会把回复写进会话
+      if (threadId && runId) {
+        turn = newTurn(runId, threadId, new Date().toISOString());
+        await db.put(c.get("owner"), "turns", turn);
+      }
       if (threadId && !intelligence) {
         const owner = c.get("owner");
         await ensureThread(owner, threadId, {
@@ -461,10 +546,12 @@ export async function createApp(
         if (messages?.length) {
           try {
             for (const message of messages) MessageSchema.parse(message);
-            await db.put(owner, "conversations", {
-              id: conversationRecordId(threadId),
-              messages,
-            });
+            // 追加而不是替换：后台那一支可能已经写入了这一轮的回复，
+            // 用客户端发来的（可能还不含回复的）列表覆盖会把回复弄丢。
+            const recordId = conversationRecordId(threadId);
+            const current = await db.get<Conversation>(owner, "conversations", recordId);
+            const { next } = appendMessages(current, recordId, messages, new Date().toISOString());
+            await db.put(owner, "conversations", next);
           } catch {
             // 消息形状不合规就不落库，别影响这一轮对话
           }
@@ -477,14 +564,45 @@ export async function createApp(
     const response = await runtime.fetch(c.req.raw);
     // Runtime 1.70 emits SSE strings; a WHATWG Response body requires byte chunks.
     const encoder = new TextEncoder();
-    const body = response.body?.pipeThrough(
+    const converted = response.body?.pipeThrough(
       new TransformStream({
         transform(chunk, controller) {
           controller.enqueue(typeof chunk === "string" ? encoder.encode(chunk) : chunk);
         },
       }),
     );
-    return new Response(body, { status: response.status, headers: response.headers });
+    const activeTurn = turn;
+    if (!converted || !activeTurn)
+      return new Response(converted ?? null, {
+        status: response.status,
+        headers: response.headers,
+      });
+    // 关键：同一条流分两路。客户端那支断了（杀掉 App）不影响另一支，
+    // 后台那支把这一轮产生的消息写进会话——重开就能看到完整回复。
+    const [toClient, toStore] = converted.tee();
+    const owner = c.get("owner");
+    void (async () => {
+      const collected: AgUiLikeEvent[] = [];
+      const { error } = await consumeSse(toStore, (events) => collected.push(...events));
+      const now = new Date().toISOString();
+      const produced = assembleTurnMessages(collected, now);
+      const outcome = error
+        ? { status: "failed" as const, error: `连接中断：${error}` }
+        : turnOutcome(collected);
+      try {
+        if (produced.length && activeTurn.threadId) {
+          const recordId = conversationRecordId(activeTurn.threadId);
+          const current = await db.get<Conversation>(owner, "conversations", recordId);
+          const { next } = appendMessages(current, recordId, produced, now);
+          await db.put(owner, "conversations", next);
+          await ensureThread(owner, activeTurn.threadId, { messageCount: next.messages.length });
+        }
+        await db.put(owner, "turns", finishTurn(activeTurn, { ...outcome, now }));
+      } catch (failure) {
+        backgroundFailure("chat-turn-persist", failure);
+      }
+    })();
+    return new Response(toClient, { status: response.status, headers: response.headers });
   });
   app.get("/", (c) =>
     c.json({ name: "OpenMuse", app: "http://localhost:8081", health: "/api/health" }),
