@@ -833,26 +833,27 @@ export function ChatScreen({
                   gap: 8,
                 }}
               >
-                {!!text && (
-                  <View
-                    style={{
-                      paddingHorizontal: 16,
-                      paddingVertical: 13,
-                      borderRadius: 22,
-                      borderBottomRightRadius: user ? 7 : 22,
-                      borderBottomLeftRadius: user ? 22 : 7,
-                      backgroundColor: user ? colors.blue : "#EEEEF0",
-                    }}
-                  >
-                    {user ? (
+                {!!text &&
+                  (user ? (
+                    <View
+                      style={{
+                        paddingHorizontal: 16,
+                        paddingVertical: 13,
+                        borderRadius: 22,
+                        borderBottomRightRadius: 7,
+                        backgroundColor: colors.blue,
+                      }}
+                    >
                       <Text selectable style={[s.text, { fontSize: 16, lineHeight: 24 }]}>
                         {text}
                       </Text>
-                    ) : (
+                    </View>
+                  ) : (
+                    // Muse 的助手回复是纯文本直接铺在底色上，不套气泡卡片
+                    <View style={{ paddingVertical: 2 }}>
                       <AssistantResponse content={text} />
-                    )}
-                  </View>
-                )}
+                    </View>
+                  ))}
                 <JevInteractionContext.Provider
                   value={{
                     threadId,
@@ -999,11 +1000,8 @@ export function ChatScreen({
                 alignSelf: "flex-start",
                 gap: 10,
                 alignItems: "center",
-                paddingHorizontal: 19,
-                paddingVertical: 16,
-                backgroundColor: "#EEEEF0",
-                borderRadius: 28,
-                maxWidth: "88%",
+                paddingVertical: 6,
+                maxWidth: "92%",
               },
             ]}
           >

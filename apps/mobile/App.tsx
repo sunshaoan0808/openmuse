@@ -370,27 +370,29 @@ function WorkspaceShell({
               </Pressable>
               {section === "chat" && <ComputerEntry />}
             </View>
-            <View style={{ position: "absolute", right: 0, top: 16 }}>
-              <IconButton
-                glass
-                icon={Bell}
-                label={`通知：${pending} 条未读或待处理`}
+            <View style={{ position: "absolute", right: 0, top: 19 }}>
+              {/* 照 Muse：右侧是一个带文字的胶囊，而不是光秃秃一个图标 */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`通知：${pending} 条未读或待处理`}
                 onPress={() => open({ type: "notifications" })}
-              />
-              {pending > 0 && (
-                <View
-                  pointerEvents="none"
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: 4,
-                    position: "absolute",
-                    top: 7,
-                    right: 9,
-                    backgroundColor: colors.blueDark,
-                  }}
-                />
-              )}
+                style={({ pressed }) => ({
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                  height: 38,
+                  paddingHorizontal: 15,
+                  borderRadius: 19,
+                  backgroundColor: pressed ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.5)",
+                  borderWidth: 1,
+                  borderColor: "rgba(255,255,255,0.65)",
+                })}
+              >
+                <Bell size={16} strokeWidth={1.8} color={colors.text} />
+                <Text style={[s.small, { color: colors.text }]}>
+                  {pending > 0 ? `通知 · ${pending}` : "通知"}
+                </Text>
+              </Pressable>
             </View>
           </BlurView>
           <View style={{ flex: 1, minHeight: 0, paddingTop: desktop ? 104 : 88 }}>
