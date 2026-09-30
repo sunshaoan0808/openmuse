@@ -24,13 +24,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import type { Section, Workspace } from "../../packages/domain/src";
-import {
-  AgentActivityScreen,
-  AgentStatus,
-  AppsScreen,
-  GoalsScreen,
-  IdeasScreen,
-} from "./src/agent-ui";
+import { AgentActivityScreen, AppsScreen, GoalsScreen, IdeasScreen } from "./src/agent-ui";
 import { AgentWorkspaceProvider, useAgentWorkspace } from "./src/agent-workspace";
 import { apiUrl, createSession, defaultApiUrl, loadApiUrl, MuseApi, saveApiUrl } from "./src/api";
 import { ChatScreen, WorkspaceTools } from "./src/chat";
@@ -281,15 +275,20 @@ function WorkspaceShell({
       (task) => task.status === "waiting_approval" || task.status === "waiting_input",
     ) || data?.tasks.find((task) => task.status === "running");
   const agentName = data?.identity.name || "OpenMuse";
-  const status = activeTask
-    ? activeTask.status === "waiting_approval"
-      ? `等你确认 · ${activeTask.title}`
-      : activeTask.status === "waiting_input"
-        ? `还缺信息 · ${activeTask.title}`
-        : activeTask.plan.find((step) => step.status === "running")?.title || activeTask.title
-    : data?.tasks.some((task) => task.status === "queued")
-      ? "正在接取下一个任务…"
-      : "需要我就叫我";
+  // 本会话此刻在干什么（服务端每次工具调用都会更新）；没有就退回任务状态
+  const live = data?.live?.find((activity) => activity.threadId === selection.id);
+  const liveStatus = live ? `${live.text}${live.detail ? ` · ${live.detail}` : ""}` : "";
+  const status =
+    liveStatus ||
+    (activeTask
+      ? activeTask.status === "waiting_approval"
+        ? `等你确认 · ${activeTask.title}`
+        : activeTask.status === "waiting_input"
+          ? `还缺信息 · ${activeTask.title}`
+          : activeTask.plan.find((step) => step.status === "running")?.title || activeTask.title
+      : data?.tasks.some((task) => task.status === "queued")
+        ? "正在接取下一个任务…"
+        : "需要我就叫我");
   const title = titles[section] || titles.apps;
   const Screen =
     section === "mail"
@@ -314,10 +313,17 @@ function WorkspaceShell({
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.canvas }} edges={["top", "bottom"]}>
         <View style={{ flex: 1, width: "100%", maxWidth: 760, alignSelf: "center" }}>
           <View
+            pointerEvents="box-none"
             style={{
+              // 悬浮顶栏：不占布局，内容从它下面滚过去（原版 Muse 的顶栏感觉）
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              zIndex: 6,
               height: desktop ? 146 : 122,
               paddingTop: desktop ? 14 : 2,
-              marginHorizontal: 20,
+              paddingHorizontal: 20,
             }}
           >
             <View style={{ position: "absolute", left: 0, top: 16 }}>
@@ -376,7 +382,7 @@ function WorkspaceShell({
               )}
             </View>
           </View>
-          <View style={{ flex: 1, minHeight: 0 }}>
+          <View style={{ flex: 1, minHeight: 0, paddingTop: desktop ? 146 : 122 }}>
             {section !== "chat" && (
               <ScrollView
                 key={section}
@@ -405,7 +411,6 @@ function WorkspaceShell({
                 paddingHorizontal: desktop ? 42 : 17,
               }}
             >
-              <AgentStatus />
               {richThreads ? (
                 <>
                   <ErrorNotice error={threadsError} />

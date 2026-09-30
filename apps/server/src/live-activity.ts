@@ -54,7 +54,7 @@ export function activityFor(
   options: { threadId?: string; at?: string } = {},
 ): LiveActivity {
   return {
-    id: "current",
+    id: options.threadId || "current",
     tool,
     text: ACTIVITY_TEXT[tool] ?? `正在使用 ${tool}`,
     detail: detailOf(args),
@@ -63,31 +63,42 @@ export function activityFor(
   };
 }
 
-/** 写进 store（单条记录，后写覆盖前写）。失败不打扰这一轮对话。 */
+/**
+ * 写进 store，**每条会话一条记录**（id 用会话号）。
+ * 之前是全局一条：A 会话的"正在搜索…"会串到 B 会话的界面上（用户就撞到过这个）。
+ */
 export async function recordActivity(
   db: Store | undefined,
   owner: string,
   activity: LiveActivity,
 ): Promise<void> {
   if (!db) return;
+  const id = activity.threadId || activity.id || "current";
   try {
-    await db.put(owner, "live", activity);
+    await db.put(owner, "live", { ...activity, id });
   } catch {
     // 状态展示失败不影响干活
   }
 }
 
-/** App 读当前活动；超过 maxAgeMs 没更新就当成"空闲"不显示。 */
-export async function readActivity(
+/**
+ * App 读各会话的当前活动（新的在前）。超过 maxAgeMs 没更新的直接丢掉——
+ * 时间窗要短（默认 90 秒），否则一轮跑完很久了界面还在说"正在搜索"。
+ */
+export async function readActivities(
   db: Store,
   owner: string,
   options: { now?: number; maxAgeMs?: number } = {},
-): Promise<LiveActivity | null> {
-  const activity = await db.get<LiveActivity>(owner, "live", "current");
-  if (!activity?.at) return null;
-  const age = (options.now ?? Date.now()) - Date.parse(activity.at);
-  if (!Number.isFinite(age) || age > (options.maxAgeMs ?? 3 * 60_000)) return null;
-  return activity;
+): Promise<LiveActivity[]> {
+  const now = options.now ?? Date.now();
+  const maxAgeMs = options.maxAgeMs ?? 90_000;
+  const records = await db.list<LiveActivity>(owner, "live");
+  return records
+    .filter((activity) => {
+      const age = now - Date.parse(activity?.at ?? "");
+      return Number.isFinite(age) && age <= maxAgeMs;
+    })
+    .sort((left, right) => right.at.localeCompare(left.at));
 }
 
 /**

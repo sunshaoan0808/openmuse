@@ -131,7 +131,7 @@ export interface AgentWorkspace {
   notifications: AgentNotification[];
   identity: AgentIdentity;
   worker: { running: boolean; lastTickAt?: string };
-  /** 智能体此刻在干什么（App 动态页显示实时状态）；太久没更新则为空。 */
+  /** 各会话此刻在干什么（App 显示实时状态，按会话匹配）；太久没更新则为空。 */
   live?: {
     id: string;
     tool: string;
@@ -139,7 +139,7 @@ export interface AgentWorkspace {
     detail: string;
     threadId?: string;
     at: string;
-  } | null;
+  }[];
 }
 export const createTaskSchema = z.object({
   title: z.string().trim().min(1).max(160).optional(),

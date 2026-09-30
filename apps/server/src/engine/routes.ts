@@ -7,7 +7,7 @@ import type {
   AgentNotification,
 } from "../../../../packages/domain/src/agent.ts";
 import { AppError } from "../errors.ts";
-import { readActivity } from "../live-activity.ts";
+import { readActivities } from "../live-activity.ts";
 import type { AgentService } from "./service.ts";
 
 const text = z.string().trim().min(1).max(4000);
@@ -32,7 +32,7 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
     const owner = c.get("owner");
     const [snapshot, live] = await Promise.all([
       service.snapshot(owner),
-      readActivity(service.db, owner),
+      readActivities(service.db, owner),
     ]);
     // live：智能体此刻在干什么（App 的动态页显示实时状态）
     return c.json({ ...snapshot, live });

@@ -11,6 +11,7 @@ import { createJevAdapter } from "../jev/adapter.ts";
 import { JevService } from "../jev/service.ts";
 import { presentChoicesSpec } from "../jev/tools.ts";
 import { chatInstructions, jevInstructions } from "./chat-prompt.ts";
+import type { ChatToolContext } from "./chat-tools.ts";
 import { chatTools, lastUserText } from "./chat-tools.ts";
 import { forMastra } from "./mastra-tools.ts";
 import { mcpTools } from "./mcp-tools.ts";
@@ -80,26 +81,31 @@ export function createMastraChatAgent(
   // 有 adapter 就说明不是 off；收窄给工具用
   const activeJevMode = jevMode === "live" ? ("live" as const) : ("sample" as const);
   const jevThreadId = `mastra:${ctx.owner}`;
+  // 工具上下文里的会话号要在每轮开始时改成**真实的 App 会话号**：
+  // 实时状态按会话展示，固定成 mastra:<owner> 会让所有会话互相串（用户已撞到）。
+  let toolContext: ChatToolContext | undefined;
+  const chatContext: ChatToolContext = {
+    service: ctx.service,
+    owner: ctx.owner,
+    threadId: jevThreadId,
+    requestKey,
+    key,
+    signal,
+    userText: () => currentUserText,
+    // JEV：记录读过的证据，present_choices 才能校验来源
+    ...(jev
+      ? {
+          noteEvidence: (kind: "mail" | "web", id: string, text?: string) =>
+            jev.noteEvidence(ctx.owner, jevThreadId, requestKey, kind, id, text),
+        }
+      : {}),
+  };
+  toolContext = chatContext;
   const tools = forMastra([
     ...computerTools(ctx.service.computer, ctx.service.files, ctx.owner, `mastra:${requestKey}`, {
       signal,
     }),
-    ...chatTools({
-      service: ctx.service,
-      owner: ctx.owner,
-      threadId: jevThreadId,
-      requestKey,
-      key,
-      signal,
-      userText: () => currentUserText,
-      // JEV：记录读过的证据，present_choices 才能校验来源
-      ...(jev
-        ? {
-            noteEvidence: (kind: "mail" | "web", id: string, text?: string) =>
-              jev.noteEvidence(ctx.owner, jevThreadId, requestKey, kind, id, text),
-          }
-        : {}),
-    }),
+    ...chatTools(chatContext),
     // 选项/对比卡工具：上游只挂在自带引擎上，这里补到 Mastra 路径，否则我们这台跑 mastra 时功能是死的。
     // execute 里现取 latestUserText：spec 只在构造时吃一次 userMessage，而用户原话要到 stream() 才拿到。
     ...(jev
@@ -213,6 +219,10 @@ export function createMastraChatAgent(
 
     const baseRun = target.run.bind(target);
     target.run = ((input: Parameters<typeof baseRun>[0]) => {
+      // 实时状态按会话展示：把这一轮的真实会话号（App 的 threadId）交给工具上下文。
+      // 不这么做的话工具上下文里是笼统的 mastra:<owner>，所有会话的"正在…"会互相串。
+      const threadId = (input as { threadId?: unknown }).threadId;
+      if (toolContext && typeof threadId === "string") toolContext.threadId = threadId;
       const attempt = (n: number): Observable<BaseEvent> =>
         new Observable<BaseEvent>((subscriber) => {
           let produced = false;

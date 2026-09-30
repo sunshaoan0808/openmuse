@@ -238,6 +238,12 @@ export function IconButton({
           justifyContent: "center",
           borderRadius: 22,
           backgroundColor: pressed ? colors.line : "#FFFFFF",
+          // 悬浮感：顶栏图标做成浮在内容之上的小圆钮（原来是贴在白底上的一排图标）
+          shadowColor: "#132631",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.08,
+          shadowRadius: 10,
+          elevation: 2,
         },
         { transform: [{ scale }] },
       ]}
