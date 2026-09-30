@@ -213,6 +213,63 @@ commands/core/NodePermissionActivity + HatchPermissionResolver   按节点的权
 | 每连接器权限 | `HatchConnectorPermissionsListScreen` | ❌ 只有总开关 |
 | 手机节点能力 | `commands`（闹钟/健康/定位/通讯录） | ❌ 不做（见计划 §4） |
 
+## 10. 文档与文件交付（`library` 941 类 + `file` 888 类）★
+
+用户要"一份 MD 文件"时，Muse 的完整机制（符号均为直接读到）：
+
+**① 文档是带类型的产物**
+```
+conversation/viewmodel/HatchDocumentType
+  ├─ $Markdown     ← 显式区分 Markdown
+  ├─ $Html
+  └─ $Generic
+```
+**② 对话里以"文档 chip"呈现，并带菜单**
+```
+conversation/view/richcontent/HatchDocumentChipMenuActions
+  getOnDownload()            下载
+  getOnDownloadAsHtml()      下载为 HTML
+  getOnDownloadAsPdf()       下载为 PDF
+  getOnSaveToGoogleDrive()   保存到 Google Drive
+  getOnShare()               分享
+  getArtifactShareOption()   分享范围枚举
+utils/ArtifactShareOption = SHARE | PUBLISH | PUBLISH_TO_SHARE   ← 可把产物发布成链接
+conversation/viewmodel/HatchConversationViewModel$downloadDocumentAsPdf / $saveDocumentToGoogleDrive
+conversation/view/HatchConversationScreenKt$buildDocumentMenuActions$1..6
+conversation/view/richcontent/HatchDocumentChipMenuActionsKt$LocalHatchDocumentChipMenuActionsBuilder
+```
+**③ 文件存放与引用**
+```
+file/actions/HatchFileActions · HatchShare · HatchShareKt
+file/actions/HatchFileRef$Local | $Workspace     ← 文件引用分"本地"与"工作区"
+file/core/HatchLocalFileStore · AtomicFileWriter ← 落盘（原子写）
+file/core/HatchMimeResolver + $Extensions        ← 扩展名 → MIME
+```
+**④ 它认得的扩展名（`HatchMimeResolver$Extensions` 全部常量）**
+```
+文档：md mdown txt csv pdf docx pptx xlsx html htm
+代码：py ts jsx kt java go cpp hpp sql yaml toml json plist scss zsh
+媒体：mp3 m4a wav ogg mp4 mov mkv avi aac
+```
+即：**文档、源码、媒体都是"一等文件"**——源码文件也被当成可交付/可预览的产物。
+
+**⑤ 生成 Word/Office 的能力**
+```
+file/docx/DocElement$Para | $Table | $Image | $Drawing    ← 自己拼 docx 结构
+```
+
+### 对照我们（本次已经做完的 + 仍缺的）
+
+| 维度 | Muse | 我们 |
+|---|---|---|
+| 智能体写出文件 | 文档产物（Markdown/Html/Generic） | ✅ `save_document` 工具（本次加）→ 工作区 files |
+| 文件存放 | LocalFileStore + Local/Workspace 引用 | ✅ `dataDir/files`（0600）+ `/api/files/:id/content` |
+| 类型识别 | MimeResolver 认 30+ 扩展名（含源码） | ⚠️ 只认 pdf/png/jpg/webp/gif + 文本（md/txt） |
+| 对话内呈现 | **文档 chip** + 菜单 | ❌ 只有一句"文件在 Files 里" |
+| 导出 | 下载 / HTML / **PDF** / 存 Google Drive / 分享 | ⚠️ 分享（扩展名已修），**无导出 PDF/HTML** |
+| 发布链接 | `PUBLISH` / `PUBLISH_TO_SHARE` | ❌ 无 |
+| 生成 Office | docx 结构自拼 | ❌ 无（只做 PDF 表单填写） |
+
 ## 9. 使用边界
 
 - 本记录**只用于理解机制**，不搬运原版的图片/字体/颜色令牌/代码（沿用项目既定约定：不照抄 Muse 专有资产）。
