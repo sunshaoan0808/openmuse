@@ -447,7 +447,7 @@ function WorkspaceShell({
                 底下就是真实内容（卡片/文字），所以这条读起来是"顶栏"而不是"空白的白带"。 */}
             <View
               pointerEvents="none"
-              style={[FILL, { backgroundColor: "rgba(252,252,252,0.22)" }]}
+              style={[FILL, { backgroundColor: "rgba(252,252,252,0.15)" }]}
             />
             <View
               style={{
