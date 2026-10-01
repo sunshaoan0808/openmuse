@@ -1440,62 +1440,6 @@ function IdeaCard({ idea }: { idea: Idea }) {
   );
 }
 /**
- * 照 Muse 的 `HatchIdeaCardRow` / `IdeaCardDetailOrigin.CHAT`：
- * 灵感不只在「灵感」页出现，**聊天里也会冒一张卡**（右上角标"来自灵感"）。
- * 只展示最新一条未处理的；点「看看」去灵感页，点「就做这个」直接开干。
- */
-export function IdeaChatCard({ onOpenIdeas }: { onOpenIdeas?: () => void }) {
-  const { data, mutate } = useAgentWorkspace();
-  const { open } = useWorkspace();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [dismissed, setDismissed] = useState<string[]>([]);
-  const idea = (data?.ideas || []).find(
-    (item) => item.status === "new" && !dismissed.includes(item.id),
-  );
-  if (!idea) return null;
-  const target = idea; // 闭包里保住类型收窄（不然 biome 会报非空断言）
-  async function act(action: "accept" | "dismiss") {
-    setBusy(true);
-    setError("");
-    try {
-      const result = await mutate<Idea>(`/ideas/${target.id}`, { action, prompt: target.prompt });
-      if (action === "dismiss") setDismissed((ids) => [...ids, target.id]);
-      if (result.taskId && action === "accept") open({ type: "task", taskId: result.taskId });
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <Card style={{ gap: 10, padding: 15, borderRadius: 20, backgroundColor: colors.lavender }}>
-      <View style={s.between}>
-        <Text style={s.small}>{idea.seeded ? "种子灵感" : "来自灵感"}</Text>
-        <Text style={s.small}>💡</Text>
-      </View>
-      <Text style={[s.heading, { fontSize: 15, lineHeight: 22 }]}>{idea.title}</Text>
-      <Text style={s.muted} numberOfLines={2}>
-        {idea.reason}
-      </Text>
-      <ErrorNotice error={error} />
-      <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
-        <Button small primary busy={busy} onPress={() => void act("accept")}>
-          就做这个
-        </Button>
-        {!!onOpenIdeas && (
-          <Button small disabled={busy} onPress={onOpenIdeas}>
-            看看
-          </Button>
-        )}
-        <Button small disabled={busy} onPress={() => void act("dismiss")}>
-          不用了
-        </Button>
-      </View>
-    </Card>
-  );
-}
-/**
  * 短时凭据管理（照 Muse 的 `LinkDeviceTokenMinter.mint/revoke` + `TemporaryAccess`）。
  * 铁律：密钥不进日志、列表**永远只显示后 6 位**、铸造那一刻的明文只出现一次。
  */

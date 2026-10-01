@@ -35,7 +35,7 @@ import {
 } from "react-native";
 import { z } from "zod";
 import type { ActionProposal } from "../../../packages/domain/src";
-import { ArtifactCard, IdeaChatCard } from "./agent-ui";
+import { ArtifactCard } from "./agent-ui";
 import { useAgentWorkspace } from "./agent-workspace";
 import { humanizeNetworkError } from "./api";
 import { AssistantResponse } from "./assistant-response";
@@ -66,7 +66,7 @@ import { SearchToolCard } from "./search-tool-card";
 import { useSpeechInput } from "./speech";
 import { FileThreadCard, TaskThreadCard } from "./thread-artifacts";
 import { type Selection, useMuseThread } from "./threads";
-import { Button, Card, CheckRow, Chip, colors, ErrorNotice, MeasureCard, RiseIn, s } from "./ui";
+import { Button, Card, CheckRow, colors, ErrorNotice, MeasureCard, RiseIn, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 const displayParameters = z.record(z.string(), z.unknown());
@@ -800,9 +800,7 @@ export function ChatScreen({
   }
   const replying = busy || agent.isRunning;
   // 照 Muse 的 HatchSuggestionBar：把最新两三条未处理的灵感当作输入框上方的可直接点建议
-  const suggestions = (agentWorkspace?.ideas || [])
-    .filter((idea) => idea.status === "new")
-    .slice(0, 2);
+
   // 顶栏是浮在内容上的玻璃层，内容必须**从屏幕最顶端开始**（含状态栏那块），
   // 否则顶栏背后就是一片空底色 = 真机上那条"白带"。两次实测（截图逐行取色）：
   //   改之前：中线 y=0..224 全空，内容从 y=232 才开始
@@ -1091,10 +1089,6 @@ export function ChatScreen({
         {/* 并行子任务：Muse 会在聊天里按行列出现在跑的子代理，我们的派活任务也回到这里 */}
         <RunningTasks />
         {(!savedThreads || selection.id === mainId) && <BackgroundUpdates />}
-        {/* 照 Muse 的 HatchIdeaCardRow / Origin.CHAT：灵感也会以卡片形式出现在聊天里 */}
-        {(!savedThreads || selection.id === mainId) && (
-          <IdeaChatCard onOpenIdeas={() => navigate("ideas")} />
-        )}
         {(busy || agent.isRunning) && (
           <View
             accessibilityLabel="智能体正在工作"
@@ -1296,28 +1290,6 @@ export function ChatScreen({
               </Button>
             )}
           </RiseIn>
-        )}
-        {/* 照 Muse 的 HatchSuggestionBar：输入框上方给两三条能直接开干的建议 */}
-        {!!suggestions.length && (
-          <View
-            style={[s.row, { gap: 8, flexWrap: "wrap", paddingHorizontal: 4, paddingBottom: 9 }]}
-          >
-            {suggestions.map((idea) => (
-              <Pressable
-                key={idea.id}
-                accessibilityRole="button"
-                accessibilityLabel={`尝试：${idea.title}`}
-                disabled={busy || agent.isRunning || !isReady || !loaded}
-                onPress={() => {
-                  hapticTap();
-                  enqueue(idea.prompt);
-                }}
-                style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-              >
-                <Chip tint={colors.lavender}>💡 {idea.title}</Chip>
-              </Pressable>
-            ))}
-          </View>
         )}
         <View
           style={{
