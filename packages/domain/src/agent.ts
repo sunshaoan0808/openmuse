@@ -182,6 +182,26 @@ export const createTaskSchema = z.object({
   /** 提出这件事的会话：让结果/审批回到它开始的地方 */
   threadId: z.string().trim().max(200).optional(),
   input: z.record(z.string(), z.unknown()).default({}),
+  /**
+   * 这个任务需要的**短时凭据**（照 Muse：铸一把用一把，任务结束即销毁）。
+   * 服务端在这里铸，明文只留在库里供工具取用，任务终态时吊销并擦掉明文。
+   */
+  credentials: z
+    .array(
+      z.object({
+        label: z.string().trim().min(1).max(80),
+        kind: z.enum(["git", "api", "ssh"]),
+        scopes: z.array(z.string().trim().min(1).max(60)).max(12).optional(),
+        ttlMs: z
+          .number()
+          .int()
+          .positive()
+          .max(24 * 60 * 60_000)
+          .optional(),
+      }),
+    )
+    .max(4)
+    .optional(),
 });
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
 export const monitorInputSchema = z

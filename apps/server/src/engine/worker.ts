@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentTask, RunEvent } from "../../../../packages/domain/src/agent.ts";
+import { type TaskSecrets, taskSecrets } from "../credentials.ts";
 import type { Store } from "../db.ts";
 import { backgroundFailure } from "../log.ts";
 
@@ -14,6 +15,11 @@ export interface TaskContext {
   guard(): Promise<void>;
   checkpoint(patch: Partial<AgentTask>): Promise<AgentTask>;
   event(kind: RunEvent["kind"], title: string, detail?: string): Promise<void>;
+  /**
+   * 这个任务的短时凭据（照 Muse：任务级 + 用完即销毁）。
+   * 明文只在这条通道里出现；`redact()` 用来把日志/事件里的明文换成 …后6位。
+   */
+  secrets?: TaskSecrets;
 }
 export type TaskHandler = (
   owner: string,
@@ -192,6 +198,7 @@ export class TaskWorker {
         guard,
         checkpoint,
         event,
+        secrets: await taskSecrets(this.db, owner, task),
       });
       await checkpoint({ ...result, leaseId: null, leaseUntil: null });
       await this.db.put(owner, "runs", {
