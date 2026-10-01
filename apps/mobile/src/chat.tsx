@@ -49,11 +49,7 @@ import { runConversationTurn } from "./conversation-run";
 import { loadCursor, outboxStorage, saveCursor } from "./conversation-store";
 import { guard } from "./crash-log";
 import { hapticPress, hapticSuccess, hapticTap, hapticWarn } from "./haptics";
-import {
-  headerScrollHandler,
-  markUserScroll,
-  trackHeaderCollapse,
-} from "./header-scrim";
+import { headerScrollHandler, markUserScroll, trackHeaderCollapse } from "./header-scrim";
 import {
   captureImage,
   type ImageSource,
