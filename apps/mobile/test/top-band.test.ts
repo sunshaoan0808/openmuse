@@ -50,34 +50,27 @@ test("顶栏必须占位：不能是绝对定位的覆盖层（否则正文从�
   assert.ok(!/paddingTop:\s*chromeTop/.test(code), "不该再用 chromeTop 做滚动内边距");
 });
 
-test("顶栏底色不能用 BlurView：Android 模糊不可用时它退化成白色实底（第一轮的翻车点）", () => {
+test("顶栏底色：不透明实色 + 不用 BlurView（半透明只在它浮在内容上时才需要，现在已经占位）", () => {
   const code = strip(read("App.tsx"));
-  // 三个小控件（radius 18/19）用玻璃是对的；**整条顶栏**（radius 0，铺满全宽）不能套 BlurView
-  assert.equal(
-    /<GlassLayer radius=\{0\}/.test(code),
-    false,
-    "整条顶栏不能再套 GlassLayer：真机上模糊不可用时它退化成白色实底，又变成一条白带",
+  // 第一轮翻车点：整条顶栏套玻璃，Android 模糊不可用时退化成白色实底
+  assert.ok(!/<GlassLayer radius=\{0\}/.test(code), "整条顶栏不能套玻璃");
+  // 底色必须是不透明实色：顶栏占位之后，半透明只会让下沿那行被裁掉的字透出来，
+  // 看着就像"正文被白条盖住"（用户实测反馈）。
+  assert.match(
+    code,
+    /\[FILL, \{ backgroundColor: colors\.canvas \}\]/,
+    "顶栏底色应是不透明的画布色",
   );
-  assert.match(code, /rgba\(252,\s*252,\s*252,\s*0\.\d+\)/, "顶栏应该用一层画布色半透明遮罩");
+  assert.ok(!/rgba\(252,\s*252,\s*252/.test(code), "不该再用半透明白做顶栏底色");
+  // 下沿一条发丝线
+  assert.match(
+    code,
+    /bottom: 0,\s*height: 1,\s*backgroundColor: "rgba\(19,\s*38,\s*49,\s*0\.07\)"/,
+    "下沿应有发丝线划清边界",
+  );
 });
 
 test("对话页不再用 -insets.top 抵消（外壳不再留内边距，抵消反而会把内容推出屏幕）", () => {
   const code = strip(read("src/chat.tsx"));
   assert.equal(/-insets\.top/.test(code), false, "chat.tsx 里不该再有 -insets.top");
-});
-
-test("顶栏底色必须看得见：整条一个极低 alpha 就是用户看到的「没有白条」", () => {
-  const code = strip(read("App.tsx"));
-  // 顶栏底色是分段渐变（上实下虚）。整条只给一个 0.15 的白，叠在浅色页面上等于看不见 ——
-  // 这是真机上用户直接反馈过的问题，所以在这里钉住：最上面那段要够实，最下面那段要够虚。
-  const alphas = [
-    ...code.matchAll(/backgroundColor:\s*"rgba\(252,\s*252,\s*252,\s*([0-9.]+)\)"/g),
-  ].map((m) => Number(m[1]));
-  assert.ok(alphas.length >= 3, `顶栏底色应该是分段渐变，当前只有 ${alphas.length} 层`);
-  const strongest = Math.max(...alphas);
-  const faintest = Math.min(...alphas);
-  assert.ok(strongest >= 0.5, `最上面那段必须够实才读得出是一条栏，当前最实 ${strongest}`);
-  assert.ok(faintest <= 0.2, `最下面那段要接近透明，下沿才不会切出硬边，当前最虚 ${faintest}`);
-  // 上实下虚：靠上的分段必须比靠下的实（取前两个出现顺序即可）
-  assert.ok(alphas[0] > alphas[alphas.length - 1], "渐变方向反了：应该是上实下虚");
 });
