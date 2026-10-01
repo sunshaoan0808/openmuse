@@ -390,7 +390,8 @@ previewImageUrl, selectable, isSelected   ← 可勾选，勾选后一起执行
 `IdeaCardDetailOrigin`（枚举）：**`CHAT`** 与 **`FEED`** → 同一张卡既能在**聊天里**出现，
 也能在 feed 里出现（来源可区分）。
 `IdeaCardsViewerStateJson.hasBuiltIdea` → 存在"我已经造过一张"的用户状态。
-`IdeaBadgeJson/DisplayBadgeJson.text`、`IdeaLabelJson` → 卡片上的角标/标签是数据驱动的。
+`IdeaBadgeJson/DisplayBadgeJson.text`、`IdeaLabelJson` → 卡片上的角标/标签是数据驱动的；
+`IdeaCardPresentationJson.badgeTexts()` 是从 badges 派生出来的展示方法（角标文案在客户端算）。
 
 ### 11.2 交互闭环（类名即证据）
 
@@ -406,7 +407,8 @@ previewImageUrl, selectable, isSelected   ← 可勾选，勾选后一起执行
 ### 11.3 会话侧（`conversation/view/`）
 
 - `HatchIdeaCardRow` / `HatchIdeaRowCardKt` / `HatchIdeaWidgetCardKt` → 灵感**以卡片形式出现在聊天里**
-- `HatchSuggestionBarKt` + `HatchSuggestionLabels`（按 `UiAction` 取文案）→ 输入框上方的**建议条**
+- `HatchSuggestionBarKt` + `HatchSuggestionLabels.resources(UiAction): LabelResources`
+  → 输入框上方的**建议条**；建议的文案是**按动作类型**取资源，不是写死的字符串
 - `SeededIdeaDetail{detail, isExecutable}` + `IdeaWidgetSeedKt` → **预置/种子灵感**，且标注"是否可执行"
 - `HatchSpaceProposalCardKt` → 还有一类"空间提案"卡（与灵感并列的主动提议）
 
