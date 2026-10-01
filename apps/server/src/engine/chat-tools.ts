@@ -7,7 +7,7 @@ import {
 } from "../../../../packages/domain/src/agent.ts";
 import { type TaskSecrets, taskSecrets } from "../credentials.ts";
 import { withActivity } from "../live-activity.ts";
-import { ensureTaskSandbox } from "../sandbox.ts";
+import { assertRelative, ensureTaskSandbox, type Sandbox } from "../sandbox.ts";
 import { hasCjk, mergeSearchResults } from "../search.ts";
 import { lookAtImage } from "../vision.ts";
 import type { AgentService } from "./service.ts";
@@ -453,7 +453,110 @@ export function chatTools(ctx: ChatToolContext): NeutralTool[] {
       execute: async ({ repo, remote, branch }) =>
         runSandboxGit(ctx, "push", { repo, remote, branch }),
     }),
+    // ---- 沙箱工作区里的文件动作：让模型能自己改代码，再交给 git 工具提交 ----
+    tool({
+      name: "workspace_list_files",
+      description:
+        "List files in this task's sandboxed workspace (relative directory, default the workspace root). Only available inside a task.",
+      parameters: z.object({ dir: z.string().trim().max(200).optional() }),
+      execute: async ({ dir }) => {
+        const resolved = await resolveTaskSandbox(ctx, {});
+        if ("error" in resolved) return resolved;
+        const target = dir?.trim() ? assertRelative(dir) : ".";
+        const run = await resolved.box.exec(`ls -la /workspace/${target} | head -100`, {
+          timeoutMs: 20_000,
+        });
+        return { ok: run.code === 0, output: (run.stdout || run.stderr).slice(0, 4000) };
+      },
+    }),
+    tool({
+      name: "workspace_read_file",
+      description:
+        "Read a text file inside this task's sandboxed workspace. <path> is a relative path inside the workspace (no .., no absolute paths). Only available inside a task.",
+      parameters: z.object({ path: z.string().trim().min(1).max(300) }),
+      execute: async ({ path }) => {
+        const resolved = await resolveTaskSandbox(ctx, {});
+        if ("error" in resolved) return resolved;
+        try {
+          const content = await resolved.box.read(path);
+          return {
+            ok: true,
+            path,
+            content: (ctx.secrets?.redact(content) ?? content).slice(0, 20000),
+          };
+        } catch (error) {
+          return { error: error instanceof Error ? error.message : "读文件失败" };
+        }
+      },
+    }),
+    tool({
+      name: "workspace_write_file",
+      description:
+        "Create or overwrite a text file inside this task's sandboxed workspace. <path> is a relative path inside the workspace (no .., no absolute paths). Only available inside a task.",
+      parameters: z.object({
+        path: z.string().trim().min(1).max(300),
+        content: z.string().max(400_000),
+      }),
+      execute: async ({ path, content }) => {
+        const resolved = await resolveTaskSandbox(ctx, {});
+        if ("error" in resolved) return resolved;
+        try {
+          await resolved.box.write(path, content);
+          return { ok: true, path, bytes: content.length };
+        } catch (error) {
+          return { error: error instanceof Error ? error.message : "写文件失败" };
+        }
+      },
+    }),
+    tool({
+      name: "workspace_edit_file",
+      description:
+        "Replace an exact string in a file inside this task's sandboxed workspace (must match exactly once, else nothing is written). Only available inside a task.",
+      parameters: z.object({
+        path: z.string().trim().min(1).max(300),
+        oldText: z.string().min(1).max(200_000),
+        newText: z.string().max(400_000),
+      }),
+      execute: async ({ path, oldText, newText }) => {
+        const resolved = await resolveTaskSandbox(ctx, {});
+        if ("error" in resolved) return resolved;
+        try {
+          const current = await resolved.box.read(path);
+          const parts = current.split(oldText);
+          if (parts.length === 1) return { error: "文件里找不到要替换的原文（没有改动）。" };
+          if (parts.length > 2)
+            return { error: `原文在文件里出现了 ${parts.length - 1} 次，不唯一（没有改动）。` };
+          await resolved.box.write(path, parts.join(newText));
+          return { ok: true, path, replaced: 1 };
+        } catch (error) {
+          return { error: error instanceof Error ? error.message : "改文件失败" };
+        }
+      },
+    }),
   ]);
+}
+
+/** 取当前任务的沙箱（任务路径里 threadId 就是 task.id；聊天里查不到任务 → 拒绝） */
+async function resolveTaskSandbox(
+  ctx: ChatToolContext,
+  options: { network?: "none" | "egress"; repo?: string },
+): Promise<
+  { box: Sandbox; task: { id: string; state?: Record<string, unknown> } } | { error: string }
+> {
+  const task = await ctx.service.db.get<{ id: string; state?: Record<string, unknown> }>(
+    ctx.owner,
+    "tasks",
+    ctx.taskId ?? ctx.threadId,
+  );
+  if (!task) return { error: "这个动作只在任务里可用：聊天里不会替你动文件、提交或推送。" };
+  const box = await ensureTaskSandbox(
+    ctx.service.config.dataDir,
+    ctx.service.db,
+    ctx.owner,
+    task,
+    options,
+  );
+  return { box, task };
 }
 
 /** 沙箱里跑 git 的公共实现：校验路径、按需建沙箱、密钥只走环境变量、输出过脱敏 */
@@ -464,16 +567,9 @@ async function runSandboxGit(
 ): Promise<Record<string, unknown>> {
   if (!/^[A-Za-z0-9._-]+$/.test(args.repo))
     return { error: "仓库名只能是工作区里的目录名（字母数字._-），不接受路径。" };
-  // 任务路径里 threadId 就是任务 id（model.ts 用 task.id 当 threadId），聊天路径查不到任务 → 直接拒绝
-  const task = await ctx.service.db.get<{ id: string; state?: Record<string, unknown> }>(
-    ctx.owner,
-    "tasks",
-    ctx.taskId ?? ctx.threadId,
-  );
-  if (!task)
-    return {
-      error: "这个动作只在任务里可用：聊天里不会替你执行任何写操作（提交/推送）。",
-    };
+  const resolved = await resolveTaskSandbox(ctx, {});
+  if ("error" in resolved) return resolved;
+  const { task } = resolved;
   const secrets = ctx.secrets ?? (await taskSecrets(ctx.service.db, ctx.owner, task));
   const useCredential = action === "push" && !!args.remote && /^https?:\/\//i.test(args.remote);
   // 任务可以在 input.repoPath 里声明源仓库：沙箱只读挂它（/repo），需要时克隆进工作区

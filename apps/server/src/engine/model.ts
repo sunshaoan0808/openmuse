@@ -6,11 +6,23 @@ import { z } from "zod";
 import type { AgentTask } from "../../../../packages/domain/src/agent.ts";
 import { emailDraftSchema, eventDraftSchema } from "../../../../packages/domain/src/index.ts";
 import { computerInstructions, computerTools } from "../computer-tools.ts";
+import { taskSecrets } from "../credentials.ts";
 import { activityFor, friendlyToolError, recordActivity, stepEventFor } from "../live-activity.ts";
+import { chatTools } from "./chat-tools.ts";
 import type { AgentService } from "./service.ts";
 import { tanstackAgent } from "./tanstack-agent.ts";
 import { forAgUi } from "./tool-kit.ts";
 import type { TaskContext } from "./worker.ts";
+
+/** 任务里可用的沙箱工具名（②b/②c）—— 只取这几个，不把整套聊天工具塞进任务 */
+const SANDBOX_TOOL_NAMES = new Set([
+  "git_commit",
+  "git_push",
+  "workspace_list_files",
+  "workspace_read_file",
+  "workspace_write_file",
+  "workspace_edit_file",
+]);
 
 export async function executeModelTask(
   service: AgentService,
@@ -102,6 +114,20 @@ export async function executeModelTask(
           await ctx.guard();
         },
       }),
+    ),
+    // 沙箱里的文件/git 动作（②b/②c）：任务路径原本只挂 computerTools，这批工具对任务不可见，
+    // 模型只好去调 write_computer_file（那套要走 docker，本机不可用）→ 这里按名字取出来挂上。
+    ...forAgUi(
+      chatTools({
+        service,
+        owner,
+        threadId: task.id, // 任务路径里 threadId 就是 task.id（沙箱/凭据都按它解析）
+        requestKey: `task:${task.id}`,
+        key: (name, value) => `${name}:${JSON.stringify(value ?? null)}`,
+        signal: ctx.signal,
+        taskId: task.id,
+        secrets: await taskSecrets(service.db, owner, task),
+      }).filter((entry) => SANDBOX_TOOL_NAMES.has(entry.name)),
     ),
     tool(
       "set_plan",
