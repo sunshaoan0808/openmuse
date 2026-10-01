@@ -309,8 +309,8 @@ const FILL = { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 } as c
 function GlassLayer({ radius = 999 }: { radius?: number }) {
   return (
     <View pointerEvents="none" style={[FILL, { borderRadius: radius, overflow: "hidden" }]}>
-      <BlurView intensity={48} tint="light" experimentalBlurMethod="dimezisBlurView" style={FILL} />
-      <View style={[FILL, { backgroundColor: "rgba(255,255,255,0.28)" }]} />
+      <BlurView intensity={34} tint="light" experimentalBlurMethod="dimezisBlurView" style={FILL} />
+      <View style={[FILL, { backgroundColor: "rgba(255,255,255,0.14)" }]} />
     </View>
   );
 }
@@ -441,7 +441,7 @@ function WorkspaceShell({
                   opacity: pressed ? 0.65 : 1,
                 })}
               >
-                <Mascot size={desktop ? 46 : 38} variant={data?.identity.avatar} />
+                <Mascot size={desktop ? 46 : 38} variant={data?.identity.avatar} glass />
                 {/* Muse 实测结构：中间是一张白色圆角卡片（头像叠在上沿），
                     第二行可变——空闲是入口，干活时是"当前在做什么"。 */}
                 <View

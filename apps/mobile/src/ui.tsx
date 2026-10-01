@@ -243,8 +243,8 @@ export function IconButton({
           borderRadius: 18,
           backgroundColor: glass
             ? pressed
-              ? "rgba(255,255,255,0.75)"
-              : "rgba(255,255,255,0.42)"
+              ? "rgba(255,255,255,0.5)"
+              : "rgba(255,255,255,0.24)"
             : pressed
               ? colors.line
               : "#FFFFFF",
@@ -744,15 +744,29 @@ export function LinkRow({
 export function Mascot({
   size = 42,
   variant = "sky",
+  glass = false,
 }: {
   size?: number;
   variant?: "sky" | "sand" | "lilac";
+  /**
+   * 玻璃顶栏上用 true：水豚背后那块垫色改成**半透明**。
+   * 真机实测：这块垫色原本完全不透明（rgb(236,245,250) alpha=1，29×29），
+   * 水豚本身是抠好的透明 PNG，所以"水豚下面那条白块"其实就是它 —— 不是图没抠。
+   */
+  glass?: boolean;
 }) {
   const palette = {
     sky: "#ECF5FA",
     sand: "#FAF0DF",
     lilac: "#F1ECF9",
   }[variant];
+  const chip = glass
+    ? palette
+        .replace("#", "")
+        .match(/.{2}/g)
+        ?.map((h) => Number.parseInt(h, 16))
+        .join(", ") ?? "236, 245, 250"
+    : null;
   return (
     <View accessibilityLabel="OpenMuse 水豚" style={{ width: size, height: size }}>
       <View
@@ -763,7 +777,8 @@ export function Mascot({
           width: size * 0.76,
           height: size * 0.76,
           borderRadius: size,
-          backgroundColor: palette,
+          backgroundColor: chip ? `rgba(${chip}, 0.26)` : palette,
+          ...(chip ? { borderWidth: 1, borderColor: "rgba(19,38,49,0.05)" } : {}),
         }}
       />
       <Image
