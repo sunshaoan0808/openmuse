@@ -735,6 +735,27 @@ function isPdf(file: Artifact) {
 function isText(file: Artifact) {
   return file.mimeType.startsWith("text/") || /\.(md|txt)$/i.test(file.name.trim());
 }
+
+/** 图片：服务端一直认得（png/jpg/webp/gif），但移动端预览以前把它丢给 Office 渲染器 ⇒ 等于不能预览 */
+function isImage(file: Artifact) {
+  return (
+    file.mimeType.startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp|heic)$/i.test(file.name.trim())
+  );
+}
+
+/** 分享时用的扩展名：以 mimeType 为准，兜底看文件名，再兜底 png */
+function imageExtension(file: Artifact): string {
+  const fromMime = file.mimeType.split("/")[1]?.toLowerCase();
+  if (fromMime && /^(png|jpeg|jpg|webp|gif|bmp|heic)$/.test(fromMime))
+    return fromMime === "jpeg" ? "jpg" : fromMime;
+  const fromName = file.name
+    .trim()
+    .match(/\.([A-Za-z0-9]+)$/)?.[1]
+    ?.toLowerCase();
+  return fromName && /^(png|jpe?g|webp|gif|bmp|heic)$/.test(fromName)
+    ? fromName.replace("jpeg", "jpg")
+    : "png";
+}
 function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
   const { api, refresh, open, close } = useWorkspace();
   const [values, setValues] = useState<Record<string, string | boolean>>(() =>
@@ -786,15 +807,31 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
         return;
       }
       // 扩展名与类型要跟着文件走：之前一律存成 .pdf 并声明 PDF，文本文件分享出去会是坏文件
-      const extension = textFile ? (/[.](txt)$/i.test(f.name) ? "txt" : "md") : "pdf";
+      const extension = textFile
+        ? /[.](txt)$/i.test(f.name)
+          ? "txt"
+          : "md"
+        : isImage(f)
+          ? imageExtension(f)
+          : "pdf";
       const target = `${FileSystem.cacheDirectory}${f.id}.${extension}`;
       await FileSystem.downloadAsync(url, target, {
         headers: { Authorization: `Bearer ${api.token}` },
       });
       if (await Sharing.isAvailableAsync())
         await Sharing.shareAsync(target, {
-          mimeType: extension === "pdf" ? "application/pdf" : "text/markdown",
-          UTI: extension === "pdf" ? "com.adobe.pdf" : "net.daringfireball.markdown",
+          mimeType: textFile
+            ? extension === "txt"
+              ? "text/plain"
+              : "text/markdown"
+            : isImage(f)
+              ? f.mimeType || `image/${extension}`
+              : "application/pdf",
+          UTI: isImage(f)
+            ? "public.image"
+            : extension === "pdf"
+              ? "com.adobe.pdf"
+              : "net.daringfireball.markdown",
         });
       else throw new Error("此设备不支持分享。");
     } catch (e) {
@@ -804,7 +841,7 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
   return (
     <Sheet
       title={f.name}
-      subtitle={`${isText(f) ? "" : `${f.pageCount} pages · `}${Math.max(1, Math.round(f.size / 1024))} KB · ${f.source}`}
+      subtitle={`${isText(f) || isImage(f) ? "" : `${f.pageCount} pages · `}${Math.max(1, Math.round(f.size / 1024))} KB · ${f.source}`}
       onClose={close}
       wide
       hero={hero}
@@ -822,6 +859,25 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
             </ScrollView>
           </View>
         )
+      ) : isImage(f) ? (
+        // 图片：以前掉进下面的 Office 渲染器 ⇒ 等于“不支持预览”（用户报过）。
+        // 走 Image + Authorization 头取图（与 PdfReader 同一套鉴权方式）。
+        <View
+          style={{
+            height: 420,
+            backgroundColor: colors.canvas,
+            borderRadius: 12,
+            overflow: "hidden",
+            justifyContent: "center",
+          }}
+        >
+          <Image
+            source={{ uri: url, headers: { Authorization: `Bearer ${api.token}` } }}
+            style={{ width: "100%", height: "100%" }}
+            resizeMode="contain"
+            accessibilityLabel={f.name}
+          />
+        </View>
       ) : (
         // Word / Excel / PowerPoint 走离线渲染（pptx 会降级为“用外部应用打开”）
         <OfficeReader url={url} token={api.token} name={f.name} size={f.size} />
