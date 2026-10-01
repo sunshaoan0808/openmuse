@@ -156,11 +156,22 @@ export function markdownToHtml(markdown: string): string {
   return html.join("\n");
 }
 
-/** 包成一个完整、手机可读的 HTML 文档（与 App 内的 HtmlReader 用同一套阅读样式） */
-export function wrapHtmlDocument(title: string, body: string): string {
+/**
+ * 包成一个完整、手机可读的 HTML 文档（与 App 内的 HtmlReader 用同一套阅读样式）。
+ * description 只用于分享预览（og:description），传纯文本即可，内部会转义。
+ */
+export function wrapHtmlDocument(title: string, body: string, description?: string): string {
+  const meta = [
+    `<meta property="og:title" content="${escapeHtml(title)}" />`,
+    description ? `<meta property="og:description" content="${escapeHtml(description)}" />` : "",
+    `<meta name="viewport" content="width=device-width, initial-scale=1" />`,
+  ]
+    .filter(Boolean)
+    .join("\n");
   return `<!doctype html>
 <html><head><meta charset="utf-8" />
 <title>${escapeHtml(title)}</title>
+${meta}
 <style>
   html,body{margin:0;padding:18px;background:#ffffff;color:#132631;
             font:16px/1.7 -apple-system,system-ui,"PingFang SC","Microsoft YaHei",sans-serif;

@@ -51,10 +51,17 @@ export function publishRoutes(files: Files) {
       const isMarkdown =
         file.mimeType === "text/markdown" || /\.(md|mdown|markdown)$/i.test(file.name);
       c.header("Content-Type", "text/html; charset=utf-8");
+      // 摘要取正文头一段（去掉 markdown 记号），只为了让分享出去的链接有预览文字
+      const excerpt = text
+        .replace(/[#>*`_[\]]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 120);
       return c.body(
         wrapHtmlDocument(
           file.name,
           isMarkdown ? markdownToHtml(text) : `<pre>${escapeHtml(text)}</pre>`,
+          excerpt,
         ),
       );
     }
