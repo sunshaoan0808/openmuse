@@ -16,6 +16,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   AppState,
   Platform,
   Pressable,
@@ -49,7 +50,13 @@ import { CrashNotice } from "./src/crash-notice";
 import { Details } from "./src/details";
 import { ErrorBoundary } from "./src/error-boundary";
 import { hapticTap } from "./src/haptics";
-import { headerScrollHandler } from "./src/header-scrim";
+import {
+  chromeHeight,
+  headerScrollHandler,
+  headerTranslateY,
+  markUserScroll,
+  trackHeaderCollapse,
+} from "./src/header-scrim";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
 import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from "./src/ui";
@@ -412,13 +419,16 @@ function WorkspaceShell({
                 : section === "goals"
                   ? GoalsScreen
                   : AppsScreen;
+  // 顶栏高度：内容按它留内边距（照 Muse 的 HatchForegroundHeaderState.contentInsetPx），
+  // 顶栏收起时也按它整体上移。两处共用一个值，免得各改各的。
+  const chromeTop = chromeHeight(desktop, insets.top);
   const utility = ["mail", "calendar", "browser", "files"].includes(section);
   return (
     <>
       <WorkspaceTools />
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.canvas }} edges={["bottom"]}>
         <View style={{ flex: 1, width: "100%", maxWidth: 760, alignSelf: "center" }}>
-          <View
+          <Animated.View
             // 这里原来用 expo-blur 的 BlurView（tint=light + dimezisBlurView）。
             // 真机实测：Android 上它没能真模糊时**退化成一层白色实底**，于是整条顶栏变成
             // 从屏幕左到右的白色横带（下边缘还是硬边），三个白色控件被同色淹没 ——
@@ -431,12 +441,14 @@ function WorkspaceShell({
             pointerEvents="box-none"
             style={{
               position: "absolute",
+              // 收起时整条上移出视野（展开时位置不变）
+              transform: [{ translateY: headerTranslateY(chromeTop) }],
               // 从屏幕最顶端开始，连状态栏那条区域一起盖住
               top: -insets.top,
               left: 0,
               right: 0,
               zIndex: 6,
-              height: (desktop ? 124 : 104) + insets.top,
+              height: chromeTop,
               paddingTop: insets.top + (desktop ? 12 : 2),
               paddingHorizontal: 20,
             }}
@@ -557,15 +569,22 @@ function WorkspaceShell({
                 </Text>
               </Pressable>
             </View>
-          </View>
-          <View style={{ flex: 1, minHeight: 0, paddingTop: desktop ? 12 : 8 }}>
+          </Animated.View>
+          <View style={{ flex: 1, minHeight: 0 }}>
             {section !== "chat" && (
               <ScrollView
                 key={section}
                 showsVerticalScrollIndicator={false}
-                onScroll={headerScrollHandler()}
+                onScroll={headerScrollHandler(trackHeaderCollapse)}
+                // 只有用户真的拖动过才让顶栏收起（否则页面打开时的程序化滚动会把顶栏收掉）
+                onScrollBeginDrag={markUserScroll}
                 scrollEventThrottle={16}
-                contentContainerStyle={{ paddingHorizontal: desktop ? 42 : 22, paddingBottom: 28 }}
+                contentContainerStyle={{
+                  paddingHorizontal: desktop ? 42 : 22,
+                  paddingBottom: 28,
+                  // 静止时第一条内容正好落在顶栏下沿，不被遮；滚动时从顶栏底下穿过去
+                  paddingTop: chromeTop + 10,
+                }}
                 keyboardShouldPersistTaps="handled"
               >
                 {utility && (
