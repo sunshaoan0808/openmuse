@@ -1154,13 +1154,23 @@ export function DelegateSheet() {
 }
 export function IdeasScreen() {
   const { data, mutate } = useAgentWorkspace();
+  const { navigate, notify } = useWorkspace();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function refreshIdeas() {
     setBusy(true);
     setError("");
     try {
-      await mutate("/ideas/refresh", {});
+      const refreshed = await mutate<{ id: string; status: string }[]>("/ideas/refresh", {});
+      const fresh = (Array.isArray(refreshed) ? refreshed : []).filter(
+        (idea) => idea?.status === "new",
+      );
+      // 灵感按来源内容去重：同一封邮件只提醒一次，处理过就不再重复推荐 —— 所以"没反应"很常见，
+      // 必须把原因说出来，否则看起来就是按钮坏了
+      if (!fresh.length)
+        notify(
+          "暂时没有新的灵感 —— 灵感来自你已连接的应用，而且同一来源只提醒一次。去「应用」里连上邮箱或日历再试。",
+        );
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -1184,9 +1194,15 @@ export function IdeasScreen() {
       {!ideas.length && (
         <Empty
           icon={Lightbulb}
-          title="给好点子留个位置"
-          detail="从你授权过的来源里找灵感，每条建议都会附上依据。"
-        />
+          title="还没有可做的灵感"
+          detail="灵感不是凭空来的：我会从你**已连接的应用**（邮箱、日历）里找线索，每条都附上原文出处和依据。
+
+现在还没有连接任何应用，所以没有来源可看；就算连上了，同一个来源也只提醒一次，处理过就不再重复。"
+        >
+          <Button small icon={ArrowRight} onPress={() => navigate("apps")}>
+            去连接应用
+          </Button>
+        </Empty>
       )}
       {(data?.ideas || [])
         .filter((idea) => idea.status === "accepted")
