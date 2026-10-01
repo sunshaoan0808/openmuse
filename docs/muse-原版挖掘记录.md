@@ -357,3 +357,77 @@ file/docx/DocElement$Para | $Table | $Image | $Drawing    ← 自己拼 docx 结
 - 本记录**只用于理解机制**，不搬运原版的图片/字体/颜色令牌/代码（沿用项目既定约定：不照抄 Muse 专有资产）。
 - 尺寸/配色中，只有"截图逐像素量出来的"那一节是近似值；符号与字段名是直接读到的。
 - 资源常量（精确色值、圆角、动效曲线）**没有**取到：`resources.arsc` 被加固，要拿就只能上真机做动态测量。
+
+---
+
+## 11. 灵感（explore / IdeaCard）—— 比我们原来的理解大得多
+
+上一版我以为"灵感"就是一条建议 + 接受/忽略。挖完 `com.facebook.aura.explore`（**44 个类**）
++ 会话侧的 `HatchIdea*` 之后，它其实是一整套**内容 feed + 可执行卡片**系统。
+
+样本：`/home/ubuntu/muse-pkg/muse.apk`（com.facebook.aura 9.0.0.23.178，48514 类）。
+复现：`grep "aura/explore/" /tmp/muse-classes.txt`；`droidasc getclass <apk> <FQCN>`。
+
+### 11.1 数据模型（字段名即证据，均 observed）
+
+`explore/repo/IdeaCard`（一张卡片 / 一条灵感）：
+```
+ideaCardId, title, summary, detailDescription,
+fitReason,          ← "为什么贴合你"（我们的 reason 只到这个的一半）
+buildSummary, buildStatus,   ← 这张卡是要**造东西**的（有构建状态与摘要）
+previewImageUrl, iconUrl, iconMimeType,
+primaryLabel, secondaryLabel, actionLabel, displayBadgeText, badges,
+sharing: IdeaSharing        ← 可分享
+```
+`explore/repo/IdeaCardItem`（卡片**内部**的可选项，一张卡有多个 item）：
+```
+itemId, kind, title, summary, detailDescription, buildSummary,
+previewImageUrl, selectable, isSelected   ← 可勾选，勾选后一起执行
+```
+`explore/repo/IdeaCardSection` / `IdeaSectionJson`：`sectionId, title, subtitle, layout, cards[]`
+→ feed 是**分区的**，不是一维列表。
+`IdeaCardLayout`（枚举）：**`IDEAS`** 与 **`COMMUNITY_ROWS`** → 至少两种版式（灵感流 / 社区流）。
+`IdeaCardDetailOrigin`（枚举）：**`CHAT`** 与 **`FEED`** → 同一张卡既能在**聊天里**出现，
+也能在 feed 里出现（来源可区分）。
+`IdeaCardsViewerStateJson.hasBuiltIdea` → 存在"我已经造过一张"的用户状态。
+`IdeaBadgeJson/DisplayBadgeJson.text`、`IdeaLabelJson` → 卡片上的角标/标签是数据驱动的。
+
+### 11.2 交互闭环（类名即证据）
+
+| 能力 | 类 | 说明 |
+|---|---|---|
+| 执行 | `IdeaCardExecuteRequestJson{itemIds, mode}` → `IdeaCardExecuteResult{executionId, ideaCardId, status}` | **按 itemIds 执行**（不是整卡一把梭），`mode` 可切换方式 |
+| 执行状态 | `IdeaCardExecuteStatus{ACCEPTED, QUEUED, UNKNOWN}`、`IdeaCardExecutionState` | 接受后进入**排队**，与我们"接受→建任务"同构但更细 |
+| 反馈 | `IdeaFeedback{UP, DOWN}`（带 `wireValue`）、`IdeaEngagementRequestJson` | 点赞/点踩回路，喂给推荐 |
+| 分享 | `IdeaCardShareAttempt/Response/Result` | 单卡可分享 |
+| 分页 | `IdeaCardsFeedResponse`、`IdeaCardsPaginationJson` | feed 是**分页**的 |
+| 详情合并 | `IdeaCardDetailMergeKt`、`IdeaCardDetailViewModel` | 详情与聊天流合并展示 |
+
+### 11.3 会话侧（`conversation/view/`）
+
+- `HatchIdeaCardRow` / `HatchIdeaRowCardKt` / `HatchIdeaWidgetCardKt` → 灵感**以卡片形式出现在聊天里**
+- `HatchSuggestionBarKt` + `HatchSuggestionLabels`（按 `UiAction` 取文案）→ 输入框上方的**建议条**
+- `SeededIdeaDetail{detail, isExecutable}` + `IdeaWidgetSeedKt` → **预置/种子灵感**，且标注"是否可执行"
+- `HatchSpaceProposalCardKt` → 还有一类"空间提案"卡（与灵感并列的主动提议）
+
+### 11.4 与我们的差距（现状 → Muse）
+
+| 维度 | 我们 | Muse |
+|---|---|---|
+| 来源 | 只在「灵感」页 | **聊天里也会出卡**（`Origin.CHAT`）+ 建议条 |
+| 结构 | 一维列表 | **分区 + 分页**（`Section`/`Layout`） |
+| 卡片信息 | title/reason/evidence/prompt | 再加 **fitReason / 预览图 / 图标 / badges / primary·secondary·action** |
+| 粒度 | 整条接受或忽略 | 卡片内**多个可勾选 item**，按 itemIds 执行 |
+| 反馈 | 无 | **UP/DOWN** 回流 |
+| 分享 | 无 | 单卡分享 |
+| 预置 | 无 | **种子灵感**（seeded，标注可执行性） |
+
+### 11.5 建议的落地顺序（便宜且立刻能感知的在前）
+
+1. **P0 反馈（UP/DOWN）**：数据结构加 `feedback`，服务端记分并在 `refreshIdeas` 排序时降权点踩过的类型
+2. **P0 分区**：`/api/agent` 的 ideas 按 `kind` 分组返回（邮件文档 / 日程对接 / 目标计划），App 按区分组渲染
+3. **P0 文案对齐 fitReason**：把 `reason` 的展示改成"为什么贴合你"的措辞
+4. **P1 聊天内出卡**：把新灵感以卡片形式插到聊天流（等价 `Origin.CHAT`），可执行/忽略
+5. **P1 建议条**：输入框上方给 2–3 条短建议（`SuggestionBar`）
+6. **P1 预置种子灵感**：无来源时给出可执行的种子卡（而不是空状态）
+7. **P2 多 item + 勾选执行**、**P2 分享**、**P2 分页**

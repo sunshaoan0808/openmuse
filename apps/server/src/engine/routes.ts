@@ -85,13 +85,18 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
   app.post("/ideas/:id", async (c) => {
     const body = z
       .object({
-        action: z.enum(["accept", "dismiss", "restore"]),
+        action: z.enum(["accept", "dismiss", "restore", "feedback"]),
         prompt: z.string().trim().min(1).max(12000).optional(),
+        value: z.enum(["up", "down"]).optional(),
       })
       .parse(await c.req.json());
-    return c.json(
-      await service.decideIdea(c.get("owner"), c.req.param("id"), body.action, body.prompt),
-    );
+    const owner = c.get("owner");
+    const id = c.req.param("id");
+    if (body.action === "feedback") {
+      if (!body.value) throw new AppError("反馈需要 value：up 或 down");
+      return c.json(await service.rateIdea(owner, id, body.value));
+    }
+    return c.json(await service.decideIdea(owner, id, body.action, body.prompt));
   });
   app.post("/memories", async (c) => {
     const body = memorySchema.parse(await c.req.json());

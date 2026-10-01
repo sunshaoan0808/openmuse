@@ -93,6 +93,11 @@ export interface Idea {
   status: "new" | "dismissed" | "accepted";
   taskId?: string;
   createdAt: string;
+  /**
+   * 用户对这条灵感的反馈（照 Muse 的 IdeaFeedback{UP, DOWN}）。
+   * 用途不只是显示：`refreshIdeas` 会据此让后续推荐避开被踩过的方向。
+   */
+  feedback?: "up" | "down";
 }
 export interface AgentMemory {
   id: string;
