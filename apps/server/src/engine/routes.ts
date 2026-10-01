@@ -85,7 +85,7 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
   app.post("/ideas/:id", async (c) => {
     const body = z
       .object({
-        action: z.enum(["accept", "dismiss"]),
+        action: z.enum(["accept", "dismiss", "restore"]),
         prompt: z.string().trim().min(1).max(12000).optional(),
       })
       .parse(await c.req.json());

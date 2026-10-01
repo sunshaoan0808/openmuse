@@ -533,6 +533,56 @@ export class AgentService {
     }
     throw new AppError("更新时监控已变更，请重试。", 409);
   }
+  /**
+   * 按**当前**模板重写一条灵感的文案（恢复/重新处理时用）。
+   * 灵感 id 是按来源内容哈希的：来源过期后即使模板改了也不会再生成，
+   * 存量记录就会一直挂着旧文案（实测：模板已中文化，界面上还是英文标题）。
+   * 只用记录里已有的信息（evidence 的标题就是来源标题）重写；重写不出来就原样返回。
+   */
+  private renderIdeaText(idea: Idea): Idea {
+    const source = idea.evidence?.[0]?.title?.trim();
+    if (!source) return idea;
+    const byKind: Record<string, { title: string; reason: string; prompt: string }> = {
+      document: {
+        title: `我可以帮你处理「${source}」`,
+        reason: "对方发来一份可能需要你处理的文档。我可以先处理好，并拟一份回复给你过目。",
+        prompt: `帮我填好「${source}」这份 PDF，并拟一份回复供我确认。`,
+      },
+      agent: {
+        title: `我可以帮你对接「${source}」`,
+        reason: "对方提到了见面的事。我可以查一下你的日历，并拟一份回复给你过目。",
+        prompt: `看一下邮件「${source}」，查我的日历，给出下一步建议。缺偏好就先问我，再拟回复。`,
+      },
+      plan: {
+        title: `给「${source}」做个计划吧`,
+        reason: "这个目标还没有任何里程碑。一份具体的计划能让它有下一步。",
+        prompt: `为「${source}」制定一份可执行的计划。`,
+      },
+    };
+    const text = byKind[idea.kind];
+    return text ? { ...idea, ...text } : idea;
+  }
+
+  /**
+   * 写一条灵感：没有就插入；**已有但仍未处理**（status=new）就刷新文案。
+   * 灵感 id 是按来源内容哈希出来的，文案改了（比如本地化）之后如果只 insertIfAbsent，
+   * 老记录会一直挂着旧文案 —— 实测就撞到过：模板已中文化，界面上还是英文标题。
+   */
+  private async upsertIdea(owner: string, idea: Idea) {
+    const existing = await this.db.get<Idea>(owner, "ideas", idea.id);
+    if (!existing) return this.db.insertIfAbsent(owner, "ideas", idea);
+    if (existing.status !== "new") return existing;
+    return (
+      (await this.db.compareAndSwap<Idea>(
+        owner,
+        "ideas",
+        idea.id,
+        { status: "new" },
+        { title: idea.title, reason: idea.reason, prompt: idea.prompt },
+      )) ?? existing
+    );
+  }
+
   async refreshIdeas(owner: string) {
     const w = await this.workspace.snapshot(owner);
     const sentIds = new Set(
@@ -568,16 +618,16 @@ export class AgentService {
       const id = hash(`document:${mail.id}:${mail.body}`);
       const idea: Idea = {
         id,
-        title: `I can help with ${mail.subject}`,
-        reason: `${mail.sender} sent a document that may need your attention. I can prepare it and a reply for your review.`,
+        title: `我可以帮你处理「${mail.subject}」`,
+        reason: `${mail.sender} 发来一份可能需要你处理的文档。我可以先处理好，并拟一份回复给你过目。`,
         evidence: [this.mailEvidence(mail)],
-        prompt: `Help complete the PDF from “${mail.subject}” and prepare a reply for review.`,
+        prompt: `帮我填好「${mail.subject}」这份 PDF，并拟一份回复供我确认。`,
         kind: "document",
         input: { messageId: mail.id },
         status: "new",
         createdAt: date(),
       };
-      await this.db.insertIfAbsent(owner, "ideas", idea);
+      await this.upsertIdea(owner, idea);
     }
     for (const mail of w.mail
       .filter(
@@ -586,12 +636,12 @@ export class AgentService {
           /coffee|meet|available|schedule/i.test(`${m.subject} ${m.body}`),
       )
       .slice(0, 5)) {
-      await this.db.insertIfAbsent(owner, "ideas", {
+      await this.upsertIdea(owner, {
         id: hash(`coordination:${mail.id}`),
-        title: `I can help coordinate ${mail.subject}`,
-        reason: `${mail.sender} mentioned getting together. I can check your calendar and prepare a response for review.`,
+        title: `我可以帮你对接「${mail.subject}」`,
+        reason: `${mail.sender} 提到了见面的事。我可以查一下你的日历，并拟一份回复给你过目。`,
         evidence: [this.mailEvidence(mail)],
-        prompt: `Review the email “${mail.subject}”, check my calendar, and propose a next step. Ask me about missing preferences before preparing a reply.`,
+        prompt: `看一下邮件「${mail.subject}」，查我的日历，给出下一步建议。缺偏好就先问我，再拟回复。`,
         kind: "agent",
         input: { messageId: mail.id },
         status: "new",
@@ -601,12 +651,12 @@ export class AgentService {
     for (const goal of await this.db.list<Goal>(owner, "goals"))
       if (goal.status === "active" && !goal.milestones.length) {
         const id = hash(`goal:${goal.id}:${goal.description}`);
-        await this.db.insertIfAbsent(owner, "ideas", {
+        await this.upsertIdea(owner, {
           id,
-          title: `Let's make a plan for ${goal.title}`,
-          reason: "This goal has no milestones yet. A concrete plan will give it a next step.",
+          title: `给「${goal.title}」做个计划吧`,
+          reason: "这个目标还没有任何里程碑。一份具体的计划能让它有下一步。",
           evidence: [{ id: goal.id, kind: "user", title: goal.title, excerpt: goal.description }],
-          prompt: `Create an actionable plan for ${goal.title}. ${goal.description}`,
+          prompt: `为「${goal.title}」制定一份可执行的计划。${goal.description}`,
           kind: "plan",
           input: { goalId: goal.id },
           status: "new",
@@ -617,9 +667,28 @@ export class AgentService {
     await this.db.compareAndSwap(owner, "agent-settings", "identity", {}, { lastIdeasAt: date() });
     return this.db.list<Idea>(owner, "ideas");
   }
-  async decideIdea(owner: string, id: string, action: "accept" | "dismiss", prompt?: string) {
+  async decideIdea(
+    owner: string,
+    id: string,
+    action: "accept" | "dismiss" | "restore",
+    prompt?: string,
+  ) {
     let idea = await this.db.get<Idea>(owner, "ideas", id);
     if (!idea) throw new AppError("找不到这条灵感", 404);
+    // 撤销忽略：把被忽略的那条放回"待处理"（灵感按来源去重，只有这一条路能让它重新出现）
+    if (action === "restore") {
+      // 顺手按当前模板重写文案：存量记录可能还挂着旧版（甚至旧语言）的措辞
+      const fresh = this.renderIdeaText(idea);
+      return (
+        (await this.db.compareAndSwap<Idea>(
+          owner,
+          "ideas",
+          id,
+          { status: "dismissed" },
+          { status: "new", title: fresh.title, reason: fresh.reason, prompt: fresh.prompt },
+        )) ?? idea
+      );
+    }
     if (idea.status === "dismissed" || (idea.status === "accepted" && action === "dismiss"))
       return idea;
     if (action === "dismiss")
