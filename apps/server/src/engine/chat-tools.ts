@@ -5,7 +5,9 @@ import {
   goalInputSchema,
   monitorInputSchema,
 } from "../../../../packages/domain/src/agent.ts";
+import { type TaskSecrets, taskSecrets } from "../credentials.ts";
 import { withActivity } from "../live-activity.ts";
+import { ensureTaskSandbox } from "../sandbox.ts";
 import { hasCjk, mergeSearchResults } from "../search.ts";
 import { lookAtImage } from "../vision.ts";
 import type { AgentService } from "./service.ts";
@@ -25,6 +27,14 @@ export interface ChatToolContext {
   service: AgentService;
   owner: string;
   threadId: string;
+  /**
+   * 当前任务 id（只在任务里跑时才有）。
+   * git 这类"会改外部世界"的工具**只在任务里可用**：聊天里调用会被明确拒绝，
+   * 避免把写权限顺手交给随手一问的场景。
+   */
+  taskId?: string;
+  /** 这个任务的短时凭据访问器（见 credentials.ts 的 taskSecrets） */
+  secrets?: TaskSecrets;
   requestKey: string;
   key: (name: string, value: unknown) => string;
   signal: AbortSignal;
@@ -420,5 +430,99 @@ export function chatTools(ctx: ChatToolContext): NeutralTool[] {
         return value;
       },
     }),
+    // ---- 会改外部世界的动作：只在任务里可用，且必须在沙箱里跑 ----
+    tool({
+      name: "git_commit",
+      description:
+        "Commit changes inside this task's sandboxed workspace: runs `git add -A && git commit -F <message file>` in the repo directory. <repo> must be a directory name inside the sandbox workspace (no slashes, no absolute paths). Only available inside a task, never in chat. The commit message is passed via a file, never as a shell argument.",
+      parameters: z.object({
+        repo: z.string().trim().min(1).max(120),
+        message: z.string().trim().min(1).max(2000),
+      }),
+      execute: async ({ repo, message }) => runSandboxGit(ctx, "commit", { repo, message }),
+    }),
+    tool({
+      name: "git_push",
+      description:
+        "Push a repo from this task's sandbox to its remote. The remote may be a path inside the workspace or an http(s) URL; for http(s) the task's temporary git credential is used via GIT_ASKPASS (the secret never appears on the command line or in git config). Requires the sandbox to allow egress for http(s). Only available inside a task.",
+      parameters: z.object({
+        repo: z.string().trim().min(1).max(120),
+        remote: z.string().trim().max(400).optional(),
+        branch: z.string().trim().max(120).optional(),
+      }),
+      execute: async ({ repo, remote, branch }) =>
+        runSandboxGit(ctx, "push", { repo, remote, branch }),
+    }),
   ]);
+}
+
+/** 沙箱里跑 git 的公共实现：校验路径、按需建沙箱、密钥只走环境变量、输出过脱敏 */
+async function runSandboxGit(
+  ctx: ChatToolContext,
+  action: "commit" | "push",
+  args: { repo: string; message?: string; remote?: string; branch?: string },
+): Promise<Record<string, unknown>> {
+  if (!/^[A-Za-z0-9._-]+$/.test(args.repo))
+    return { error: "仓库名只能是工作区里的目录名（字母数字._-），不接受路径。" };
+  // 任务路径里 threadId 就是任务 id（model.ts 用 task.id 当 threadId），聊天路径查不到任务 → 直接拒绝
+  const task = await ctx.service.db.get<{ id: string; state?: Record<string, unknown> }>(
+    ctx.owner,
+    "tasks",
+    ctx.taskId ?? ctx.threadId,
+  );
+  if (!task)
+    return {
+      error: "这个动作只在任务里可用：聊天里不会替你执行任何写操作（提交/推送）。",
+    };
+  const secrets = ctx.secrets ?? (await taskSecrets(ctx.service.db, ctx.owner, task));
+  const useCredential = action === "push" && !!args.remote && /^https?:\/\//i.test(args.remote);
+  // 任务可以在 input.repoPath 里声明源仓库：沙箱只读挂它（/repo），需要时克隆进工作区
+  const sourceRepo =
+    typeof (task as { input?: Record<string, unknown> }).input?.repoPath === "string"
+      ? ((task as { input?: Record<string, unknown> }).input?.repoPath as string)
+      : undefined;
+  const box = await ensureTaskSandbox(ctx.service.config.dataDir, ctx.service.db, ctx.owner, task, {
+    network: useCredential ? "egress" : "none",
+    ...(sourceRepo ? { repo: sourceRepo } : {}),
+  });
+  const lines: string[] = [];
+  try {
+    // 工作区里还没有这个仓库，就从只读挂载克隆一份（源仓库永远不被直接改动）
+    if (sourceRepo && action !== "push") {
+      const present = await box.exec(`test -d /workspace/${args.repo}/.git && echo YES || echo NO`);
+      if (!/YES/.test(present.stdout)) lines.push(`git clone /repo /workspace/${args.repo}`);
+    }
+    // 消息走文件：绝不把内容拼进命令行（防注入、也防出现在 ps 里）
+    if (action === "commit") {
+      await box.write(".openmuse-commit-msg", `${args.message ?? ""}\n`);
+      lines.push(
+        `cd /workspace/${args.repo} && git add -A && git -c user.email=agent@openmuse -c user.name=OpenMuse commit -F /workspace/.openmuse-commit-msg`,
+      );
+    } else {
+      const target = args.remote ? ` ${JSON.stringify(args.remote)}` : "";
+      const branch = args.branch ? ` ${JSON.stringify(args.branch)}` : "";
+      lines.push(`cd /workspace/${args.repo} && git push${target}${branch}`);
+    }
+    let env = "";
+    if (useCredential) {
+      const gitCredential = secrets.ids.length ? await secrets.get(secrets.ids[0]) : "";
+      if (!gitCredential)
+        return { error: "这个任务没有可用的 git 凭据，先在派活时带上 credentials。" };
+      // 凭据只经环境变量进沙箱，并由 askpass 脚本读取（不进 argv、不进 git config）
+      await box.write(
+        ".openmuse-askpass.sh",
+        '#!/bin/sh\ncase "$1" in *[Uu]sername*) echo openmuse;; *) echo "$OPENMUSE_GIT_TOKEN";; esac\n',
+      );
+      env = `OPENMUSE_GIT_TOKEN=${JSON.stringify(gitCredential)} GIT_ASKPASS=/workspace/.openmuse-askpass.sh GIT_TERMINAL_PROMPT=0 `;
+    }
+    const run = await box.exec(`${env}${lines.join(" && ")}`, { timeoutMs: 120_000 });
+    const redact = (text: string) => (secrets.redact ? secrets.redact(text) : text);
+    const output = redact([run.stdout, run.stderr].filter(Boolean).join("\n").trim()).slice(
+      0,
+      4000,
+    );
+    return { ok: run.code === 0, code: run.code, output, sandbox: box.id };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "沙箱里执行失败" };
+  }
 }
