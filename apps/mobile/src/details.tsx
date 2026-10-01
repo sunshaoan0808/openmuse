@@ -32,7 +32,7 @@ import {
   type Mail,
   type ProposalInput,
 } from "../../../packages/domain/src";
-import { DelegateSheet, NotificationsSheet, TaskDetail } from "./agent-ui";
+import { CredentialsPanel, DelegateSheet, NotificationsSheet, TaskDetail } from "./agent-ui";
 import { AssistantResponse } from "./assistant-response";
 import BrowserConsole from "./BrowserConsole";
 import { browserAddress, browserSite } from "./browser-address";
@@ -64,6 +64,7 @@ import { type Detail, useWorkspace } from "./workspace";
 export function Details({ detail }: { detail: Detail }) {
   const { close, navigate } = useWorkspace();
   if (detail.type === "computer") return <ComputerSheet />;
+  if (detail.type === "credentials") return <CredentialsPanel />;
   if (detail.type === "task") return <TaskDetail taskId={detail.taskId} />;
   if (detail.type === "delegate") return <DelegateSheet />;
   if (detail.type === "notifications") return <NotificationsSheet />;

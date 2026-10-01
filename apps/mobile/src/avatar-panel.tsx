@@ -1,4 +1,11 @@
-import { Bell, ListChecks, MessageCircle, PanelsTopLeft, Plus } from "lucide-react-native";
+import {
+  Bell,
+  ListChecks,
+  MessageCircle,
+  PanelsTopLeft,
+  Plus,
+  ShieldCheck,
+} from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
 import { useAgentWorkspace } from "./agent-workspace";
 import { ComputerEntry } from "./computer";
@@ -134,6 +141,16 @@ export function AvatarPanel({ onClose }: { onClose: () => void }) {
           }}
         >
           查看动态
+        </Button>
+        <Button
+          small
+          icon={ShieldCheck}
+          onPress={() => {
+            onClose();
+            open({ type: "credentials" });
+          }}
+        >
+          短时凭据
         </Button>
       </View>
       {/* 顶栏卡片要窄（照 Muse），所以"可接管"这类入口移到这里来 */}
