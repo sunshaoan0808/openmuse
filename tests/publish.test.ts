@@ -80,8 +80,12 @@ test("发布：拿到一条公开链接，文件载荷里有 published 但没有
   // 公开取回：**不带任何令牌**
   const published = await app.request(`/p/${tokenOf(body.url)}`);
   assert.equal(published.status, 200, "公开链接必须不需要令牌就能打开");
-  assert.equal(await published.text(), "公开内容：西安 120 东京 86", "内容要逐字节一致");
+  assert.match(published.headers.get("content-type") ?? "", /text\/html/, "文本文件按文档页面渲染");
+  assert.match(await published.text(), /公开内容：西安 120 东京 86/, "内容要在页面里");
   assert.equal(published.headers.get("cache-control"), "no-store");
+  // /raw 才是原始字节（下载/直链用）
+  const rawResponse = await app.request(`/p/${tokenOf(body.url)}/raw`);
+  assert.equal(await rawResponse.text(), "公开内容：西安 120 东京 86", "raw 要逐字节一致");
 });
 
 test("重复发布返回同一条链接（幂等），不会把已经分享出去的链接弄丢", async () => {
@@ -138,4 +142,68 @@ test("列表只暴露 published 布尔，不带 token", async () => {
     false,
     "整份工作区快照里都不该出现 token",
   );
+});
+
+test("发布 Markdown：/p/ 渲染成网页，/p/raw 仍给原文", async () => {
+  const file = await upload("月报.md", "# 标题\n\n正文有 **粗体** 和 `代码`。");
+  const { url } = (await (
+    await app.request(`/api/files/${file.id}/publish`, { method: "POST", headers: authed() })
+  ).json()) as { url: string };
+  const pub = tokenOf(url);
+
+  const page = await app.request(`/p/${pub}`);
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get("content-type") ?? "", /text\/html/);
+  const html = await page.text();
+  assert.match(html, /<h1>标题<\/h1>/, "markdown 要渲染成标题");
+  assert.match(html, /<strong>粗体<\/strong>/);
+  assert.match(html, /<code>代码<\/code>/);
+  assert.ok(!html.includes("<strong>粗体</strong>\n"), "不该是把 markdown 原样塞进 pre");
+
+  const raw = await app.request(`/p/${pub}/raw`);
+  assert.equal(raw.status, 200);
+  assert.equal(await raw.text(), "# 标题\n\n正文有 **粗体** 和 `代码`。", "raw 必须是原文");
+});
+
+test("发布图片：/p/ 直接给字节（不是网页）", async () => {
+  const png = Uint8Array.from(
+    Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwABAAH+GXcAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  );
+  const form = new FormData();
+  form.set("file", new File([png as BlobPart], "像素.png", { type: "image/png" }));
+  const uploaded = await app.request("/api/files", {
+    method: "POST",
+    body: form,
+    headers: uploadHeaders(),
+  });
+  assert.equal(uploaded.status, 201);
+  const file = (await uploaded.json()) as Artifact;
+  const { url } = (await (
+    await app.request(`/api/files/${file.id}/publish`, { method: "POST", headers: authed() })
+  ).json()) as { url: string };
+  const response = await app.request(`/p/${tokenOf(url)}`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "image/png");
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), png, "字节要一模一样");
+});
+
+test("导出 HTML：不依赖浏览器 worker，直接产出可打开的网页文件", async () => {
+  const file = await upload("导出源.md", "## 小标题\n\n- 一\n- 二");
+  const response = await app.request(`/api/files/${file.id}/export`, {
+    method: "POST",
+    headers: authed(),
+    body: JSON.stringify({ format: "html" }),
+  });
+  assert.equal(response.status, 201);
+  const exported = (await response.json()) as Artifact;
+  assert.equal(exported.name, "导出源.html");
+  assert.equal(exported.mimeType, "text/html", "扩展名与类型要认出是网页");
+  const content = await app.request(`/api/files/${exported.id}/content`, { headers: authed() });
+  const html = await content.text();
+  assert.match(html, /<h2>小标题<\/h2>/);
+  assert.match(html, /<li>一<\/li>/);
+  assert.match(html, /<meta charset="utf-8" \/>/);
 });

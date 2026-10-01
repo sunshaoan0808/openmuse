@@ -912,13 +912,13 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }
-  /** 导出成 PDF：服务端把文本转成网页、浏览器 worker 打印，存成一个新文件后直接打开它 */
-  async function exportPdf() {
+  /** 导出：服务端把文本转成网页，HTML 直接落盘、PDF 交给浏览器 worker 打印，完成后打开新文件 */
+  async function exportAs(format: "pdf" | "html") {
     if (busy) return;
     setBusy(true);
     setError("");
     try {
-      const exported = await api.request<Artifact>(`/api/files/${f.id}/export`, { format: "pdf" });
+      const exported = await api.request<Artifact>(`/api/files/${f.id}/export`, { format });
       await refresh();
       open({ type: "file", file: exported });
     } catch (e) {
@@ -1050,13 +1050,18 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
       <View style={[s.row, { gap: 10, marginVertical: 18, flexWrap: "wrap" }]}>
         {(textFile || isHtml(f)) && (
           // 导出：服务端把文本/Markdown/网页转成 HTML，worker 用浏览器打印成 PDF（Muse 也有这个动作）
-          <Button icon={Save} busy={busy} onPress={() => void exportPdf()}>
+          <Button icon={Save} busy={busy} onPress={() => void exportAs("pdf")}>
             导出 PDF
           </Button>
         )}
         <Button icon={Globe2} busy={busy} onPress={() => void togglePublish()}>
           {published ? "停止发布" : "发布链接"}
         </Button>
+        {textFile && !isHtml(f) && (
+          <Button icon={Save} busy={busy} onPress={() => void exportAs("html")}>
+            导出 HTML
+          </Button>
+        )}
         <Button icon={Download} onPress={() => void share()}>
           {Platform.OS === "web" ? "打开 / 下载" : "保存或分享"}
         </Button>
@@ -1073,7 +1078,10 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
           <Text style={[s.muted, { marginBottom: 10 }]}>
             拿到链接的人不用登录就能打开这个文件（只读）。停止发布会立刻让它失效。
           </Text>
-          <Text selectable style={{ marginBottom: 12 }}>
+          <Text
+            style={{ marginBottom: 12, color: link ? colors.blueDark : undefined }}
+            onPress={link ? () => void Linking.openURL(link).catch(() => {}) : undefined}
+          >
             {link || "链接在上次发布时显示过；再次发布可拿到同一条地址。"}
           </Text>
           <Button

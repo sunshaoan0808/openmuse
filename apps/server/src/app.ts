@@ -450,7 +450,7 @@ export async function createApp(
   });
   // 把文本型文件导出成 PDF（Muse 也有导出）：服务端转 HTML → 浏览器 worker 打印 → 存成一个新文件
   app.post("/api/files/:id/export", async (c) => {
-    z.object({ format: z.literal("pdf") }).parse(await c.req.json());
+    const body = z.object({ format: z.enum(["pdf", "html"]) }).parse(await c.req.json());
     const owner = c.get("owner");
     const file = await files.get(owner, c.req.param("id"));
     if (!file.mimeType.startsWith("text/"))
@@ -458,8 +458,19 @@ export async function createApp(
     const text = new TextDecoder().decode(await files.bytes(owner, file.id));
     const isHtmlFile = file.mimeType === "text/html" || /\.html?$/i.test(file.name);
     const document = wrapHtmlDocument(file.name, isHtmlFile ? text : markdownToHtml(text));
-    const pdf = await browser.exportPdf(owner, "exports", document);
     const name = file.name.replace(/\.[^.]+$/, "") || "导出";
+    // HTML 导出不需要浏览器：转换器已经产出完整文档，直接存成文件
+    if (body.format === "html")
+      return c.json(
+        await files.import(
+          owner,
+          `${name}.html`,
+          Buffer.from(document, "utf-8"),
+          `导出为 HTML：${file.name}`,
+        ),
+        201,
+      );
+    const pdf = await browser.exportPdf(owner, "exports", document);
     return c.json(await files.import(owner, `${name}.pdf`, pdf, `导出为 PDF：${file.name}`), 201);
   });
   // 发布：生成/复用一条公开只读链接（token 即能力，停止发布立刻失效）

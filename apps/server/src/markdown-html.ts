@@ -9,7 +9,7 @@
  */
 
 /** 先把 HTML 特殊字符转义：内容来自模型/用户，导出前必须当成纯文本处理 */
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
