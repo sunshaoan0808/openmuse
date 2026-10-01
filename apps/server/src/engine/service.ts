@@ -229,6 +229,13 @@ export class AgentService {
           : input.kind === "finance"
             ? ["校验账目", "计算汇总", "保存你的记录"]
             : ["理解目标", "规划步骤", "使用已连接的工具", "交付结果"];
+    // 这个任务要用凭据就先铸好（照 Muse：铸一把用一把，任务终态吊销并擦掉明文）。
+    // 幂等：上方 existing 分支已返回，重复投递不会重复铸。
+    const credentialIds: string[] = [];
+    for (const spec of input.credentials ?? []) {
+      const { credential } = await mintCredential(this.db, owner, { ...spec, taskId: id });
+      credentialIds.push(credential.id);
+    }
     const task: AgentTask = {
       id,
       title: input.title ?? input.prompt.slice(0, 90),
@@ -243,6 +250,8 @@ export class AgentService {
       state: {
         connectionId: (await this.workspace.connection(owner))?.id ?? null,
         ...(held && input.kind === "monitor" ? { initializingMonitor: true } : {}),
+        // 只放 id：明文不进 state、不进日志（工具用 ctx.secrets.get(id) 现取）
+        ...(credentialIds.length ? { credentialIds } : {}),
       },
       createdAt: date(),
       updatedAt: date(),
