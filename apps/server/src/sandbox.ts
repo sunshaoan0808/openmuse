@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { Store } from "./db.ts";
 
 export interface SandboxLimits {
   /** 内存上限（MB），默认 512 */
@@ -29,11 +30,18 @@ export interface SandboxLimits {
   timeoutMs?: number;
 }
 
+export type SandboxNetwork = "none" | "egress";
+
 export interface SandboxSpec {
   /** 归属任务：沙箱目录按它命名，任务终态时销毁 */
   taskId: string;
   /** 要只读挂进沙箱的仓库/资料目录（可选） */
   repo?: string;
+  /**
+   * 网络策略：默认 `none`（只 loopback，连宿主机都到不了）。
+   * `egress` 才会带上宿主机网络 —— 只在"必须访问真远端"时开，且应配合凭据使用。
+   */
+  network?: SandboxNetwork;
   limits?: SandboxLimits;
 }
 
@@ -117,12 +125,14 @@ export class BwrapSandbox implements Sandbox {
   readonly dir: string;
   private limits: Required<SandboxLimits>;
   private repo?: string;
+  private network: SandboxNetwork;
   private gone = false;
 
   constructor(spec: SandboxSpec, root: string) {
     this.id = spec.taskId;
     this.dir = join(root, spec.taskId);
     this.repo = spec.repo;
+    this.network = spec.network ?? "none";
     this.limits = {
       memoryMb: spec.limits?.memoryMb ?? 512,
       cpuPercent: spec.limits?.cpuPercent ?? 100,
@@ -143,8 +153,14 @@ export class BwrapSandbox implements Sandbox {
   private bwrapArgs(command: string): string[] {
     const args = [
       "--die-with-parent",
-      // 网络/用户/进程/IPC/UTS/cgroup 全部新命名空间：默认**无网**，只有 loopback
-      "--unshare-all",
+      // 用户/进程/IPC/UTS/cgroup 新命名空间；网络按 spec 决定：
+      // 默认连 net 一起隔离（只有 loopback），要出网才不隔离 net。
+      "--unshare-user",
+      "--unshare-pid",
+      "--unshare-ipc",
+      "--unshare-uts",
+      "--unshare-cgroup",
+      ...(this.network === "none" ? ["--unshare-net"] : []),
       "--proc",
       "/proc",
       "--dev",
@@ -254,4 +270,37 @@ export async function destroySandbox(root: string, id: string): Promise<boolean>
 
 export function newSandboxTaskId(): string {
   return `sbx-${randomUUID()}`;
+}
+
+/**
+ * 创建侧（计划 ③ 的另一半）：任务需要动文件/仓库时，**按需**给它建一个一次性沙箱，
+ * 并把 id 记进 task.state.sandboxId —— 任务终态钩子据此把它删掉（"任务结束即重置"）。
+ * 幂等：已经有 sandboxId 且目录还在就直接复用。
+ */
+export async function ensureTaskSandbox(
+  dataDir: string,
+  db: Store,
+  owner: string,
+  task: { id: string; state?: Record<string, unknown> },
+  options: { repo?: string; network?: SandboxNetwork; limits?: SandboxLimits } = {},
+): Promise<Sandbox> {
+  const root = defaultSandboxRoot(dataDir);
+  const existing = typeof task.state?.sandboxId === "string" ? task.state.sandboxId : "";
+  if (existing && existsSync(join(root, existing))) {
+    const box = new BwrapSandbox({ taskId: existing, ...options }, root);
+    return box;
+  }
+  const id = existing || newSandboxTaskId();
+  const box = await BwrapSandbox.open({ taskId: id, ...options }, root);
+  if (!existing)
+    await db.compareAndSwap(
+      owner,
+      "tasks",
+      task.id,
+      {},
+      {
+        state: { ...(task.state ?? {}), sandboxId: id },
+      },
+    );
+  return box;
 }
