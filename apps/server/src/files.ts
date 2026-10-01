@@ -24,6 +24,27 @@ function sniff(bytes: Uint8Array): { mimeType: string; extension: string } | und
   )
     return { mimeType: "image/webp", extension: "webp" };
   if (startsWith(0x47, 0x49, 0x46, 0x38)) return { mimeType: "image/gif", extension: "gif" };
+  // 媒体：对照 Muse 的 Extensions（mp3 m4a wav ogg mp4 mov mkv avi aac）——它也把音视频当一等文件。
+  // 魔数只能认到这一层；mkv 与 webm 同为 EBML（0x1A45DFA3），这里按 webm 记，播放器通常都认。
+  if (startsWith(0x49, 0x44, 0x33)) return { mimeType: "audio/mpeg", extension: "mp3" }; // ID3 标签
+  if (b[0] === 0xff && (b[1] & 0xe0) === 0xe0) return { mimeType: "audio/mpeg", extension: "mp3" }; // MPEG 帧同步
+  if (startsWith(0x1a, 0x45, 0xdf, 0xa3)) return { mimeType: "video/webm", extension: "webm" }; // EBML
+  if (startsWith(0x4f, 0x67, 0x67, 0x53)) return { mimeType: "audio/ogg", extension: "ogg" }; // OggS
+  if (startsWith(0x66, 0x4c, 0x61, 0x43)) return { mimeType: "audio/flac", extension: "flac" }; // fLaC
+  if (b[0] === 0xff && (b[1] === 0xf1 || b[1] === 0xf9))
+    return { mimeType: "audio/aac", extension: "aac" };
+  if (startsWith(0x52, 0x49, 0x46, 0x46)) {
+    const riff = String.fromCharCode(b[8] ?? 0, b[9] ?? 0, b[10] ?? 0, b[11] ?? 0);
+    if (riff === "WAVE") return { mimeType: "audio/wav", extension: "wav" };
+    if (riff === "AVI ") return { mimeType: "video/x-msvideo", extension: "avi" };
+  }
+  // ISO BMFF（mp4 / mov / m4a）：第 4-8 字节是 "ftyp"，类别看紧随其后的 brand
+  if (b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) {
+    const brand = String.fromCharCode(b[8] ?? 0, b[9] ?? 0, b[10] ?? 0, b[11] ?? 0);
+    if (brand === "M4A " || brand === "M4B ") return { mimeType: "audio/mp4", extension: "m4a" };
+    if (brand === "qt  ") return { mimeType: "video/quicktime", extension: "mov" };
+    return { mimeType: "video/mp4", extension: "mp4" };
+  }
   return undefined;
 }
 
@@ -115,6 +136,26 @@ function extensionFor(mimeType: string): string {
       return "webp";
     case "image/gif":
       return "gif";
+    case "audio/mpeg":
+      return "mp3";
+    case "audio/mp4":
+      return "m4a";
+    case "audio/wav":
+      return "wav";
+    case "audio/ogg":
+      return "ogg";
+    case "audio/aac":
+      return "aac";
+    case "audio/flac":
+      return "flac";
+    case "video/mp4":
+      return "mp4";
+    case "video/quicktime":
+      return "mov";
+    case "video/webm":
+      return "webm";
+    case "video/x-msvideo":
+      return "avi";
     case "text/markdown":
       return "md";
     case "text/plain":
@@ -128,7 +169,8 @@ function extensionFor(mimeType: string): string {
 }
 
 /** 给用户看的类型名（错误提示里用得上） */
-const SUPPORTED = "PDF、图片（png / jpg / webp / gif）与文本文件（md / txt / csv / json / 源码等）";
+const SUPPORTED =
+  "PDF、图片（png / jpg / webp / gif）、音视频（mp3 / m4a / wav / ogg / mp4 / mov / webm / avi / aac）与文本文件（md / txt / csv / json / 源码等）";
 
 export class Files {
   constructor(

@@ -40,6 +40,7 @@ import { ComputerSheet } from "./computer";
 import DateTimeEditor from "./DateTimeEditor";
 import { localDateTime, zonedInstant } from "./date-time";
 import { fieldLabel, proposalStatusLabel } from "./labels";
+import MediaPlayer from "./MediaPlayer";
 import type { HeroCard } from "./motion";
 import OfficeReader from "./OfficeReader";
 import PdfReader from "./PdfReader";
@@ -741,6 +742,36 @@ function isText(file: Artifact) {
   );
 }
 
+/** 音视频：对照 Muse，媒体也是"一等文件"。播放交给 MediaPlayer（native 用 WebView 内联播） */
+function isMedia(file: Artifact) {
+  const mime = file.mimeType.toLowerCase();
+  if (mime.startsWith("audio/") || mime.startsWith("video/")) return true;
+  return /\.(mp3|m4a|wav|ogg|aac|flac|mp4|mov|webm|mkv|avi)$/i.test(file.name.trim());
+}
+
+/** 分享/落盘用的扩展名：以 mimeType 为准，兜底 mp4 */
+function mediaExtension(file: Artifact): string {
+  const fromMime: Record<string, string> = {
+    "audio/mpeg": "mp3",
+    "audio/mp4": "m4a",
+    "audio/wav": "wav",
+    "audio/ogg": "ogg",
+    "audio/aac": "aac",
+    "audio/flac": "flac",
+    "video/mp4": "mp4",
+    "video/quicktime": "mov",
+    "video/webm": "webm",
+    "video/x-msvideo": "avi",
+  };
+  const known = fromMime[file.mimeType.toLowerCase()];
+  if (known) return known;
+  const fromName = file.name
+    .trim()
+    .match(/\.([A-Za-z0-9]+)$/)?.[1]
+    ?.toLowerCase();
+  return fromName ?? "mp4";
+}
+
 /** markdown 才走富文本渲染；csv / json / 源码按纯文本（等宽）渲染，否则表格与缩进会被吃掉 */
 function isMarkdown(file: Artifact) {
   return (
@@ -826,7 +857,9 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
           : "md"
         : isImage(f)
           ? imageExtension(f)
-          : "pdf";
+          : isMedia(f)
+            ? mediaExtension(f)
+            : "pdf";
       const target = `${FileSystem.cacheDirectory}${f.id}.${extension}`;
       await FileSystem.downloadAsync(url, target, {
         headers: { Authorization: `Bearer ${api.token}` },
@@ -839,12 +872,18 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
               : "text/markdown"
             : isImage(f)
               ? f.mimeType || `image/${extension}`
-              : "application/pdf",
-          UTI: isImage(f)
-            ? "public.image"
-            : extension === "pdf"
-              ? "com.adobe.pdf"
-              : "net.daringfireball.markdown",
+              : isMedia(f)
+                ? f.mimeType || "video/mp4"
+                : "application/pdf",
+          UTI: isMedia(f)
+            ? f.mimeType.startsWith("video/")
+              ? "public.movie"
+              : "public.audio"
+            : isImage(f)
+              ? "public.image"
+              : extension === "pdf"
+                ? "com.adobe.pdf"
+                : "net.daringfireball.markdown",
         });
       else throw new Error("此设备不支持分享。");
     } catch (e) {
@@ -854,7 +893,7 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
   return (
     <Sheet
       title={f.name}
-      subtitle={`${isText(f) || isImage(f) ? "" : `${f.pageCount} pages · `}${Math.max(1, Math.round(f.size / 1024))} KB · ${f.source}`}
+      subtitle={`${isText(f) || isImage(f) || isMedia(f) ? "" : `${f.pageCount} pages · `}${Math.max(1, Math.round(f.size / 1024))} KB · ${f.source}`}
       onClose={close}
       wide
       hero={hero}
@@ -919,6 +958,9 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
             accessibilityLabel={f.name}
           />
         </View>
+      ) : isMedia(f) ? (
+        // 音视频：交给自己写的 MediaPlayer（真机用 WebView 内联播放，Web 给说明卡）
+        <MediaPlayer url={url} mimeType={f.mimeType} name={f.name} />
       ) : (
         // Word / Excel / PowerPoint 走离线渲染（pptx 会降级为“用外部应用打开”）
         <OfficeReader url={url} token={api.token} name={f.name} size={f.size} />
