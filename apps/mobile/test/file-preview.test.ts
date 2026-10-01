@@ -36,7 +36,7 @@ test("图片不会被当成 PDF/文本处理，也不会显示“N pages”", ()
   assert.match(body, /function isImage/, "应该定义了 isImage");
   assert.match(
     body,
-    /isText\(f\) \|\| isImage\(f\) \? "" : `\$\{f\.pageCount\} pages/,
+    /isText\(f\) \|\| isImage\(f\)[\s\S]{0,40}\? "" : `\$\{f\.pageCount\} pages/,
     "副标题里图片不该显示页数",
   );
   // 分享时要跟着图片的真实格式走，不能再一律 .pdf
@@ -45,7 +45,7 @@ test("图片不会被当成 PDF/文本处理，也不会显示“N pages”", ()
     /isImage\(f\)\s*\n?\s*\?\s*imageExtension\(f\)/,
     "分享的扩展名要走 imageExtension",
   );
-  assert.match(body, /UTI: isImage\(f\)/, "分享的 UTI 要区分图片");
+  assert.match(body, /"public\.image"/, "分享的 UTI 要区分图片");
 });
 
 test("文本型不再只有 md/txt：csv / json / 源码也进文本预览，且只有 markdown 走富文本", () => {
@@ -64,4 +64,19 @@ test("文本型不再只有 md/txt：csv / json / 源码也进文本预览，且
     /monospace/,
     "非 markdown 文本要用等宽字体渲染，否则 csv 的表格与代码缩进会被吃掉",
   );
+});
+
+test("音视频有独立分支（排在 Office 之前），交给 MediaPlayer 播", () => {
+  const body = strip(code);
+  assert.match(body, /function isMedia/, "应该定义了 isMedia");
+  const media = body.indexOf("isMedia(f) ? (");
+  const office = body.indexOf("<OfficeReader");
+  assert.ok(media > 0, "预览区里应该有 isMedia 的分支");
+  assert.ok(media < office, "音视频分支必须排在 Office 兜底之前");
+  assert.match(body, /<MediaPlayer url=\{url\}/, "音视频应交给 MediaPlayer");
+  // 分享也要跟着媒体走：扩展名、MIME、UTI 都不能再落到 pdf
+  assert.match(body, /mediaExtension\(f\)/, "分享扩展名要走 mediaExtension");
+  assert.match(body, /"public\.movie"|"public\.audio"/, "分享 UTI 要区分音视频");
+  // 副标题不该给音视频显示页数
+  assert.match(body, /isText\(f\) \|\| isImage\(f\) \|\| isMedia\(f\) \? ""/, "音视频不该显示页数");
 });
