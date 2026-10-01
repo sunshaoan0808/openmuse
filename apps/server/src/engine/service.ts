@@ -27,6 +27,13 @@ import type { ActionService } from "../actions.ts";
 import type { BrowserService } from "../browser.ts";
 import { ComputerService } from "../computer.ts";
 import type { Config } from "../config.ts";
+import {
+  listCredentials,
+  mintCredential,
+  revokeCredential,
+  revokeForTask,
+  sweepExpired,
+} from "../credentials.ts";
 import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
@@ -832,6 +839,33 @@ export class AgentService {
     await this.db.compareAndSwap(owner, "agent-settings", "identity", {}, { lastIdeasAt: date() });
     return this.db.list<Idea>(owner, "ideas");
   }
+  /** 铸一把任务级短时凭据（照 Muse 的 LinkDeviceTokenMinter.mintDeviceTokens）。 */
+  async mintCredential(
+    owner: string,
+    input: {
+      label: string;
+      kind: "git" | "api" | "ssh";
+      scopes?: string[];
+      ttlMs?: number;
+      taskId?: string;
+    },
+  ) {
+    const { credential, secret } = await mintCredential(this.db, owner, input);
+    // 明文只在铸的这一刻返回一次；库里存着供工具取用，接口此后只回后 6 位
+    return { ...credential, secret, secretTail: `…${secret.slice(-6)}` };
+  }
+  async listCredentials(owner: string) {
+    await sweepExpired(this.db, owner);
+    return listCredentials(this.db, owner);
+  }
+  async revokeCredential(
+    owner: string,
+    id: string,
+    reason: "manual" | "task_finished" | "expired" = "manual",
+  ) {
+    return revokeCredential(this.db, owner, id, reason);
+  }
+
   /**
    * 照 Muse 的 `IdeaCardExecuteRequestJson{itemIds, mode}` → `IdeaCardExecuteResult`
    * 一条灵感可以只做其中几件：勾选的条目会被记下来（isSelected），并作为任务的限定范围。
@@ -1138,6 +1172,14 @@ export class AgentService {
     };
   }
   private async publishOutcome(owner: string, saved: AgentTask) {
+    // 照 Muse 的"用完就销毁"：任务一到终态，就把它名下的短时凭据全部吊销（显式吊销，不靠过期）
+    try {
+      const revoked = await revokeForTask(this.db, owner, saved.id);
+      if (revoked)
+        console.log(`[credentials] 任务 ${saved.id.slice(0, 8)} 结束，吊销短时凭据 ${revoked} 把`);
+    } catch {
+      // 吊销失败不影响任务收尾；下次 sweep 或人工吊销兜底
+    }
     const task = await this.getTask(owner, saved.id);
     if (task.status === "succeeded") {
       await this.notify(

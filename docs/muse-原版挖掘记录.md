@@ -433,3 +433,76 @@ previewImageUrl, selectable, isSelected   ← 可勾选，勾选后一起执行
 5. **P1 建议条**：输入框上方给 2–3 条短建议（`SuggestionBar`）
 6. **P1 预置种子灵感**：无来源时给出可执行的种子卡（而不是空状态）
 7. **P2 多 item + 勾选执行**、**P2 分享**、**P2 分页**
+
+---
+
+## 12. 编程任务 / 提交仓库 / 一次性密钥 —— Muse 的 Confidential VM 体系
+
+问题：用户在 Muse 里跑编程任务能提交仓库，而且"密钥用完就销毁"。挖 `com.facebook.aura`
+的 `confidentialvm`（386 类）、`ccv`（287 类）、`gateway`（1367 类）、`devices/token` 之后，
+它不是"给 Agent 一个 Git token"，而是**每个用户一台受证明保护的 VM + 网关代理 + 可吊销凭据**。
+
+### 12.1 执行面（VM）
+
+| 类 | 含义（observed） |
+|---|---|
+| `confidentialvm/HatchVmPeerType` | 枚举 **`CONFIDENTIAL` / `STANDARD`** —— 两种 VM 并存 |
+| `confidentialvm/ConfidentialVmProvisioningReset` | `reset(userSession)` / `resetForVmSwitch(...)` —— VM 可**重置/切换**（销毁语义） |
+| `confidentialvm/ConfidentialVmSetupGate` | 开通闸门（先满足条件才给 VM） |
+| `confidentialvm/HatchVmAccessController` | 访问控制核心：持 `gateway: HatchGatewayConnection`、`repository: ConfidentialVmRepository`、`userSession`、`attemptedAutomaticCredentialVmIds`、`credentialReconnectInFlight`、`localConnectionFailure` |
+| `confidentialvm/HatchVmAccessInputs` | 放行判定的输入：`connectionFailed`、`credentialReconnectInFlight`、`gatewayState: HatchGatewayStateSnapshot`、`userData` |
+| `HatchVmAccessState$SecurityFailure / $RetriableFailure / $Resuming` | 访问状态机（安全失败 / 可重试失败 / 恢复中） |
+
+### 12.2 通道（Noise + 硬件证明）
+
+| 类 | 含义 |
+|---|---|
+| `gateway/noise/carrier/NoiseGatewayCarrier` | 网关的 **Noise 协议**信道（端到端加密握手） |
+| `gateway/noise/carrier/NoiseGatewayCarrierSoLoader` | 原生 **.so** 实现（握手在 native 层） |
+| `gateway/noise/carrier/AttestationVerifierHolder` | **校验对端证明（attestation）** —— 这是"敢把代码和凭据交给那台 VM"的前提 |
+| `gateway/noise/carrier/Stream0Listener` | Noise 的第 0 号流（握手/控制流） |
+| `gateway/connection/*`（127 类） | 完整连接状态机：`ConnectionEngine/Reducer/Phase/LifecycleSnapshot/DemandOutcome/ConnectAttemptCancellation` |
+
+### 12.3 凭据：怎么做"用完就销毁"（这是用户最关心的一条）
+
+| 类 | 含义 |
+|---|---|
+| `devices/token/LinkDeviceTokenMinter` | **`mintDeviceTokens(...)` + `revokeDeviceTokens(...)`** —— 令牌可铸造、**可吊销** |
+| `devices/token/DeviceTokenRevokeRequestJson/ResponseJson` | 吊销是**一条显式请求**，不是靠过期 |
+| `confidentialvm/StoredCredentialContinuation` | 枚举 **`SHOW_PROMPT` / `RETRY` / `SECURITY_FAILURE` / `RETRIABLE_FAILURE`** —— 存下来的凭据失效时的续接策略（先静默重试，安全失败才找人） |
+| `confidentialvm/model/ConfidentialVmTemporaryAccessViewModel` | **临时访问**（时间受限） |
+| `confidentialvm/repository/ConfidentialVmEscrowResult` | **托管（escrow）** |
+| `confidentialvm/model/ConfidentialVmPin*`（register/reminder/state） | 用 **PIN** 保护这台 VM 的访问 |
+| `confidentialvm/ConfidentialVmOperatorSshJsonKt` | 给"操作者"的 **SSH** 端点（Agent/运维进去干活的口子） |
+| `common/prefs/AuraVMPrefStore` + `AuraPrefsSignOutCleanupHandler` | 按 VM 存偏好；**登出时清理** |
+| `agentpermission/pastapprovals/RevokeActivePermissionRequestJson` | 授权也可显式**撤销** |
+
+### 12.4 编程任务的界面侧
+
+- `agentcomputer/view/AgentComputerScreenKt`（Agent 的"电脑"全屏）
+- `agentcomputer/view/AgentComputerTerminalStateKt`（**终端状态** —— 任务在 VM 里跑命令）
+- `agentcomputer/view/AgentComputerTakeOverScreenKt` + `BrowserTakeoverBottomBarKt`（**接管**）
+- `common/prefs/HatchDeveloperMode` / `HatchDeveloperPrefs`（开发者模式）
+- App 的 DEX 里**搜不到任何 git/PR/repo 痕迹**（`strings | grep -i "git clone|pull request|diff --git"` 只命中外链文档）
+  → **代码与提交动作全部发生在 VM 内部**，App 只负责显示终端与控制权
+
+### 12.5 一句话总结这套设计
+
+```
+App ──Noise 加密信道（native .so）+ 对端 attestation 校验── gateway
+      └─ HatchVmAccessController 按 gateway 状态 + 用户数据放行
+         · 凭据：mint / revoke（显式吊销）+ TemporaryAccess（临时）+ PIN + Escrow
+         · VM：CONFIDENTIAL | STANDARD，可 reset / switch（销毁与切换）
+         · 任务：在 VM 内跑终端/浏览器/仓库操作，App 显示"电脑屏幕 + 终端状态 + 接管"
+```
+要点：**凭据是"可吊销 + 临时"**，不是"长期 token 放在配置里"；**执行面是一台可重置的独立 VM**，
+App 只是窗口；**信任靠 attestation**，不是靠网络位置。
+
+### 12.6 我们的差距与可落地的部分
+
+| 维度 | 我们现状 | 可落地 |
+|---|---|---|
+| 执行面 | 本机 + Docker"电脑"沙箱（复用同一台机器） | 已有 sandbox；缺"每任务可重置" |
+| 凭据 | `.env` 里的长期 key（Tavily/网关…） | **可做**：任务级短时凭据，mint→用→**任务结束即 revoke** |
+| 传输 | HTTPS + token；mesh 内是 WireGuard | 够用；Noise+attestation 属 M 系 VM 专有 |
+| 界面 | 有 computer 面板 + 浏览器接管 | 已有雏形 |

@@ -81,6 +81,28 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
       .parse(await c.req.json());
     return c.json(await service.controlMonitor(c.get("owner"), c.req.param("id"), action));
   });
+  // 任务级短时凭据（照 Muse 的 mint/revoke）
+  app.get("/credentials", async (c) => c.json(await service.listCredentials(c.get("owner"))));
+  app.post("/credentials", async (c) => {
+    const body = z
+      .object({
+        label: z.string().trim().min(1).max(80),
+        kind: z.enum(["git", "api", "ssh"]),
+        scopes: z.array(z.string().trim().min(1).max(60)).max(12).optional(),
+        ttlMs: z
+          .number()
+          .int()
+          .positive()
+          .max(24 * 60 * 60_000)
+          .optional(),
+        taskId: z.string().trim().min(1).max(120).optional(),
+      })
+      .parse(await c.req.json());
+    return c.json(await service.mintCredential(c.get("owner"), body), 201);
+  });
+  app.post("/credentials/:id/revoke", async (c) =>
+    c.json(await service.revokeCredential(c.get("owner"), c.req.param("id"), "manual")),
+  );
   app.post("/ideas/refresh", async (c) => c.json(await service.refreshIdeas(c.get("owner"))));
   /** 分页取灵感（照 Muse 的 IdeaCardsPaginationJson） */
   app.get("/ideas", async (c) => {
