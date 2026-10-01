@@ -21,7 +21,7 @@ import {
   Users,
   X,
 } from "lucide-react-native";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -43,6 +43,7 @@ import type {
   Idea,
   Monitor,
   RunEvent,
+  TemporaryCredential,
 } from "../../../packages/domain/src/agent";
 import { useAgentWorkspace } from "./agent-workspace";
 import {
@@ -1492,6 +1493,207 @@ export function IdeaChatCard({ onOpenIdeas }: { onOpenIdeas?: () => void }) {
         </Button>
       </View>
     </Card>
+  );
+}
+/**
+ * 短时凭据管理（照 Muse 的 `LinkDeviceTokenMinter.mint/revoke` + `TemporaryAccess`）。
+ * 铁律：密钥不进日志、列表**永远只显示后 6 位**、铸造那一刻的明文只出现一次。
+ */
+type CredentialView = TemporaryCredential & { secretTail: string; usable: boolean };
+const CREDENTIAL_KIND_LABEL: Record<TemporaryCredential["kind"], string> = {
+  git: "Git 仓库",
+  api: "外部 API",
+  ssh: "SSH",
+};
+function credentialState(item: CredentialView): { text: string; tint: string } {
+  if (item.usable) return { text: "可用", tint: colors.green };
+  if (item.revokeReason === "task_finished") return { text: "已随任务销毁", tint: colors.line };
+  if (item.revokeReason === "expired") return { text: "已过期", tint: colors.line };
+  return { text: "已吊销", tint: colors.line };
+}
+export function CredentialsPanel() {
+  const { api, close, notify, open } = useWorkspace();
+  const [items, setItems] = useState<CredentialView[]>([]);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [fresh, setFresh] = useState<{ label: string; secret: string } | null>(null);
+  const [label, setLabel] = useState("");
+  const [kind, setKind] = useState<TemporaryCredential["kind"]>("git");
+  const [scopes, setScopes] = useState("");
+  const [ttl, setTtl] = useState(30);
+
+  const load = useCallback(async () => {
+    try {
+      setItems(await api.request<CredentialView[]>("/api/agent/credentials"));
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }, [api]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function mint() {
+    if (!label.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const made = await api.request<{ label: string; secret: string }>("/api/agent/credentials", {
+        label: label.trim(),
+        kind,
+        scopes: scopes.split(/[,\s]+/).filter(Boolean),
+        ttlMs: ttl * 60_000,
+      });
+      // 明文只在这里出现一次；之后任何地方都只有后 6 位
+      setFresh({ label: made.label, secret: made.secret });
+      setLabel("");
+      setScopes("");
+      setAdding(false);
+      await load();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function revoke(item: CredentialView) {
+    setBusy(true);
+    setError("");
+    try {
+      await api.request(`/api/agent/credentials/${item.id}/revoke`, {});
+      notify(`已吊销「${item.label}」`);
+      await load();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Sheet
+      title="短时凭据"
+      subtitle="给任务临时用。任务一结束就自动销毁 —— 不是长期放在配置里的那种。"
+      onClose={close}
+    >
+      {fresh && (
+        <Card style={{ gap: 10, backgroundColor: colors.lavender }}>
+          <Text style={s.heading}>「{fresh.label}」的密钥</Text>
+          <Text style={s.small}>只显示这一次。离开这个面板后就再也取不到明文了。</Text>
+          <Text selectable style={{ fontFamily: "monospace", fontSize: 13, color: colors.text }}>
+            {fresh.secret}
+          </Text>
+          <View style={[s.row, { gap: 8 }]}>
+            <Button
+              small
+              icon={ArrowRight}
+              onPress={() => void Share.share({ message: fresh.secret }).catch(() => {})}
+            >
+              分享给自己
+            </Button>
+            <Button small onPress={() => setFresh(null)}>
+              我记下了
+            </Button>
+          </View>
+        </Card>
+      )}
+
+      <View style={s.between}>
+        <Text style={s.small}>共 {items.length} 把</Text>
+        <Button small icon={Plus} busy={busy} onPress={() => setAdding(!adding)}>
+          {adding ? "收起" : "铸一把"}
+        </Button>
+      </View>
+
+      {adding && (
+        <Card style={{ gap: 12 }}>
+          <Field
+            label="用途名称"
+            value={label}
+            onChangeText={setLabel}
+            placeholder="例如：给 xx 仓库推代码"
+          />
+          <View style={{ gap: 7 }}>
+            <Text style={s.small}>类型</Text>
+            <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
+              {(["git", "api", "ssh"] as const).map((option) => (
+                <Pressable key={option} onPress={() => setKind(option)}>
+                  <Chip tint={kind === option ? colors.sky : undefined}>
+                    {CREDENTIAL_KIND_LABEL[option]}
+                  </Chip>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+          <Field
+            label="权限范围（逗号分隔，可留空）"
+            value={scopes}
+            onChangeText={setScopes}
+            placeholder="repo:write, pr:create"
+          />
+          <View style={{ gap: 7 }}>
+            <Text style={s.small}>有效期</Text>
+            <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
+              {[15, 30, 60, 120].map((minutes) => (
+                <Pressable key={minutes} onPress={() => setTtl(minutes)}>
+                  <Chip tint={ttl === minutes ? colors.sky : undefined}>{minutes} 分钟</Chip>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+          <Button primary busy={busy} disabled={!label.trim()} onPress={() => void mint()}>
+            铸好
+          </Button>
+        </Card>
+      )}
+
+      <ErrorNotice error={error} />
+
+      {items.map((item) => {
+        const state = credentialState(item);
+        return (
+          <Card key={item.id} style={{ gap: 9 }}>
+            <View style={s.between}>
+              <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
+                <Text style={s.heading}>{item.label}</Text>
+                <Chip>{CREDENTIAL_KIND_LABEL[item.kind]}</Chip>
+              </View>
+              <Chip tint={state.tint}>{state.text}</Chip>
+            </View>
+            <Text style={s.small}>
+              密钥 {item.secretTail}
+              {item.scopes.length ? ` · 权限 ${item.scopes.join("、")}` : ""}
+              {` · 到期 ${stamp(item.expiresAt)}`}
+            </Text>
+            <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
+              {!!item.taskId && (
+                <Button
+                  small
+                  icon={ArrowRight}
+                  onPress={() => open({ type: "task", taskId: String(item.taskId) })}
+                >
+                  看绑定的任务
+                </Button>
+              )}
+              {item.usable && (
+                <Button small disabled={busy} onPress={() => void revoke(item)}>
+                  立即吊销
+                </Button>
+              )}
+            </View>
+          </Card>
+        );
+      })}
+
+      {!items.length && (
+        <Empty
+          icon={ShieldCheck}
+          title="还没有短时凭据"
+          detail="任务需要写仓库或调外部接口时，给它铸一把：只在这次任务期间有效，任务一结束就自动吊销（不会留在配置里）。"
+        />
+      )}
+    </Sheet>
   );
 }
 export function GoalsScreen() {

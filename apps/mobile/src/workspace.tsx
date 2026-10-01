@@ -23,6 +23,7 @@ export type Detail =
   | { type: "delegate" }
   | { type: "notifications" }
   | { type: "computer" }
+  | { type: "credentials" }
   | { type: "menu" };
 export interface WorkspaceContextValue {
   workspace: Workspace;
