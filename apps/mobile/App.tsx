@@ -1,4 +1,5 @@
 import { CopilotKitProvider } from "@copilotkit/react-native/headless";
+import { BlurView } from "expo-blur";
 import { StatusBar } from "expo-status-bar";
 import {
   Bell,
@@ -298,6 +299,22 @@ function WorkspaceApp({ token }: { token: string }) {
     </WorkspaceContext.Provider>
   );
 }
+/**
+ * 顶栏三块控件共用的一层"真玻璃"：expo-blur 真模糊（Android 必须 dimezisBlurView，
+ * 否则只有半透明底色、没有模糊）+ 一层半透明白，让底下的内容透出来。
+ * 尺寸由父容器给（absoluteFill），父容器负责圆角与 overflow: hidden。
+ */
+const FILL = { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 } as const;
+
+function GlassLayer({ radius = 999 }: { radius?: number }) {
+  return (
+    <View pointerEvents="none" style={[FILL, { borderRadius: radius, overflow: "hidden" }]}>
+      <BlurView intensity={48} tint="light" experimentalBlurMethod="dimezisBlurView" style={FILL} />
+      <View style={[FILL, { backgroundColor: "rgba(255,255,255,0.28)" }]} />
+    </View>
+  );
+}
+
 function WorkspaceShell({
   detail,
   toast,
@@ -396,8 +413,22 @@ function WorkspaceShell({
               paddingHorizontal: 20,
             }}
           >
-            <View style={{ position: "absolute", left: 0, top: insets.top + CHROME_CENTER_Y - 18 }}>
-              <IconButton icon={Menu} label="打开会话与菜单" onPress={() => setThreadsOpen(true)} />
+            <View
+              style={{
+                position: "absolute",
+                left: 0,
+                top: insets.top + CHROME_CENTER_Y - 18,
+                borderRadius: 18,
+                overflow: "hidden",
+              }}
+            >
+              <GlassLayer radius={18} />
+              <IconButton
+                glass
+                icon={Menu}
+                label="打开会话与菜单"
+                onPress={() => setThreadsOpen(true)}
+              />
             </View>
             <View style={{ alignItems: "center", gap: 1 }}>
               <Pressable
@@ -422,7 +453,11 @@ function WorkspaceShell({
                     paddingTop: 8,
                     paddingBottom: 9,
                     borderRadius: 18,
-                    backgroundColor: "#FFFFFF",
+                    // 改成玻璃：不再是不透明白底，底下滚动的文字能透出来（用户选的方案 1）
+                    backgroundColor: "transparent",
+                    overflow: "hidden",
+                    borderWidth: 1,
+                    borderColor: "rgba(19,38,49,0.06)",
                     alignItems: "center",
                     gap: 1,
                     // Muse 实测：中间卡片是可变的窄卡片（名字 + 一行状态），不是信息堆栈；
@@ -436,6 +471,7 @@ function WorkspaceShell({
                     elevation: 2,
                   }}
                 >
+                  <GlassLayer radius={18} />
                   <Text
                     style={{
                       fontSize: 16,
@@ -467,7 +503,10 @@ function WorkspaceShell({
                   height: 34,
                   paddingHorizontal: 14,
                   borderRadius: 19,
-                  backgroundColor: "#FFFFFF",
+                  backgroundColor: "transparent",
+                  overflow: "hidden",
+                  borderWidth: 1,
+                  borderColor: "rgba(19,38,49,0.06)",
                   shadowColor: "#132631",
                   shadowOffset: { width: 0, height: 2 },
                   shadowOpacity: 0.08,
@@ -475,6 +514,7 @@ function WorkspaceShell({
                   elevation: 2,
                 }}
               >
+                <GlassLayer radius={19} />
                 <Bell size={16} strokeWidth={1.8} color={colors.text} />
                 <Text style={[s.small, { color: colors.text }]}>
                   {pending > 0 ? `通知 · ${pending}` : "通知"}
