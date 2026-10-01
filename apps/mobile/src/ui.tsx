@@ -243,13 +243,13 @@ export function IconButton({
           borderRadius: 18,
           backgroundColor: glass
             ? pressed
-              ? "rgba(255,255,255,0.5)"
-              : "rgba(255,255,255,0.24)"
+              ? "rgba(255,255,255,0.38)"
+              : "rgba(255,255,255,0.16)"
             : pressed
               ? colors.line
               : "#FFFFFF",
           ...(glass
-            ? { borderWidth: 1, borderColor: "rgba(255,255,255,0.6)" }
+            ? { borderWidth: 1, borderColor: "rgba(255,255,255,0.45)" }
             : {
                 shadowColor: "#132631",
                 shadowOffset: { width: 0, height: 2 },
@@ -761,11 +761,11 @@ export function Mascot({
     lilac: "#F1ECF9",
   }[variant];
   const chip = glass
-    ? palette
+    ? (palette
         .replace("#", "")
         .match(/.{2}/g)
         ?.map((h) => Number.parseInt(h, 16))
-        .join(", ") ?? "236, 245, 250"
+        .join(", ") ?? "236, 245, 250")
     : null;
   return (
     <View accessibilityLabel="OpenMuse 水豚" style={{ width: size, height: size }}>
