@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Artifact } from "../../../packages/domain/src/index.ts";
@@ -7,6 +7,14 @@ import type { Auth } from "./auth.ts";
 import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
+
+/**
+ * 公开链接（发布）用的固定命名空间：键就是 token 本身，所以公开路由**没有 owner 也能一步查到**。
+ * 用一个不会与真实用户冲突的保留字，真实 owner 记在记录里。
+ */
+const PUBLIC_PUBLISH_OWNER = "_public";
+/** 落库的 Artifact 比对外多两个字段：发布 token 与其时间。对外永远剥掉 token（链接即能力） */
+type StoredArtifact = Artifact & { publishToken?: string; publishedAt?: string };
 
 /** 按魔数识别文件类型：放行 PDF 与常见图片（与 agent 的图片理解能力对齐）。 */
 function sniff(bytes: Uint8Array): { mimeType: string; extension: string } | undefined {
@@ -268,16 +276,68 @@ export class Files {
     await this.db.put(owner, "files", artifact);
     return this.signed(owner, artifact);
   }
+  /** 对外一律剥掉发布 token：链接本身就是能力，不能跟着列表/详情到处漂（只留一个布尔给界面用） */
+  private strip(file: StoredArtifact): Artifact {
+    const { publishToken, ...rest } = file;
+    return { ...rest, published: Boolean(publishToken) };
+  }
+  /** 内部用：拿到带 token 的原始记录（发布、撤销、读字节要用） */
+  private async raw(owner: string, id: string): Promise<StoredArtifact> {
+    const file = await this.db.get<StoredArtifact>(owner, "files", id);
+    if (!file) throw new AppError("找不到这个文件", 404);
+    return file;
+  }
+  /**
+   * 发布：给文件生成一条公开只读链接。重复发布返回**同一条**链接（幂等），不会把之前分享出去的弄丢。
+   * 记录落在固定的公开命名空间下（键就是 token），因此公开路由没有 owner 也能一步查到。
+   */
+  async publish(owner: string, id: string) {
+    const file = await this.raw(owner, id);
+    const token = file.publishToken ?? randomBytes(24).toString("base64url");
+    await this.db.put(PUBLIC_PUBLISH_OWNER, "publishes", {
+      id: token,
+      owner,
+      fileId: file.id,
+      createdAt: new Date().toISOString(),
+    });
+    const saved: StoredArtifact = {
+      ...file,
+      publishToken: token,
+      publishedAt: new Date().toISOString(),
+    };
+    await this.db.put<StoredArtifact>(owner, "files", saved);
+    return { url: this.publicLink(token), file: this.strip(saved) };
+  }
+  /** 停止发布：**删掉**映射记录，同一个 token 立刻 404（不是"标记失效"那种假撤销） */
+  async stopPublish(owner: string, id: string) {
+    const file = await this.raw(owner, id);
+    if (file.publishToken)
+      await this.db.remove(PUBLIC_PUBLISH_OWNER, "publishes", file.publishToken);
+    const { publishToken: _token, publishedAt: _publishedAt, ...rest } = file;
+    await this.db.put<Artifact>(owner, "files", rest);
+    return this.strip(rest);
+  }
+  /** 公开路由用：只有 token、没有 owner，一步查到它指向谁 */
+  async resolvePublish(token: string) {
+    const record = await this.db.get<{ owner: string; fileId: string }>(
+      PUBLIC_PUBLISH_OWNER,
+      "publishes",
+      token,
+    );
+    return record ?? undefined;
+  }
+  /** 公开链接用服务端配置的公网地址（PUBLIC_API_URL）：把局域网地址分享出去没人打得到 */
+  private publicLink(token: string) {
+    return `${this.config.publicUrl.replace(/\/$/, "")}/p/${token}`;
+  }
   signed(owner: string, file: Artifact): Artifact {
-    return { ...file, url: this.auth.sign(owner, `/api/files/${file.id}/content`) };
+    return { ...this.strip(file), url: this.auth.sign(owner, `/api/files/${file.id}/content`) };
   }
   async list(owner: string) {
     return (await this.db.list<Artifact>(owner, "files")).map((file) => this.signed(owner, file));
   }
   async get(owner: string, id: string) {
-    const file = await this.db.get<Artifact>(owner, "files", id);
-    if (!file) throw new AppError("找不到这个文件", 404);
-    return file;
+    return this.strip(await this.raw(owner, id));
   }
   async bytes(owner: string, id: string) {
     const file = await this.get(owner, id);

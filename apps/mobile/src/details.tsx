@@ -19,7 +19,16 @@ import {
   X,
 } from "lucide-react-native";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Image, Linking, Platform, ScrollView, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Image,
+  Linking,
+  Platform,
+  ScrollView,
+  Share,
+  Text,
+  View,
+} from "react-native";
 import {
   type ActionProposal,
   type Artifact,
@@ -822,6 +831,9 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
   );
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // 公开链接：token 只在本机存着（服务端不把它塞进文件载荷），所以发布后当场记住这次拿到的地址
+  const [link, setLink] = useState("");
+  const [published, setPublished] = useState(Boolean(f.published));
   const url = api.url(f.url || `/api/files/${f.id}/content`);
   const textFile = isText(f);
   const [content, setContent] = useState<string>();
@@ -909,6 +921,35 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
       const exported = await api.request<Artifact>(`/api/files/${f.id}/export`, { format: "pdf" });
       await refresh();
       open({ type: "file", file: exported });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  /**
+   * 发布 / 停止发布：公开只读链接，token 即能力（拿到链接的人不用登录）。停止发布是真撤销——
+   * 服务端把映射记录删掉，同一个链接立刻 404。
+   */
+  async function togglePublish() {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      if (published) {
+        const stopped = await api.request<Artifact>(
+          `/api/files/${f.id}/publish`,
+          undefined,
+          "DELETE",
+        );
+        setPublished(Boolean(stopped.published));
+        setLink("");
+      } else {
+        const result = await api.request<{ url: string }>(`/api/files/${f.id}/publish`, {});
+        setPublished(true);
+        setLink(result.url);
+      }
+      await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1013,6 +1054,9 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
             导出 PDF
           </Button>
         )}
+        <Button icon={Globe2} busy={busy} onPress={() => void togglePublish()}>
+          {published ? "停止发布" : "发布链接"}
+        </Button>
         <Button icon={Download} onPress={() => void share()}>
           {Platform.OS === "web" ? "打开 / 下载" : "保存或分享"}
         </Button>
@@ -1023,6 +1067,25 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
           附加到邮件
         </Button>
       </View>
+      {published && (
+        <Card>
+          <SectionHeading title="公开链接" />
+          <Text style={[s.muted, { marginBottom: 10 }]}>
+            拿到链接的人不用登录就能打开这个文件（只读）。停止发布会立刻让它失效。
+          </Text>
+          <Text selectable style={{ marginBottom: 12 }}>
+            {link || "链接在上次发布时显示过；再次发布可拿到同一条地址。"}
+          </Text>
+          <Button
+            small
+            icon={Send}
+            disabled={!link}
+            onPress={() => void Share.share({ message: link }).catch(() => {})}
+          >
+            分享链接
+          </Button>
+        </Card>
+      )}
       {f.fields && f.fields.length > 0 && (
         <Card>
           <SectionHeading title="填写这个表单" />

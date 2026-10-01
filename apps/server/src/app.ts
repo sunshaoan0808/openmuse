@@ -36,6 +36,7 @@ import { GoogleAuth } from "./google-auth.ts";
 import { friendlyToolError, recordActivity } from "./live-activity.ts";
 import { backgroundFailure } from "./log.ts";
 import { markdownToHtml, wrapHtmlDocument } from "./markdown-html.ts";
+import { publishRoutes } from "./publish.ts";
 import { SearchService } from "./search.ts";
 import {
   conversationRecordId,
@@ -214,6 +215,8 @@ export async function createApp(
   // git 凭据代发代理：**故意挂在 /api/* 之外** —— 调用它的是沙箱，没有会话令牌，
   // 认证靠句柄本身（32 字节随机）= 一次性能力，且每次转发都重新校验凭据是否还有效。
   app.route("/git", gitProxyRoutes(db));
+  // 公开只读链接：同样挂在 /api/* 之外 —— 拿到链接的人没有会话令牌，认证靠 token 本身
+  app.route("/p", publishRoutes(files));
   app.route("/api/agent", agentRoutes(agent));
   app.route("/api/computer", computerRoutes(computer, files));
   app.get("/api/calendars", async (c) => c.json(await workspace.calendars(c.get("owner"))));
@@ -459,6 +462,13 @@ export async function createApp(
     const name = file.name.replace(/\.[^.]+$/, "") || "导出";
     return c.json(await files.import(owner, `${name}.pdf`, pdf, `导出为 PDF：${file.name}`), 201);
   });
+  // 发布：生成/复用一条公开只读链接（token 即能力，停止发布立刻失效）
+  app.post("/api/files/:id/publish", async (c) =>
+    c.json(await files.publish(c.get("owner"), c.req.param("id"))),
+  );
+  app.delete("/api/files/:id/publish", async (c) =>
+    c.json(await files.stopPublish(c.get("owner"), c.req.param("id"))),
+  );
   app.post("/api/files/:id/fill", async (c) => {
     const body = z
       .object({ fields: z.record(z.string(), z.union([z.string(), z.boolean()])) })

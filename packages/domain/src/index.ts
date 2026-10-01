@@ -49,6 +49,8 @@ export interface Artifact {
   source: string;
   parentId?: string;
   fields?: { name: string; value: string; type: "text" | "checkbox" | "unsupported" }[];
+  /** 是否已有公开链接（发布过）；token 本身不外传，只给界面一个布尔 */
+  published?: boolean;
 }
 export interface BrowserSession {
   id: string;
