@@ -35,6 +35,7 @@ import { gitProxyRoutes } from "./git-proxy.ts";
 import { GoogleAuth } from "./google-auth.ts";
 import { friendlyToolError, recordActivity } from "./live-activity.ts";
 import { backgroundFailure } from "./log.ts";
+import { markdownToHtml, wrapHtmlDocument } from "./markdown-html.ts";
 import { SearchService } from "./search.ts";
 import {
   conversationRecordId,
@@ -443,6 +444,20 @@ export async function createApp(
     c.header("Content-Type", file.mimeType || "application/octet-stream");
     c.header("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`);
     return c.body(await files.bytes(c.get("owner"), file.id));
+  });
+  // 把文本型文件导出成 PDF（Muse 也有导出）：服务端转 HTML → 浏览器 worker 打印 → 存成一个新文件
+  app.post("/api/files/:id/export", async (c) => {
+    z.object({ format: z.literal("pdf") }).parse(await c.req.json());
+    const owner = c.get("owner");
+    const file = await files.get(owner, c.req.param("id"));
+    if (!file.mimeType.startsWith("text/"))
+      throw new AppError("只有文本、Markdown 或网页文件能导出为 PDF。", 400);
+    const text = new TextDecoder().decode(await files.bytes(owner, file.id));
+    const isHtmlFile = file.mimeType === "text/html" || /\.html?$/i.test(file.name);
+    const document = wrapHtmlDocument(file.name, isHtmlFile ? text : markdownToHtml(text));
+    const pdf = await browser.exportPdf(owner, "exports", document);
+    const name = file.name.replace(/\.[^.]+$/, "") || "导出";
+    return c.json(await files.import(owner, `${name}.pdf`, pdf, `导出为 PDF：${file.name}`), 201);
   });
   app.post("/api/files/:id/fill", async (c) => {
     const body = z

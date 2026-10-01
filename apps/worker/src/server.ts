@@ -70,7 +70,7 @@ export async function createWorkerServer(options: {
         return;
       }
       const match =
-        /^\/sessions\/([^/]+)\/(navigate|close|screenshot|read|content|input|downloads|back|forward|reload|viewport|elements|act)(?:\/([^/]+))?$/.exec(
+        /^\/sessions\/([^/]+)\/(navigate|close|screenshot|pdf|read|content|input|downloads|back|forward|reload|viewport|elements|act)(?:\/([^/]+))?$/.exec(
           pathname,
         );
       if (!match) throw new WorkerError("NOT_FOUND", "Worker endpoint not found.", 404);
@@ -115,7 +115,18 @@ export async function createWorkerServer(options: {
         json(200, await browser.elements(id));
       else if (action === "act" && !downloadId && request.method === "POST")
         json(200, await browser.act(id, await readBody(request)));
-      else if (action === "screenshot" && !downloadId && request.method === "GET") {
+      else if (action === "pdf" && !downloadId && request.method === "POST") {
+        // 导出用：把一段 HTML 打印成 PDF（返回二进制，不走 JSON）
+        const body = await readBody(request);
+        const html = typeof body.html === "string" ? body.html : "";
+        if (!html) throw new WorkerError("INVALID_REQUEST", "html is required.");
+        const bytes = await browser.pdf(id, html);
+        response.writeHead(200, {
+          "content-type": "application/pdf",
+          "content-length": bytes.length,
+        });
+        response.end(bytes);
+      } else if (action === "screenshot" && !downloadId && request.method === "GET") {
         const format = search.get("format") === "jpeg" ? "jpeg" : "png";
         const quality = Number(search.get("quality") ?? "");
         const bytes = await browser.screenshot(id, {

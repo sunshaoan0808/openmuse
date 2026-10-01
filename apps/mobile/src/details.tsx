@@ -900,6 +900,21 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }
+  /** 导出成 PDF：服务端把文本转成网页、浏览器 worker 打印，存成一个新文件后直接打开它 */
+  async function exportPdf() {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const exported = await api.request<Artifact>(`/api/files/${f.id}/export`, { format: "pdf" });
+      await refresh();
+      open({ type: "file", file: exported });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <Sheet
       title={f.name}
@@ -992,6 +1007,12 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
         <OfficeReader url={url} token={api.token} name={f.name} size={f.size} />
       )}
       <View style={[s.row, { gap: 10, marginVertical: 18, flexWrap: "wrap" }]}>
+        {(textFile || isHtml(f)) && (
+          // 导出：服务端把文本/Markdown/网页转成 HTML，worker 用浏览器打印成 PDF（Muse 也有这个动作）
+          <Button icon={Save} busy={busy} onPress={() => void exportPdf()}>
+            导出 PDF
+          </Button>
+        )}
         <Button icon={Download} onPress={() => void share()}>
           {Platform.OS === "web" ? "打开 / 下载" : "保存或分享"}
         </Button>

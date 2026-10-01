@@ -574,3 +574,14 @@ test("the workspace reports the browser offline while its worker's health check 
     );
   }
 });
+
+test("about:blank 放行（导出 PDF 用），其它非公网目标照旧拒绝", async () => {
+  await assert.doesNotReject(validatePublicUrl("about:blank", async () => []));
+  await assert.rejects(
+    validatePublicUrl("http://127.0.0.1:8787/", async () => [{ address: "127.0.0.1", family: 4 }]),
+    /Only public HTTP\(S\) destinations/,
+  );
+  await assert.rejects(
+    validatePublicUrl("http://10.0.0.5/", async () => [{ address: "10.0.0.5", family: 4 }]),
+  );
+});

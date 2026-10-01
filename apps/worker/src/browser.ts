@@ -563,6 +563,29 @@ export async function createBrowserManager(options: {
           timeout: 10_000,
         }),
       ),
+    /**
+     * 把一段 HTML 打印成 PDF（导出用）。用**会话自己的页面**打印：navigate/screenshot 用的就是它，
+     * 重启恢复后也一定是活的（恢复出来的 context 字段是旧的，拿它开新页会报 "context has been closed"）。
+     * 调用方只把它用在「导出专用会话」上，所以覆盖页面内容没有副作用。
+     * 有头模式下 Playwright 的 page.pdf() 会直接拒绝，所以走 CDP 的 Page.printToPDF。
+     */
+    pdf: (id: string, html: string) =>
+      serial(id, async () => {
+        const { page } = active(id);
+        await page.setContent(html, { waitUntil: "load", timeout: 20_000 });
+        const cdp = await page.context().newCDPSession(page);
+        const printed = (await cdp.send("Page.printToPDF", {
+          printBackground: true,
+          preferCSSPageSize: false,
+          // CDP 的参数是扁平的（嵌套 margin 是 Playwright 的写法）
+          marginTop: 0.4,
+          marginBottom: 0.4,
+          marginLeft: 0.4,
+          marginRight: 0.4,
+        })) as { data: string };
+        await cdp.detach().catch(() => {});
+        return Buffer.from(printed.data, "base64");
+      }),
     back: (id: string) =>
       serial(id, async () => {
         const { page } = active(id);
