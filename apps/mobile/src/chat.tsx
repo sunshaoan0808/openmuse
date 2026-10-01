@@ -933,7 +933,17 @@ export function ChatScreen({
                   ) : (
                     // Muse 的助手回复是纯文本直接铺在底色上，不套气泡卡片
                     <View style={{ paddingVertical: 2 }}>
-                      <AssistantResponse content={text} />
+                      <AssistantResponse
+                        content={text}
+                        // 正文里指向自己文件的链接：交回应用内的文件面板，
+                        // 别再跳外部浏览器（那是内网地址、且浏览器没有令牌，打不开）
+                        onOpenFile={(id) => {
+                          const file = w.files.find((item) => item.id === id);
+                          if (!file) return false;
+                          open({ type: "file", file });
+                          return true;
+                        }}
+                      />
                     </View>
                   ))}
                 <JevInteractionContext.Provider

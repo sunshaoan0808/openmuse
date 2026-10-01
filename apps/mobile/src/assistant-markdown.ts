@@ -63,3 +63,13 @@ export function tidyAssistantText(text: string): string {
 
   return out;
 }
+
+/**
+ * 助手正文里指向"我们自己的文件"的链接（/api/files/<id>…，可能带签名 query）。
+ * 这类链接**不能在外部浏览器打开**：那是本机/内网地址，浏览器里也没有会话令牌，
+ * 用户看到的就是"点了跳到浏览器，但打不开"。识别出来交回应用内的文件面板。
+ */
+export function fileIdFromUrl(url: string): string | undefined {
+  const match = url.match(/\/api\/files\/([0-9a-zA-Z_-]{6,80})(?:[/?#]|$)/);
+  return match?.[1];
+}
