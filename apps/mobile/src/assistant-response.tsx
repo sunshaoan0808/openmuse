@@ -1,7 +1,12 @@
 import { useCallback, useState } from "react";
 import { type ImageStyle, Linking, Text, type TextStyle, type ViewStyle } from "react-native";
 import Markdown, { type RenderRules } from "react-native-markdown-display";
-import { assistantMarkdown, isSafeAssistantUrl, tidyAssistantText } from "./assistant-markdown";
+import {
+  assistantMarkdown,
+  fileIdFromUrl,
+  isSafeAssistantUrl,
+  tidyAssistantText,
+} from "./assistant-markdown";
 import { colors, ErrorNotice } from "./ui";
 
 const textStyle = { color: colors.text, fontSize: 16, lineHeight: 24 };
@@ -73,18 +78,31 @@ const rules: RenderRules = {
   fence: renderCodeBlock,
 };
 
-export function AssistantResponse({ content }: { content: string }) {
+export function AssistantResponse({
+  content,
+  onOpenFile,
+}: {
+  content: string;
+  /** 点正文里的文件链接时回调；返回 true = 应用内已处理（不再跳浏览器） */
+  onOpenFile?: (fileId: string) => boolean;
+}) {
   const [linkError, setLinkError] = useState("");
   // 抄写抖动（书名号里的星号、重复片名、只开不闭）在渲染前清掉，不改模型输出也不进存档。
   const shown = tidyAssistantText(content);
-  const onLinkPress = useCallback((url: string) => {
-    if (!isSafeAssistantUrl(url)) return false;
-    setLinkError("");
-    void Linking.openURL(url).catch((error) =>
-      setLinkError(error instanceof Error ? error.message : String(error)),
-    );
-    return false;
-  }, []);
+  const onLinkPress = useCallback(
+    (url: string) => {
+      if (!isSafeAssistantUrl(url)) return false;
+      // 自己的文件链接优先交回应用内打开（见 fileIdFromUrl 的说明）
+      const fileId = onOpenFile ? fileIdFromUrl(url) : undefined;
+      if (fileId && onOpenFile?.(fileId)) return false;
+      setLinkError("");
+      void Linking.openURL(url).catch((error) =>
+        setLinkError(error instanceof Error ? error.message : String(error)),
+      );
+      return false;
+    },
+    [onOpenFile],
+  );
   return (
     <>
       <Markdown

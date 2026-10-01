@@ -39,6 +39,7 @@ import { browserAddress, browserSite } from "./browser-address";
 import { ComputerSheet } from "./computer";
 import DateTimeEditor from "./DateTimeEditor";
 import { localDateTime, zonedInstant } from "./date-time";
+import HtmlReader from "./HtmlReader";
 import { fieldLabel, proposalStatusLabel } from "./labels";
 import MediaPlayer from "./MediaPlayer";
 import type { HeroCard } from "./motion";
@@ -742,6 +743,11 @@ function isText(file: Artifact) {
   );
 }
 
+/** HTML：按文档渲染（Muse 也把 html 当文档）。注意它同时是 text/*，分支必须排在文本预览之前 */
+function isHtml(file: Artifact) {
+  return file.mimeType.toLowerCase() === "text/html" || /\.html?$/i.test(file.name.trim());
+}
+
 /** 音视频：对照 Muse，媒体也是"一等文件"。播放交给 MediaPlayer（native 用 WebView 内联播） */
 function isMedia(file: Artifact) {
   const mime = file.mimeType.toLowerCase();
@@ -801,7 +807,7 @@ function imageExtension(file: Artifact): string {
     : "png";
 }
 function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
-  const { api, refresh, open, close } = useWorkspace();
+  const { api, refresh, open, close, workspace: w } = useWorkspace();
   const [values, setValues] = useState<Record<string, string | boolean>>(() =>
     Object.fromEntries(
       (f.fields || [])
@@ -851,30 +857,34 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
         return;
       }
       // 扩展名与类型要跟着文件走：之前一律存成 .pdf 并声明 PDF，文本文件分享出去会是坏文件
-      const extension = textFile
-        ? /[.](txt)$/i.test(f.name)
-          ? "txt"
-          : "md"
-        : isImage(f)
-          ? imageExtension(f)
-          : isMedia(f)
-            ? mediaExtension(f)
-            : "pdf";
+      const extension = isHtml(f)
+        ? "html"
+        : textFile
+          ? /[.](txt)$/i.test(f.name)
+            ? "txt"
+            : "md"
+          : isImage(f)
+            ? imageExtension(f)
+            : isMedia(f)
+              ? mediaExtension(f)
+              : "pdf";
       const target = `${FileSystem.cacheDirectory}${f.id}.${extension}`;
       await FileSystem.downloadAsync(url, target, {
         headers: { Authorization: `Bearer ${api.token}` },
       });
       if (await Sharing.isAvailableAsync())
         await Sharing.shareAsync(target, {
-          mimeType: textFile
-            ? extension === "txt"
-              ? "text/plain"
-              : "text/markdown"
-            : isImage(f)
-              ? f.mimeType || `image/${extension}`
-              : isMedia(f)
-                ? f.mimeType || "video/mp4"
-                : "application/pdf",
+          mimeType: isHtml(f)
+            ? "text/html"
+            : textFile
+              ? extension === "txt"
+                ? "text/plain"
+                : "text/markdown"
+              : isImage(f)
+                ? f.mimeType || `image/${extension}`
+                : isMedia(f)
+                  ? f.mimeType || "video/mp4"
+                  : "application/pdf",
           UTI: isMedia(f)
             ? f.mimeType.startsWith("video/")
               ? "public.movie"
@@ -900,6 +910,13 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
     >
       {isPdf(f) ? (
         <PdfReader url={url} token={api.token} pageCount={f.pageCount} />
+      ) : isHtml(f) ? (
+        // HTML 走文档渲染（真机：WebView + 关闭 JavaScript；Web 验收实例退化为源码）
+        content === undefined ? (
+          <ActivityIndicator color={colors.blueDark} />
+        ) : (
+          <HtmlReader html={content} name={f.name} />
+        )
       ) : textFile ? (
         // 智能体写出来的攻略/报告走 markdown 渲染；csv / json / 源码走纯文本（等宽），
         // 否则表格列与缩进会被 markdown 吃掉，读起来是坏的。
@@ -908,7 +925,16 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
         ) : isMarkdown(f) ? (
           <View style={{ maxHeight: 460 }}>
             <ScrollView>
-              <AssistantResponse content={content} />
+              <AssistantResponse
+                content={content}
+                // 文本文件里若有指向其它文件的链接，同样交回应用内（不跳浏览器）
+                onOpenFile={(id) => {
+                  const file = w.files.find((item) => item.id === id);
+                  if (!file) return false;
+                  open({ type: "file", file });
+                  return true;
+                }}
+              />
             </ScrollView>
           </View>
         ) : (
