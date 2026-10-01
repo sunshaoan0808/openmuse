@@ -38,6 +38,7 @@ import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
 import { backgroundFailure } from "../log.ts";
+import { defaultSandboxRoot, destroySandbox } from "../sandbox.ts";
 import { SearchService } from "../search.ts";
 import type { WorkspaceService } from "../workspace.ts";
 import { analyzeSpending } from "./finance.ts";
@@ -1177,8 +1178,15 @@ export class AgentService {
       const revoked = await revokeForTask(this.db, owner, saved.id);
       if (revoked)
         console.log(`[credentials] 任务 ${saved.id.slice(0, 8)} 结束，吊销短时凭据 ${revoked} 把`);
+      // 沙箱"任务结束即重置"：任务里如果建过一次性工作区，这里连目录一起删掉
+      const sandboxId = typeof saved.state?.sandboxId === "string" ? saved.state.sandboxId : "";
+      if (sandboxId) {
+        const removed = await destroySandbox(defaultSandboxRoot(this.config.dataDir), sandboxId);
+        if (removed)
+          console.log(`[sandbox] 任务 ${saved.id.slice(0, 8)} 结束，沙箱 ${sandboxId} 已重置`);
+      }
     } catch {
-      // 吊销失败不影响任务收尾；下次 sweep 或人工吊销兜底
+      // 收尾失败不影响任务终态；凭据有 sweep 兜底，沙箱目录有孤儿清理兜底
     }
     const task = await this.getTask(owner, saved.id);
     if (task.status === "succeeded") {
