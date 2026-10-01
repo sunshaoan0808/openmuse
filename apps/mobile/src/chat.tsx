@@ -836,6 +836,7 @@ export function ChatScreen({
           flexGrow: 1,
         }}
         onScrollBeginDrag={markUserScroll}
+        onTouchStart={markUserScroll}
         onScroll={headerScrollHandler(
           ({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
             // 顶栏随滚动方向收起/展开
