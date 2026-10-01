@@ -47,3 +47,21 @@ test("图片不会被当成 PDF/文本处理，也不会显示“N pages”", ()
   );
   assert.match(body, /UTI: isImage\(f\)/, "分享的 UTI 要区分图片");
 });
+
+test("文本型不再只有 md/txt：csv / json / 源码也进文本预览，且只有 markdown 走富文本", () => {
+  const body = strip(code);
+  assert.match(body, /csv/, "isText 应认识 csv");
+  assert.match(body, /function isMarkdown/, "应该区分 markdown 与其它文本");
+  const markdown = body.indexOf("isMarkdown(f) ? (");
+  const plain = body.indexOf("{content}", markdown);
+  const office = body.indexOf("<OfficeReader");
+  assert.ok(
+    markdown > 0 && plain > markdown && office > plain,
+    "分支顺序应为 markdown → 纯文本 → 图片 → Office",
+  );
+  assert.match(
+    body.slice(markdown, office),
+    /monospace/,
+    "非 markdown 文本要用等宽字体渲染，否则 csv 的表格与代码缩进会被吃掉",
+  );
+});

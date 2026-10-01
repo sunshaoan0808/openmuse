@@ -733,7 +733,20 @@ function isPdf(file: Artifact) {
 }
 /** 智能体写出来的文本文件（markdown / 纯文本）：直接读出来渲染，而不是丢给 Office 渲染器。 */
 function isText(file: Artifact) {
-  return file.mimeType.startsWith("text/") || /\.(md|txt)$/i.test(file.name.trim());
+  const mime = file.mimeType.toLowerCase();
+  if (mime.startsWith("text/")) return true;
+  if (/^application\/(json|.*\+json|yaml|.*\+yaml|toml|x-ndjson|xml)$/.test(mime)) return true;
+  return /\.(md|mdown|markdown|txt|log|csv|tsv|json|jsonl|ya?ml|toml|ini|conf|env|html?|xml|py|ts|tsx|jsx?|mjs|cjs|kt|java|go|rs|c|h|cpp|hpp|cc|sql|sh|bash|zsh|scss|css|plist)$/i.test(
+    file.name.trim(),
+  );
+}
+
+/** markdown 才走富文本渲染；csv / json / 源码按纯文本（等宽）渲染，否则表格与缩进会被吃掉 */
+function isMarkdown(file: Artifact) {
+  return (
+    file.mimeType.toLowerCase() === "text/markdown" ||
+    /\.(md|mdown|markdown)$/i.test(file.name.trim())
+  );
 }
 
 /** 图片：服务端一直认得（png/jpg/webp/gif），但移动端预览以前把它丢给 Office 渲染器 ⇒ 等于不能预览 */
@@ -849,13 +862,41 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
       {isPdf(f) ? (
         <PdfReader url={url} token={api.token} pageCount={f.pageCount} />
       ) : textFile ? (
-        // 智能体写出来的攻略/报告就是这类文件：直接按 markdown 渲染，能读也能分享
+        // 智能体写出来的攻略/报告走 markdown 渲染；csv / json / 源码走纯文本（等宽），
+        // 否则表格列与缩进会被 markdown 吃掉，读起来是坏的。
         content === undefined ? (
           <ActivityIndicator color={colors.blueDark} />
-        ) : (
+        ) : isMarkdown(f) ? (
           <View style={{ maxHeight: 460 }}>
             <ScrollView>
               <AssistantResponse content={content} />
+            </ScrollView>
+          </View>
+        ) : (
+          <View
+            style={{
+              maxHeight: 460,
+              backgroundColor: colors.canvas,
+              borderRadius: 12,
+              padding: 12,
+            }}
+          >
+            <ScrollView>
+              <Text
+                selectable
+                style={{
+                  fontFamily: Platform.select({
+                    ios: "Menlo",
+                    android: "monospace",
+                    default: "monospace",
+                  }),
+                  fontSize: 12.5,
+                  lineHeight: 18,
+                  color: colors.text,
+                }}
+              >
+                {content}
+              </Text>
             </ScrollView>
           </View>
         )

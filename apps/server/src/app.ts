@@ -427,7 +427,7 @@ export async function createApp(
   app.post("/api/files", async (c) => {
     const data = await c.req.parseBody();
     const file = data.file;
-    if (!(file instanceof File)) throw new AppError("请选择 PDF 或图片文件");
+    if (!(file instanceof File)) throw new AppError("请选择文件（PDF、图片或文本文件）");
     return c.json(
       await files.import(
         c.get("owner"),

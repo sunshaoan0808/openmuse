@@ -8,7 +8,7 @@ import type { Config } from "./config.ts";
 import type { Store } from "./db.ts";
 import { AppError } from "./errors.ts";
 
-/** 按魔数识别文件类型：只放行 PDF 与常见图片（与 agent 的图片理解能力对齐）。 */
+/** 按魔数识别文件类型：放行 PDF 与常见图片（与 agent 的图片理解能力对齐）。 */
 function sniff(bytes: Uint8Array): { mimeType: string; extension: string } | undefined {
   const b = bytes;
   const startsWith = (...sig: number[]) => sig.every((v, i) => b[i] === v);
@@ -27,6 +27,83 @@ function sniff(bytes: Uint8Array): { mimeType: string; extension: string } | und
   return undefined;
 }
 
+/**
+ * 文本类文件：按扩展名认（文本没有可靠的字节魔数），再用一段内容校验兜底。
+ * 对照 Muse 的 `HatchMimeResolver$Extensions`：文档、源码、配置都是一等文件，不该只能存 PDF 和图片。
+ */
+const TEXT_TYPES: Record<string, string> = {
+  md: "text/markdown",
+  mdown: "text/markdown",
+  markdown: "text/markdown",
+  txt: "text/plain",
+  log: "text/plain",
+  csv: "text/csv",
+  tsv: "text/tab-separated-values",
+  json: "application/json",
+  jsonl: "application/x-ndjson",
+  yaml: "application/yaml",
+  yml: "application/yaml",
+  toml: "application/toml",
+  ini: "text/plain",
+  conf: "text/plain",
+  env: "text/plain",
+  html: "text/html",
+  htm: "text/html",
+  xml: "text/xml",
+  svg: "image/svg+xml",
+  py: "text/x-python",
+  ts: "text/x-typescript",
+  tsx: "text/x-typescript",
+  js: "text/javascript",
+  jsx: "text/javascript",
+  mjs: "text/javascript",
+  cjs: "text/javascript",
+  kt: "text/x-kotlin",
+  java: "text/x-java",
+  go: "text/x-go",
+  rs: "text/x-rust",
+  c: "text/x-c",
+  h: "text/x-c",
+  cpp: "text/x-c++",
+  hpp: "text/x-c++",
+  cc: "text/x-c++",
+  sql: "text/x-sql",
+  sh: "text/x-sh",
+  bash: "text/x-sh",
+  zsh: "text/x-sh",
+  scss: "text/x-scss",
+  css: "text/css",
+  plist: "text/x-plist",
+};
+
+/** 取文件名里的扩展名（小写，不含点） */
+function extensionOf(name: string): string | undefined {
+  return name
+    .split(/[\\/]/)
+    .at(-1)
+    ?.match(/\.([A-Za-z0-9]+)$/)?.[1]
+    ?.toLowerCase();
+}
+
+/**
+ * 文本兜底识别：扩展名必须认识，且内容得真的像文本
+ * —— 出现 NUL 字节、或不可打印字符超过 5%，就当成二进制拒绝（防止有人把 zip 改名成 .py）。
+ */
+function sniffText(
+  name: string,
+  bytes: Uint8Array,
+): { mimeType: string; extension: string } | undefined {
+  const extension = extensionOf(name);
+  const mimeType = extension ? TEXT_TYPES[extension] : undefined;
+  if (!extension || !mimeType) return undefined;
+  const head = bytes.subarray(0, 4096);
+  if (head.includes(0)) return undefined;
+  let weird = 0;
+  for (const byte of head) if (byte < 9 || (byte > 13 && byte < 32)) weird += 1;
+  if (head.length > 0 && weird > head.length / 20) return undefined;
+  return { mimeType, extension };
+}
+
 /** 文件在磁盘上的扩展名：以存下来的 mimeType 为准，老数据回退到 pdf。 */
 function extensionFor(mimeType: string): string {
   switch (mimeType) {
@@ -43,9 +120,15 @@ function extensionFor(mimeType: string): string {
     case "text/plain":
       return "txt";
     default:
-      return "pdf";
+      break;
   }
+  // 文本类反查（csv / json / 源码…）：表里第一个匹配的扩展名就是落盘用的
+  const found = Object.entries(TEXT_TYPES).find(([, mime]) => mime === mimeType);
+  return found ? found[0] : "pdf";
 }
+
+/** 给用户看的类型名（错误提示里用得上） */
+const SUPPORTED = "PDF、图片（png / jpg / webp / gif）与文本文件（md / txt / csv / json / 源码等）";
 
 export class Files {
   constructor(
@@ -61,9 +144,9 @@ export class Files {
     parentId?: string,
   ): Promise<Artifact> {
     if (bytes.length > 10 * 1024 * 1024) throw new AppError("文件需在 10 MB 以内", 413);
-    const kind = sniff(bytes);
-    if (!kind) throw new AppError("只支持 PDF 与图片（png / jpg / webp / gif）", 422);
-    // 图片不做 PDF 解析；PDF 仍走原有的页数/表单字段检查
+    const kind = sniff(bytes) ?? sniffText(name, bytes);
+    if (!kind) throw new AppError(`只支持 ${SUPPORTED}`, 422);
+    // 图片与文本不做 PDF 解析；PDF 仍走原有的页数/表单字段检查
     const metadata =
       kind.mimeType === "application/pdf"
         ? await inspectPdf(bytes)
@@ -93,9 +176,11 @@ export class Files {
     return this.signed(owner, artifact);
   }
   /**
-   * 存一份"由智能体写出来的文本文件"（markdown / 纯文本）。
+   * 存一份"由智能体写出来的文本文件"。
    * 之前的 import() 只放行 PDF 与图片（靠字节魔数嗅探），所以用户要一份 .md 时
    * 智能体即使写出了内容也无处可存，只能把全文打在聊天里。
+   * 现在：名字带已知文本扩展名就按那个类型存（csv / json / py… 都能交出去），
+   * 否则默认 markdown，只有明确 .txt 才存纯文本。
    */
   async importText(
     owner: string,
@@ -106,13 +191,16 @@ export class Files {
   ): Promise<Artifact> {
     const bytes = new TextEncoder().encode(text);
     if (bytes.length > 10 * 1024 * 1024) throw new AppError("文件需在 10 MB 以内", 413);
-    // 默认 markdown：用户/智能体说"一份文件"时通常要的就是可读的 md；只有明确 .txt 才存纯文本
-    const markdown = !/\.txt$/i.test(name);
+    const named = extensionOf(name);
+    const namedType = named ? TEXT_TYPES[named] : undefined;
+    const markdown = !namedType && !/\.txt$/i.test(name);
+    const mimeType = namedType ?? (markdown ? "text/markdown" : "text/plain");
+    const extension = namedType ? (named as string) : markdown ? "md" : "txt";
     const clean = Array.from((name.split(/[\\/]/).at(-1) || "document").replace(/\s+$/, ""))
       .filter((character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127)
       .join("")
       .slice(0, 160);
-    const safeName = /\.(md|txt)$/i.test(clean) ? clean : `${clean}.${markdown ? "md" : "txt"}`;
+    const safeName = namedType || /\.(md|txt)$/i.test(clean) ? clean : `${clean}.${extension}`;
     const id = idempotencyKey
       ? createHash("sha256").update(`file:${idempotencyKey}`).digest("hex")
       : randomUUID();
@@ -121,7 +209,7 @@ export class Files {
     const artifact: Artifact = {
       id,
       name: safeName,
-      mimeType: markdown ? "text/markdown" : "text/plain",
+      mimeType,
       size: bytes.length,
       pageCount: 0,
       fields: [],
@@ -131,7 +219,7 @@ export class Files {
     };
     const directory = join(this.config.dataDir, "files");
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    await writeFile(join(directory, `${id}.${markdown ? "md" : "txt"}`), bytes, {
+    await writeFile(join(directory, `${id}.${extension}`), bytes, {
       mode: 0o600,
       flag: "wx",
     });
