@@ -576,7 +576,9 @@ function WorkspaceShell({
               </Pressable>
             </View>
           </Animated.View>
-          <View style={{ flex: 1, minHeight: 0 }}>
+          {/* 内容区：顶部留一条 10px 的缝。缝里露的是外壳底色（与顶栏同色，看不出是"白带"），
+              作用是让正文不要紧贴顶栏下沿 —— 紧贴时被视口切掉的那半行读起来就是"白条压住了正文"。 */}
+          <View style={{ flex: 1, minHeight: 0, paddingTop: 10 }}>
             {section !== "chat" && (
               <ScrollView
                 key={section}
