@@ -534,6 +534,133 @@ export class AgentService {
     throw new AppError("更新时监控已变更，请重试。", 409);
   }
   /**
+   * 照 Muse 给生成出来的灵感补上"卡片该有的东西"：可勾选条目（IdeaCardItem）、
+   * 角标（badges）、以及"做出来会得到什么"（buildSummary）。
+   * Muse 那边这些是服务端下发的（IdeaCardPresentationJson），我们同样由服务端定，客户端只画。
+   */
+  private enrichIdea(idea: Idea): Idea {
+    const byKind: Record<string, Pick<Idea, "items" | "badges" | "buildSummary">> = {
+      document: {
+        badges: ["来自邮件", "需要你确认"],
+        buildSummary: "会得到一份填好的 PDF，外加一封待你确认的回复草稿。",
+        items: [
+          {
+            id: "fill",
+            kind: "document",
+            title: "把表填好",
+            summary: "按邮件里的要求逐项填，缺的信息先问你",
+            buildSummary: "填好的 PDF",
+            selectable: true,
+            selected: true,
+          },
+          {
+            id: "reply",
+            kind: "reply",
+            title: "拟一封回复",
+            summary: "写好但不发，等你确认",
+            buildSummary: "回复草稿",
+            selectable: true,
+            selected: true,
+          },
+        ],
+      },
+      agent: {
+        badges: ["来自邮件"],
+        buildSummary: "会得到一条明确的下步建议 + 一封待你确认的回复。",
+        items: [
+          {
+            id: "calendar",
+            kind: "check",
+            title: "查我的日历",
+            summary: "看那段时间有没有冲突",
+            buildSummary: "可用时段",
+            selectable: true,
+            selected: true,
+          },
+          {
+            id: "reply",
+            kind: "reply",
+            title: "拟一封回复",
+            summary: "给出两三个可选时间，等你确认",
+            buildSummary: "回复草稿",
+            selectable: true,
+            selected: true,
+          },
+        ],
+      },
+      plan: {
+        badges: ["来自目标"],
+        buildSummary: "会得到一份可执行的计划（里程碑 + 每一步的验收标准）。",
+        items: [
+          {
+            id: "milestones",
+            kind: "plan",
+            title: "拆出里程碑",
+            summary: "把目标拆成 3–6 个能验收的里程碑",
+            buildSummary: "里程碑清单",
+            selectable: true,
+            selected: true,
+          },
+        ],
+      },
+    };
+    const extra = byKind[idea.kind];
+    return extra ? { ...idea, ...extra } : idea;
+  }
+
+  /**
+   * 照 Muse 的 `SeededIdeaDetail{detail, isExecutable}`：**没有任何来源时也给几张能立刻做的事**，
+   * 而不是让界面空着（用户真实反馈就是"点了也没反应"，因为一个应用都没连）。
+   * 种子灵感不需要外部来源，全部可直接执行；一旦有真实来源就不再展示（避免混淆）。
+   */
+  private seededIdeas(): Idea[] {
+    const at = date();
+    const seeds: Array<Omit<Idea, "id" | "createdAt" | "status">> = [
+      {
+        title: "帮我盯一个网页，变了就告诉我",
+        reason:
+          "你现在还没连接邮箱或日历，所以我先给能立刻做的事。告诉我盯哪个页面，我每天替你看一次。",
+        prompt: "帮我盯一个网页的变化。先问我盯哪个网址、关心页面上的哪部分，然后建立监控。",
+        kind: "monitor",
+        input: {},
+        seeded: true,
+        badges: ["种子灵感", "可直接执行"],
+        buildSummary: "会建立一个定时监控，页面一变就通知你。",
+        evidence: [],
+      },
+      {
+        title: "给一个话题做调研，写成一份报告",
+        reason: "没有来源也能做：我会去搜、去读，然后把结论整理成一份带出处的报告。",
+        prompt: "围绕我给的话题做一次调研，用中文写成一份带来源链接的报告，存成文件给我。",
+        kind: "agent",
+        input: {},
+        seeded: true,
+        badges: ["种子灵感", "可直接执行"],
+        buildSummary: "会得到一份带出处的中文报告（并保存成文件）。",
+        evidence: [],
+      },
+      {
+        title: "把一堆零散的事排出优先级",
+        reason: "没有来源也能做：把你要做的事丢给我，我按紧急/重要排一遍并给出今天先做的三件。",
+        prompt:
+          "我接下来会给你一堆要做的事，请你排出优先级，并告诉我今天最该先做的三件。先问我有哪些事。",
+        kind: "plan",
+        input: {},
+        seeded: true,
+        badges: ["种子灵感", "可直接执行"],
+        buildSummary: "会得到一份排好序的清单 + 今天先做的三件事。",
+        evidence: [],
+      },
+    ];
+    return seeds.map((seed) => ({
+      ...seed,
+      id: hash(`seed:${seed.title}`),
+      status: "new" as const,
+      createdAt: at,
+    }));
+  }
+
+  /**
    * 按**当前**模板重写一条灵感的文案（恢复/重新处理时用）。
    * 灵感 id 是按来源内容哈希的：来源过期后即使模板改了也不会再生成，
    * 存量记录就会一直挂着旧文案（实测：模板已中文化，界面上还是英文标题）。
@@ -568,7 +695,8 @@ export class AgentService {
    * 灵感 id 是按来源内容哈希出来的，文案改了（比如本地化）之后如果只 insertIfAbsent，
    * 老记录会一直挂着旧文案 —— 实测就撞到过：模板已中文化，界面上还是英文标题。
    */
-  private async upsertIdea(owner: string, idea: Idea) {
+  private async upsertIdea(owner: string, raw: Idea) {
+    const idea = this.enrichIdea(raw);
     const existing = await this.db.get<Idea>(owner, "ideas", idea.id);
     if (!existing) return this.db.insertIfAbsent(owner, "ideas", idea);
     if (existing.status !== "new") return existing;
@@ -578,7 +706,14 @@ export class AgentService {
         "ideas",
         idea.id,
         { status: "new" },
-        { title: idea.title, reason: idea.reason, prompt: idea.prompt },
+        {
+          title: idea.title,
+          reason: idea.reason,
+          prompt: idea.prompt,
+          items: idea.items,
+          badges: idea.badges,
+          buildSummary: idea.buildSummary,
+        },
       )) ?? existing
     );
   }
@@ -679,10 +814,66 @@ export class AgentService {
             { status: "new" },
             { status: "dismissed" },
           );
+    // 回填：存量灵感可能是在补 items/badges/buildSummary 之前生成的，
+    // 来源过期就不会再走生成路径，于是永远缺这些字段（实测就撞到了）。
+    for (const idea of await this.db.list<Idea>(owner, "ideas"))
+      if (idea.status === "new" && !idea.seeded && (!idea.items || !idea.buildSummary))
+        // 文案也一起按当前模板重写：存量记录可能是本地化之前生成的，
+        // 界面上就会中英混杂（实测截图里那条理由还是英文）
+        await this.upsertIdea(owner, this.renderIdeaText(idea));
+    // 照 Muse 的种子灵感：一个真实来源都没有（或都被处理过）时，给几张能立刻做的，
+    // 而不是让界面空着 ——"点了也没反应"就是这么来的
+    const current = await this.db.list<Idea>(owner, "ideas");
+    const hasReal = current.some(
+      (idea) => idea.status === "new" && !idea.seeded && idea.feedback !== "down",
+    );
+    if (!hasReal) for (const seed of this.seededIdeas()) await this.upsertIdea(owner, seed);
     await this.ensure(owner);
     await this.db.compareAndSwap(owner, "agent-settings", "identity", {}, { lastIdeasAt: date() });
     return this.db.list<Idea>(owner, "ideas");
   }
+  /**
+   * 照 Muse 的 `IdeaCardExecuteRequestJson{itemIds, mode}` → `IdeaCardExecuteResult`
+   * 一条灵感可以只做其中几件：勾选的条目会被记下来（isSelected），并作为任务的限定范围。
+   */
+  async executeIdea(owner: string, id: string, itemIds?: string[], mode?: string) {
+    const idea = await this.db.get<Idea>(owner, "ideas", id);
+    if (!idea) throw new AppError("找不到这条灵感", 404);
+    const all = idea.items ?? [];
+    const picked = all.filter((item) =>
+      itemIds?.length ? itemIds.includes(item.id) : item.selected !== false,
+    );
+    if (all.length)
+      await this.db.compareAndSwap<Idea>(
+        owner,
+        "ideas",
+        id,
+        {},
+        {
+          items: all.map((item) => ({
+            ...item,
+            selected: picked.some((chosen) => chosen.id === item.id),
+          })),
+          mode,
+        },
+      );
+    const scope = picked.length
+      ? `\n\n这次只做这几件：${picked.map((item) => item.title).join("、")}。`
+      : "";
+    return this.decideIdea(owner, id, "accept", `${idea.prompt}${scope}`);
+  }
+
+  /** 分页取灵感（照 Muse 的 IdeaCardsPaginationJson：feed 是分页的）。 */
+  async ideasPage(owner: string, limit = 20, offset = 0) {
+    const all = await this.db.list<Idea>(owner, "ideas");
+    const ordered = all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return {
+      ideas: ordered.slice(offset, offset + limit),
+      total: ordered.length,
+      hasMore: offset + limit < ordered.length,
+    };
+  }
+
   /**
    * 记录用户对一条灵感的反馈（Muse: IdeaFeedback{UP, DOWN}）。
    * 只是打分，不改状态 —— 卡片仍留在列表里，用户可以接着接受或忽略。
@@ -758,6 +949,8 @@ export class AgentService {
       },
       `idea:${id}`,
     );
+    // 照 Muse 的 IdeaCardsViewerStateJson.hasBuiltIdea
+    await this.db.compareAndSwap<Idea>(owner, "ideas", id, {}, { builtAt: date() });
     await this.db.compareAndSwap(
       owner,
       "ideas",

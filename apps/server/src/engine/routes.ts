@@ -82,6 +82,30 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
     return c.json(await service.controlMonitor(c.get("owner"), c.req.param("id"), action));
   });
   app.post("/ideas/refresh", async (c) => c.json(await service.refreshIdeas(c.get("owner"))));
+  /** 分页取灵感（照 Muse 的 IdeaCardsPaginationJson） */
+  app.get("/ideas", async (c) => {
+    const limit = Number(c.req.query("limit") ?? 20);
+    const offset = Number(c.req.query("offset") ?? 0);
+    return c.json(
+      await service.ideasPage(
+        c.get("owner"),
+        Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 100) : 20,
+        Number.isFinite(offset) && offset > 0 ? offset : 0,
+      ),
+    );
+  });
+  /** 照 Muse 的 IdeaCardExecute：按勾选的条目执行 */
+  app.post("/ideas/:id/execute", async (c) => {
+    const body = z
+      .object({
+        itemIds: z.array(z.string()).optional(),
+        mode: z.string().trim().max(40).optional(),
+      })
+      .parse(await c.req.json().catch(() => ({})));
+    return c.json(
+      await service.executeIdea(c.get("owner"), c.req.param("id"), body.itemIds, body.mode),
+    );
+  });
   app.post("/ideas/:id", async (c) => {
     const body = z
       .object({
