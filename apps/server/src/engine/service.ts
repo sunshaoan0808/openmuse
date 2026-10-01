@@ -663,10 +663,38 @@ export class AgentService {
           createdAt: date(),
         } satisfies Idea);
       }
+    // 反馈回流（照 Muse 的 IdeaFeedback）：用户点过踩的方向不再推荐；
+    // 点过赞的不动 —— 那是他自己认可过的，别替他撤。
+    const rated = await this.db.list<Idea>(owner, "ideas");
+    const disliked = new Set(
+      rated.filter((idea) => idea.feedback === "down").map((idea) => idea.kind),
+    );
+    if (disliked.size)
+      for (const idea of rated)
+        if (idea.status === "new" && idea.feedback !== "up" && disliked.has(idea.kind))
+          await this.db.compareAndSwap(
+            owner,
+            "ideas",
+            idea.id,
+            { status: "new" },
+            { status: "dismissed" },
+          );
     await this.ensure(owner);
     await this.db.compareAndSwap(owner, "agent-settings", "identity", {}, { lastIdeasAt: date() });
     return this.db.list<Idea>(owner, "ideas");
   }
+  /**
+   * 记录用户对一条灵感的反馈（Muse: IdeaFeedback{UP, DOWN}）。
+   * 只是打分，不改状态 —— 卡片仍留在列表里，用户可以接着接受或忽略。
+   */
+  async rateIdea(owner: string, id: string, value: "up" | "down") {
+    const idea = await this.db.get<Idea>(owner, "ideas", id);
+    if (!idea) throw new AppError("找不到这条灵感", 404);
+    return (
+      (await this.db.compareAndSwap<Idea>(owner, "ideas", id, {}, { feedback: value })) ?? idea
+    );
+  }
+
   async decideIdea(
     owner: string,
     id: string,

@@ -2,6 +2,7 @@ import {
   ArrowRight,
   Bell,
   CalendarDays,
+  Check,
   ChevronRight,
   CircleDollarSign,
   FileText,
@@ -1188,9 +1189,33 @@ export function IdeasScreen() {
         </Button>
       </View>
       <ErrorNotice error={error} />
-      {ideas.map((idea) => (
-        <IdeaCard key={idea.id} idea={idea} />
-      ))}
+      {/* 照 Muse 的 IdeaCardSection：灵感是**分区**的，不是一维列表 */}
+      {(
+        [
+          { kind: "document", title: "邮件里的文档" },
+          { kind: "agent", title: "日程与对接" },
+          { kind: "plan", title: "目标与计划" },
+        ] as const
+      ).map((group) => {
+        const items = ideas.filter((idea) => idea.kind === group.kind);
+        if (!items.length) return null;
+        return (
+          <View key={group.kind} style={{ gap: 2 }}>
+            <View style={[s.between, { marginBottom: 4 }]}>
+              <Text style={s.small}>{group.title}</Text>
+              <Text style={s.small}>{items.length} 条</Text>
+            </View>
+            {items.map((idea) => (
+              <IdeaCard key={idea.id} idea={idea} />
+            ))}
+          </View>
+        );
+      })}
+      {ideas
+        .filter((idea) => !["document", "agent", "plan"].includes(idea.kind))
+        .map((idea) => (
+          <IdeaCard key={idea.id} idea={idea} />
+        ))}
       {!ideas.length && (
         <Empty
           icon={Lightbulb}
@@ -1239,11 +1264,11 @@ function IdeaCard({ idea }: { idea: Idea }) {
   const [prompt, setPrompt] = useState(idea.prompt);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  async function act(action: "accept" | "dismiss") {
+  async function act(action: "accept" | "dismiss" | "feedback", value?: "up" | "down") {
     setBusy(true);
     setError("");
     try {
-      const result = await mutate<Idea>(`/ideas/${idea.id}`, { action, prompt });
+      const result = await mutate<Idea>(`/ideas/${idea.id}`, { action, prompt, value });
       if (result.taskId && action === "accept") open({ type: "task", taskId: result.taskId });
     } catch (e) {
       setError(errorText(e));
@@ -1273,6 +1298,7 @@ function IdeaCard({ idea }: { idea: Idea }) {
         </Text>
         <View style={{ flex: 1, gap: 5 }}>
           <Text style={[s.heading, { fontSize: 16, lineHeight: 23 }]}>{idea.title}</Text>
+          {/* 照 Muse 的 fitReason：说清"这条为什么贴合你"，而不是只给一句描述 */}
           <Text style={s.muted}>{idea.reason}</Text>
         </View>
       </Pressable>
@@ -1302,6 +1328,21 @@ function IdeaCard({ idea }: { idea: Idea }) {
             </Button>
             <Button disabled={busy} onPress={() => void act("dismiss")}>
               忽略
+            </Button>
+            {/* 照 Muse 的 IdeaFeedback：点踩过的方向，后面就不再推荐 */}
+            <Button
+              disabled={busy}
+              icon={idea.feedback === "up" ? Check : undefined}
+              onPress={() => void act("feedback", "up")}
+            >
+              贴合
+            </Button>
+            <Button
+              disabled={busy}
+              icon={idea.feedback === "down" ? Check : undefined}
+              onPress={() => void act("feedback", "down")}
+            >
+              不感兴趣
             </Button>
           </View>
         </View>
