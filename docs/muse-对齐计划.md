@@ -57,6 +57,8 @@
 1. **对话里的文件 chip**：智能体调用 `save_document` 后，助手消息里渲染一张文件卡（文件名 + 类型 + 大小），点开就是文件详情。这是"她到底给没给我文件"最直接的答案。
 2. **导出为 PDF / HTML**：我们已经有浏览器 worker（patchright + Xvfb），markdown → HTML → **打印成 PDF** 完全可行；HTML 导出就是同一份 HTML。
 3. **保存到 Google Drive**：Google 集成已经在仓库里（OAuth + connectors），加一个动作即可。
+   —— **待办**：用户已明确「暂时不做，先记为待办」，所以不要顺手做；等用户点名再做。
+      做之前先确认线上 Google 凭据是否配好（live 模式需要真实 OAuth；服务端现有的是 sample 假实现）。
 4. **扩展名放宽**：照 Muse 的清单补齐文档/源码/媒体类型（至少 md/txt/csv/json/yaml/html + 常见源码），文件详情给文本预览。
 5. （可选）**发布链接**：Muse 有 `PUBLISH` / `PUBLISH_TO_SHARE`；我们的签名 URL 机制天然支持，做成"生成只读分享链接"。
 ### P1 · 常驻授权页（对应 `ActivePermissionsScreen`）
