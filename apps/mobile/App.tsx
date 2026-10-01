@@ -455,11 +455,30 @@ function WorkspaceShell({
           >
             {/* 顶栏的底色：**刻意不用 BlurView** —— 真机实测 expo-blur 在 Android 上模糊不可用时
                 会退化成"白色实底"，那样整条顶栏又变回一条白带（第一轮就是这么翻车的）。
-                这里用画布色的半透明遮罩：不依赖模糊能力，而外壳已不再给顶部留内边距，
-                底下就是真实内容（卡片/文字），所以这条读起来是"顶栏"而不是"空白的白带"。 */}
+                改用四段递减的半透明白叠出 **上实下虚的渐变**：读起来是一条栏，下沿又不会切出硬边
+                —— 真机上这正是 Muse 的 ScrimGradientKt 干的事（scrimFadeInStops / scrimFadeOutStops）。
+                分段而不是整条一个色值：整条 0.15 在白底页面上几乎看不见（用户看到的"没有白条"）。 */}
             <View
               pointerEvents="none"
-              style={[FILL, { backgroundColor: "rgba(252,252,252,0.15)" }]}
+              style={[FILL, { bottom: "65%", backgroundColor: "rgba(252,252,252,0.60)" }]}
+            />
+            <View
+              pointerEvents="none"
+              style={[
+                FILL,
+                { top: "35%", bottom: "30%", backgroundColor: "rgba(252,252,252,0.42)" },
+              ]}
+            />
+            <View
+              pointerEvents="none"
+              style={[
+                FILL,
+                { top: "70%", bottom: "12%", backgroundColor: "rgba(252,252,252,0.24)" },
+              ]}
+            />
+            <View
+              pointerEvents="none"
+              style={[FILL, { top: "88%", backgroundColor: "rgba(252,252,252,0.10)" }]}
             />
             <View
               style={{

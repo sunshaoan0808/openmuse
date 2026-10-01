@@ -63,3 +63,19 @@ test("对话页不再用 -insets.top 抵消（外壳不再留内边距，抵消�
   const code = strip(read("src/chat.tsx"));
   assert.equal(/-insets\.top/.test(code), false, "chat.tsx 里不该再有 -insets.top");
 });
+
+test("顶栏底色必须看得见：整条一个极低 alpha 就是用户看到的「没有白条」", () => {
+  const code = strip(read("App.tsx"));
+  // 顶栏底色是分段渐变（上实下虚）。整条只给一个 0.15 的白，叠在浅色页面上等于看不见 ——
+  // 这是真机上用户直接反馈过的问题，所以在这里钉住：最上面那段要够实，最下面那段要够虚。
+  const alphas = [
+    ...code.matchAll(/backgroundColor:\s*"rgba\(252,\s*252,\s*252,\s*([0-9.]+)\)"/g),
+  ].map((m) => Number(m[1]));
+  assert.ok(alphas.length >= 3, `顶栏底色应该是分段渐变，当前只有 ${alphas.length} 层`);
+  const strongest = Math.max(...alphas);
+  const faintest = Math.min(...alphas);
+  assert.ok(strongest >= 0.5, `最上面那段必须够实才读得出是一条栏，当前最实 ${strongest}`);
+  assert.ok(faintest <= 0.2, `最下面那段要接近透明，下沿才不会切出硬边，当前最虚 ${faintest}`);
+  // 上实下虚：靠上的分段必须比靠下的实（取前两个出现顺序即可）
+  assert.ok(alphas[0] > alphas[alphas.length - 1], "渐变方向反了：应该是上实下虚");
+});
