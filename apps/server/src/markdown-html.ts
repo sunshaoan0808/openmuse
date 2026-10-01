@@ -160,10 +160,16 @@ export function markdownToHtml(markdown: string): string {
  * 包成一个完整、手机可读的 HTML 文档（与 App 内的 HtmlReader 用同一套阅读样式）。
  * description 只用于分享预览（og:description），传纯文本即可，内部会转义。
  */
-export function wrapHtmlDocument(title: string, body: string, description?: string): string {
+export function wrapHtmlDocument(
+  title: string,
+  body: string,
+  description?: string,
+  image?: string,
+): string {
   const meta = [
     `<meta property="og:title" content="${escapeHtml(title)}" />`,
     description ? `<meta property="og:description" content="${escapeHtml(description)}" />` : "",
+    image ? `<meta property="og:image" content="${escapeHtml(image)}" />` : "",
     `<meta name="viewport" content="width=device-width, initial-scale=1" />`,
   ]
     .filter(Boolean)
@@ -189,6 +195,7 @@ ${meta}
   code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
   blockquote{margin:12px 0;padding:2px 0 2px 12px;border-left:3px solid #D7DBDE;color:#4B565C}
   a{color:#1473C8}
+  img.cover{display:block;width:100%;max-height:320px;object-fit:cover;border-radius:12px;margin:0 0 18px}
   hr{border:0;border-top:1px solid #E3E6E8;margin:20px 0}
 </style></head>
 <body>${body}</body></html>`;

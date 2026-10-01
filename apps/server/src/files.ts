@@ -288,22 +288,48 @@ export class Files {
     return file;
   }
   /**
-   * 发布：给文件生成一条公开只读链接。重复发布返回**同一条**链接（幂等），不会把之前分享出去的弄丢。
+   * 发布：给文件生成一条公开只读链接。重复发布返回**同一条**链接（幂等），不会把之前分享出去的弄丢，
+   * 所以"再发一次"就是**更新发布页设置**的入口。
    * 记录落在固定的公开命名空间下（键就是 token），因此公开路由没有 owner 也能一步查到。
    */
-  async publish(owner: string, id: string) {
+  async publish(
+    owner: string,
+    id: string,
+    options: { title?: string; description?: string; coverId?: string } = {},
+  ) {
     const file = await this.raw(owner, id);
     const token = file.publishToken ?? randomBytes(24).toString("base64url");
+    // 封面必须是**同一个人的**图片文件：否则等于把一个任意 id 塞进公开页面的 <img> 里
+    let cover = file.publishCover;
+    if (options.coverId !== undefined) {
+      if (options.coverId === "") cover = undefined;
+      else {
+        const image = await this.raw(owner, options.coverId);
+        if (!image.mimeType.startsWith("image/")) throw new AppError("封面必须是一张图片。", 400);
+        cover = image.id;
+      }
+    }
+    // 不传 = 保持原样；传了空串 = 清掉；传了内容 = 换掉
+    const pick = (next: string | undefined, current: string | undefined) =>
+      next === undefined ? current : next.trim() ? next.trim() : undefined;
+    const publishTitle = pick(options.title, file.publishTitle);
+    const publishDescription = pick(options.description, file.publishDescription);
     await this.db.put(PUBLIC_PUBLISH_OWNER, "publishes", {
       id: token,
       owner,
       fileId: file.id,
       createdAt: new Date().toISOString(),
+      title: publishTitle,
+      description: publishDescription,
+      coverId: cover,
     });
     const saved: StoredArtifact = {
       ...file,
       publishToken: token,
       publishedAt: new Date().toISOString(),
+      publishTitle,
+      publishDescription,
+      publishCover: cover,
     };
     await this.db.put<StoredArtifact>(owner, "files", saved);
     return { url: this.publicLink(token), file: this.strip(saved) };
@@ -319,11 +345,13 @@ export class Files {
   }
   /** 公开路由用：只有 token、没有 owner，一步查到它指向谁 */
   async resolvePublish(token: string) {
-    const record = await this.db.get<{ owner: string; fileId: string }>(
-      PUBLIC_PUBLISH_OWNER,
-      "publishes",
-      token,
-    );
+    const record = await this.db.get<{
+      owner: string;
+      fileId: string;
+      title?: string;
+      description?: string;
+      coverId?: string;
+    }>(PUBLIC_PUBLISH_OWNER, "publishes", token);
     return record ?? undefined;
   }
   /** 公开链接用服务端配置的公网地址（PUBLIC_API_URL）：把局域网地址分享出去没人打得到 */

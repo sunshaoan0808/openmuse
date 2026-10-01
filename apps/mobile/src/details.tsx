@@ -1,9 +1,11 @@
+import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import {
   CalendarDays,
   Check,
   Clock3,
+  Copy,
   Download,
   Edit3,
   ExternalLink,
@@ -833,6 +835,11 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
   const [busy, setBusy] = useState(false);
   // 公开链接：token 只在本机存着（服务端不把它塞进文件载荷），所以发布后当场记住这次拿到的地址
   const [link, setLink] = useState("");
+  const [copied, setCopied] = useState(false);
+  // 发布页设置：预填已保存的值（服务端把标题/描述/封面一起放在文件载荷里 —— 它们本来就是公开内容）
+  const [title, setTitle] = useState(f.publishTitle ?? "");
+  const [description, setDescription] = useState(f.publishDescription ?? "");
+  const [cover, setCover] = useState(f.publishCover ?? "");
   const [published, setPublished] = useState(Boolean(f.published));
   const url = api.url(f.url || `/api/files/${f.id}/content`);
   const textFile = isText(f);
@@ -954,6 +961,39 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+    }
+  }
+  /** 保存发布页设置：再发一次就是更新（服务端幂等，链接不变）。标题留空 = 回落到文件名 */
+  async function savePublish() {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api.request<{ url: string; file: Artifact }>(
+        `/api/files/${f.id}/publish`,
+        {
+          title,
+          description,
+          coverId: cover,
+        },
+      );
+      setLink(result.url);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  /** 复制公开链接：公开地址本来就是发出去用的，复制比走系统分享面板更直接 */
+  async function copyLink() {
+    if (!link) return;
+    try {
+      await Clipboard.setStringAsync(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   }
   return (
@@ -1084,14 +1124,58 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
           >
             {link || "链接在上次发布时显示过；再次发布可拿到同一条地址。"}
           </Text>
-          <Button
-            small
-            icon={Send}
-            disabled={!link}
-            onPress={() => void Share.share({ message: link }).catch(() => {})}
-          >
-            分享链接
-          </Button>
+          <View style={[s.row, { gap: 10, flexWrap: "wrap" }]}>
+            <Button small icon={Copy} disabled={!link} onPress={() => void copyLink()}>
+              {copied ? "已复制" : "复制链接"}
+            </Button>
+            <Button
+              small
+              icon={Send}
+              disabled={!link}
+              onPress={() => void Share.share({ message: link }).catch(() => {})}
+            >
+              分享链接
+            </Button>
+          </View>
+          <View style={{ marginTop: 16, gap: 12 }}>
+            <Field
+              label="标题"
+              value={title}
+              onChangeText={setTitle}
+              placeholder={f.name}
+              maxLength={120}
+            />
+            <Field
+              label="描述"
+              value={description}
+              onChangeText={setDescription}
+              placeholder="分享出去时显示的摘要；留空自动取正文开头"
+              maxLength={300}
+              multiline
+            />
+            <Text style={[s.small, { fontWeight: "600" }]}>封面</Text>
+            <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
+              <Button small primary={!cover} onPress={() => setCover("")}>
+                不设封面
+              </Button>
+              {w.files
+                .filter((item) => item.mimeType.startsWith("image/"))
+                .slice(0, 6)
+                .map((image) => (
+                  <Button
+                    small
+                    key={image.id}
+                    primary={cover === image.id}
+                    onPress={() => setCover(image.id)}
+                  >
+                    {image.name}
+                  </Button>
+                ))}
+            </View>
+            <Button small busy={busy} onPress={() => void savePublish()}>
+              保存发布设置
+            </Button>
+          </View>
         </Card>
       )}
       {f.fields && f.fields.length > 0 && (

@@ -207,3 +207,96 @@ test("导出 HTML：不依赖浏览器 worker，直接产出可打开的网页�
   assert.match(html, /<li>一<\/li>/);
   assert.match(html, /<meta charset="utf-8" \/>/);
 });
+
+/** 1×1 PNG：既能当封面，也能验证"非图片不许当封面" */
+const PNG = Uint8Array.from(
+  Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwABAAH+GXcAAAAASUVORK5CYII=",
+    "base64",
+  ),
+);
+async function uploadpng(name = "封面.png") {
+  const form = new FormData();
+  form.set("file", new File([PNG as BlobPart], name, { type: "image/png" }));
+  const response = await app.request("/api/files", {
+    method: "POST",
+    body: form,
+    headers: uploadHeaders(),
+  });
+  return (await response.json()) as Artifact;
+}
+async function publishWith(id: string, body: Record<string, string>) {
+  const response = await app.request(`/api/files/${id}/publish`, {
+    method: "POST",
+    headers: authed(),
+    body: JSON.stringify(body),
+  });
+  return {
+    status: response.status,
+    body: (await response.json()) as { url?: string; error?: string },
+  };
+}
+const head = async (path: string) => (await (await app.request(path)).text()).split("</head>")[0];
+
+test("发布页自定义：标题与描述按设定走（重发一次就是更新）", async () => {
+  const file = await upload("自定义.md", "# 正文标题\n\n正文内容");
+  const first = await publishWith(file.id, { title: "对外标题", description: "对外描述" });
+  assert.equal(first.status, 200);
+  const token = tokenOf(first.body.url ?? "");
+  const firstHead = await head(`/p/${token}`);
+  assert.match(firstHead, /<title>对外标题<\/title>/);
+  assert.match(firstHead, /<meta property="og:description" content="对外描述" \/>/);
+
+  // 再发一次 = 更新（token 不变）
+  const second = await publishWith(file.id, { title: "改后的标题" });
+  assert.equal(second.body.url, first.body.url, "更新设置不该换链接");
+  const secondHead = await head(`/p/${token}`);
+  assert.match(secondHead, /<title>改后的标题<\/title>/);
+  assert.match(secondHead, /content="对外描述"/, "没传描述时保持原样");
+
+  // 传空串 = 清掉
+  await publishWith(file.id, { title: "", description: "" });
+  const cleared = await head(`/p/${token}`);
+  assert.match(cleared, /<title>自定义\.md<\/title>/, "清掉后回落到文件名");
+  assert.ok(!cleared.includes("对外描述"));
+});
+
+test("发布页封面：只能用图片，且封面地址也受 token 保护", async () => {
+  const doc = await upload("带封面.md", "# 有封面");
+  const image = await uploadpng();
+  const published = await publishWith(doc.id, { coverId: image.id });
+  assert.equal(published.status, 200);
+  const token = tokenOf(published.body.url ?? "");
+
+  const page = await app.request(`/p/${token}`);
+  const html = await page.text();
+  assert.match(html, new RegExp(`<img class="cover" src="/p/${token}/cover" alt="" />`));
+  // og:image 用配置的公网地址（测试里是 http://localhost:8787），不是请求来源
+  assert.match(
+    html,
+    new RegExp(`<meta property="og:image" content="http://localhost:8787/p/${token}/cover" />`),
+  );
+
+  const cover = await app.request(`/p/${token}/cover`);
+  assert.equal(cover.status, 200);
+  assert.equal(cover.headers.get("content-type"), "image/png");
+  assert.deepEqual(new Uint8Array(await cover.arrayBuffer()), PNG);
+
+  // 拿一个非图片当封面 → 明确拒绝
+  const text = await upload("不是图片.txt", "hello");
+  const rejected = await publishWith(doc.id, { coverId: text.id });
+  assert.equal(rejected.status, 400);
+  assert.match(rejected.body.error ?? "", /封面必须是一张图片/);
+
+  // 清掉封面
+  await publishWith(doc.id, { coverId: "" });
+  assert.ok(!(await (await app.request(`/p/${token}`)).text()).includes('class="cover"'));
+  assert.equal((await app.request(`/p/${token}/cover`)).status, 404);
+});
+
+test("没有封面时 /cover 是 404，不泄漏任何东西", async () => {
+  const file = await upload("无封面.md", "x");
+  const { body } = await publishWith(file.id, {});
+  assert.equal((await app.request(`/p/${tokenOf(body.url ?? "")}/cover`)).status, 404);
+  assert.equal((await app.request("/p/" + "a".repeat(32) + "/cover")).status, 404);
+});

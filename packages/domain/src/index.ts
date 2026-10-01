@@ -51,6 +51,11 @@ export interface Artifact {
   fields?: { name: string; value: string; type: "text" | "checkbox" | "unsupported" }[];
   /** 是否已有公开链接（发布过）；token 本身不外传，只给界面一个布尔 */
   published?: boolean;
+  /** 发布页的标题/描述（不设则用文件名与正文首段自动生成）。它们本来就是公开内容，可以随文件载荷返回 */
+  publishTitle?: string;
+  publishDescription?: string;
+  /** 发布页封面：工作区里某张图片的 id */
+  publishCover?: string;
 }
 export interface BrowserSession {
   id: string;

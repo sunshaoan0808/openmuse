@@ -938,6 +938,7 @@ export function FilesScreen() {
   const { workspace: w, api, refresh, open } = useWorkspace();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
   async function upload() {
     setError("");
     setBusy(true);
@@ -981,17 +982,57 @@ export function FilesScreen() {
       setBusy(false);
     }
   }
+  // 搜索：文件名、格式标签、来源都参与匹配（大小写不敏感）。工作区文件本来就全在本地，即时过滤即可。
+  const needle = query.trim().toLowerCase();
+  const shown = needle
+    ? w.files.filter((f) =>
+        [f.name, fileFormatLabel(f.name), f.source].some((text) =>
+          text.toLowerCase().includes(needle),
+        ),
+      )
+    : w.files;
   return (
     <View style={{ gap: 20 }}>
-      <View style={s.between}>
-        <Text style={[s.muted, { flex: 1, marginRight: 15 }]}>文档，以及一点干活的空间。</Text>
+      <View style={[s.between, { gap: 12, flexWrap: "wrap" }]}>
+        <View
+          style={[
+            s.row,
+            {
+              gap: 9,
+              flex: 1,
+              minWidth: 200,
+              backgroundColor: "#FFF",
+              borderWidth: 1,
+              borderColor: colors.line,
+              borderRadius: 12,
+              paddingHorizontal: 14,
+            },
+          ]}
+        >
+          <Search size={16} color={colors.muted} />
+          <TextInput
+            accessibilityLabel="搜索文件"
+            placeholder="按文件名、格式或来源搜索"
+            placeholderTextColor={colors.muted}
+            value={query}
+            onChangeText={setQuery}
+            style={{ flex: 1, paddingVertical: 13, fontSize: 13, color: colors.text }}
+          />
+        </View>
         <Button primary icon={Upload} busy={busy} onPress={() => void upload()}>
           导入文档
         </Button>
       </View>
+      <Text style={s.muted}>
+        {needle
+          ? shown.length
+            ? `匹配 ${shown.length} 个文件`
+            : "没有匹配的文件。"
+          : "文档，以及一点干活的空间。"}
+      </Text>
       <ErrorNotice error={error} />
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 18 }}>
-        {w.files.map((f) => (
+        {shown.map((f) => (
           <MeasureCard
             key={f.id}
             label={f.name}

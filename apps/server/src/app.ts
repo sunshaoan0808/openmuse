@@ -216,7 +216,7 @@ export async function createApp(
   // 认证靠句柄本身（32 字节随机）= 一次性能力，且每次转发都重新校验凭据是否还有效。
   app.route("/git", gitProxyRoutes(db));
   // 公开只读链接：同样挂在 /api/* 之外 —— 拿到链接的人没有会话令牌，认证靠 token 本身
-  app.route("/p", publishRoutes(files));
+  app.route("/p", publishRoutes(files, config.publicUrl));
   app.route("/api/agent", agentRoutes(agent));
   app.route("/api/computer", computerRoutes(computer, files));
   app.get("/api/calendars", async (c) => c.json(await workspace.calendars(c.get("owner"))));
@@ -474,9 +474,17 @@ export async function createApp(
     return c.json(await files.import(owner, `${name}.pdf`, pdf, `导出为 PDF：${file.name}`), 201);
   });
   // 发布：生成/复用一条公开只读链接（token 即能力，停止发布立刻失效）
-  app.post("/api/files/:id/publish", async (c) =>
-    c.json(await files.publish(c.get("owner"), c.req.param("id"))),
-  );
+  app.post("/api/files/:id/publish", async (c) => {
+    // 全部可选：不传 = 保持原样，传空串 = 清掉（"再发一次"就是更新发布页设置的入口）
+    const body = z
+      .object({
+        title: z.string().trim().max(120).optional(),
+        description: z.string().trim().max(300).optional(),
+        coverId: z.string().trim().max(80).optional(),
+      })
+      .parse(await c.req.json().catch(() => ({})));
+    return c.json(await files.publish(c.get("owner"), c.req.param("id"), body));
+  });
   app.delete("/api/files/:id/publish", async (c) =>
     c.json(await files.stopPublish(c.get("owner"), c.req.param("id"))),
   );
