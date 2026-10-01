@@ -89,6 +89,20 @@ export class BrowserService {
       if (this.queues.get(id) === next) this.queues.delete(id);
     }
   }
+  /**
+   * 把一段 HTML 渲染成 PDF（导出用）：复用该会话的浏览器上下文，worker 里**另开一页**打印，
+   * 不打断用户正在看的那一页。返回 PDF 字节。
+   */
+  async exportPdf(owner: string, threadId: string, html: string): Promise<Buffer> {
+    const id = await this.threadSession(owner, threadId, "about:blank");
+    return this.serial(id, async () => {
+      // worker 里的会话要"第一次导航"才真的建起来；about:blank 已在网络的 URL 校验里放行
+      // （空白页没有任何网络目的地）。这是导出专用会话，每次都先归零，顺带自愈掉被关掉的上下文。
+      await this.openOwned(owner, id, "about:blank");
+      const response = await this.request(`/sessions/${id}/pdf`, { html });
+      return Buffer.from(await response.arrayBuffer());
+    });
+  }
   private async request(path: string, body?: unknown, signal?: AbortSignal) {
     signal?.throwIfAborted();
     if (!this.config.workerUrl || !this.config.workerToken)

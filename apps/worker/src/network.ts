@@ -47,6 +47,11 @@ export async function validatePublicUrl(
   value: string,
   resolve: Resolver = (hostname) => lookup(hostname, { all: true, verbatim: true }),
 ) {
+  // about:blank 是一张空白本地页：没有任何网络目的地，也就不构成 SSRF 面。
+  // 导出 PDF 这类「只要一个干净页面」的用途需要它（否则只能先导航到某个真实站点，纯属浪费）。
+  // 返回值与正常路径同形状（调用点会直接取 url/address）；空地址不会被用来连任何东西。
+  if (value.trim() === "about:blank")
+    return { url: new URL("about:blank"), address: "", family: 4 as const };
   const blocked = () =>
     new WorkerError(
       "BLOCKED_URL",
