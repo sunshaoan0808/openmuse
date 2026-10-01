@@ -506,3 +506,22 @@ App 只是窗口；**信任靠 attestation**，不是靠网络位置。
 | 凭据 | `.env` 里的长期 key（Tavily/网关…） | **可做**：任务级短时凭据，mint→用→**任务结束即 revoke** |
 | 传输 | HTTPS + token；mesh 内是 WireGuard | 够用；Noise+attestation 属 M 系 VM 专有 |
 | 界面 | 有 computer 面板 + 浏览器接管 | 已有雏形 |
+
+## 顶栏随滚动的真实机制（反编译 com.facebook.aura.header.view）
+
+用户问"Muse 是不是'白条保留 + 往上滑时移出视野'"，为此反编译了 header 包（jadx + androguard 读指令）。结论：
+
+1. **保留顶栏**：`HatchForegroundHeaderState.contentInsetPx` —— 内容按顶栏高度留内边距（我们的
+   `chromeHeight()` + 滚动内容 paddingTop 就是照这个做的），另有 `elevated` 状态（内容经过时顶栏"抬起"）。
+2. **滚动感知的渐变遮罩**（不是整条移出视野）：
+   - `ScrimScrollState(thresholdPx)`：累加偏移量，`getProgress() = offset/threshold`（夹 0..1），
+     `setOffset` 下限锁 0。
+   - `ScrimScrollConnection implements NestedScrollConnection`：**只观察**（`onPreScroll` 返回 0，不消费滚动）。
+   - `ScrimConfig.CustomStops(colorStops: List<Pair<Float, Color>>)` + `ScrimConfig.ScrollAware` /
+     `ScrollAware.Variant` + `ScrimGradientKt.scrimFadeInStops` / `scrimFadeOutStops`
+     → 遮罩是**按 0..1 分数取色的淡入/淡出渐变**。
+3. **顶栏那颗状态胶囊的尺寸是动画的**：`HatchStatusPillAvatarPanelKt$rememberStatusPillAvatarPanel`
+   带 `animatedProgress` / `animatedSize`（`animateDp` / `animateFloat`）+ `HatchStatusPillMetricsKt`
+   的 `hatchStatusPillEnvelope` / `hatchAvatarFraming`（几何函数）。
+4. ⚠️ 易认错的一处：`HatchTabScreenKt$HatchTabScreenLayout$collapseModifier` **不是顶栏**，
+   它最后调 `AuraNavBarViewModel.collapse()` —— 收的是**底部导航**（另有 `pinItem`/`unpinItem`）。
