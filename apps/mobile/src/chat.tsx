@@ -35,14 +35,12 @@ import {
 } from "react-native";
 import { z } from "zod";
 import type { ActionProposal } from "../../../packages/domain/src";
-import { ArtifactCard } from "./agent-ui";
 import { useAgentWorkspace } from "./agent-workspace";
 import { humanizeNetworkError } from "./api";
 import { AssistantResponse } from "./assistant-response";
 import { BackgroundUpdates } from "./background-updates";
 import { BrowserActionCard } from "./browser-action-card";
 import { BrowserRunContext, BrowserToolCard } from "./browser-tool-card";
-import { BrowserThreadCard } from "./computer";
 import { acknowledgedIds, mergeConversation } from "./conversation-merge";
 import { ConversationQueue, type QueuedMessage } from "./conversation-queue";
 import { runConversationTurn } from "./conversation-run";
@@ -64,7 +62,7 @@ import { type HeroRect, usePressScale, usePulse } from "./motion";
 import { RunningTasks } from "./running-tasks";
 import { SearchToolCard } from "./search-tool-card";
 import { useSpeechInput } from "./speech";
-import { FileThreadCard, TaskThreadCard } from "./thread-artifacts";
+import { TaskThreadCard } from "./thread-artifacts";
 import { type Selection, useMuseThread } from "./threads";
 import { Button, Card, CheckRow, colors, ErrorNotice, MeasureCard, RiseIn, s } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -391,7 +389,7 @@ export function ChatScreen({
   active?: boolean;
 }) {
   const { api, open, workspace: w, refresh, navigate } = useWorkspace();
-  const { data: agentWorkspace, refresh: refreshAgent } = useAgentWorkspace();
+  const { refresh: refreshAgent } = useAgentWorkspace();
   const { enabled: savedThreads, mainId, claimPrompt } = useMuseThread();
   const selection = thread || { id: "local", existing: false };
   const threadId = savedThreads ? selection.id : "local-main";
@@ -427,7 +425,6 @@ export function ChatScreen({
   const [draft, setDraft] = useState("");
   const [focused, setFocused] = useState(false);
   const [inputHeight, setInputHeight] = useState(44);
-  const [showResults, setShowResults] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const { setChatTrouble } = useAgentWorkspace();
@@ -734,7 +731,6 @@ export function ChatScreen({
     // A new submission can continue after Stop; held follow-ups still need explicit resume.
     if (!busy && !agent.isRunning && !saveError && !queue.getSnapshot().pending.length)
       queue.resume();
-    setShowResults(false);
     const files = w.files.filter((f) => attachments.includes(f.id));
     enqueue(
       text +
@@ -1042,50 +1038,6 @@ export function ChatScreen({
             ))}
           </View>
         )}
-        {
-          <>
-            {(w.files.some((file) => file.parentId) ||
-              w.browsers.some((browser) => browser.status === "active") ||
-              !!agentWorkspace?.artifacts.length) && (
-              <Button
-                small
-                style={{ alignSelf: "flex-start", marginTop: 6 }}
-                onPress={() => setShowResults(!showResults)}
-              >
-                {showResults ? "隐藏最近结果" : "最近结果"}
-              </Button>
-            )}
-            {showResults && (
-              <>
-                {w.files
-                  .filter((file) => file.parentId)
-                  .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-                  .slice(0, 1)
-                  .map((file) => (
-                    <FileThreadCard key={file.id} file={file} />
-                  ))}
-                {w.browsers
-                  .filter((browser) => browser.status === "active")
-                  .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-                  .slice(0, 1)
-                  .map((browser) => (
-                    <BrowserThreadCard key={browser.id} browser={browser} />
-                  ))}
-                {[...(agentWorkspace?.artifacts || [])]
-                  .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-                  .filter(
-                    (artifact, index, items) =>
-                      items.findIndex((item) => item.kind === artifact.kind) === index,
-                  )
-                  .slice(0, 2)
-                  .reverse()
-                  .map((artifact) => (
-                    <ArtifactCard key={artifact.id} artifact={artifact} />
-                  ))}
-              </>
-            )}
-          </>
-        }
         {/* 并行子任务：Muse 会在聊天里按行列出现在跑的子代理，我们的派活任务也回到这里 */}
         <RunningTasks />
         {(!savedThreads || selection.id === mainId) && <BackgroundUpdates />}
