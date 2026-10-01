@@ -335,8 +335,8 @@ const FILL = { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 } as c
 function GlassLayer({ radius = 999 }: { radius?: number }) {
   return (
     <View pointerEvents="none" style={[FILL, { borderRadius: radius, overflow: "hidden" }]}>
-      <BlurView intensity={34} tint="light" experimentalBlurMethod="dimezisBlurView" style={FILL} />
-      <View style={[FILL, { backgroundColor: "rgba(255,255,255,0.14)" }]} />
+      <BlurView intensity={26} tint="light" experimentalBlurMethod="dimezisBlurView" style={FILL} />
+      <View style={[FILL, { backgroundColor: "rgba(255,255,255,0.08)" }]} />
     </View>
   );
 }
@@ -447,7 +447,7 @@ function WorkspaceShell({
                 底下就是真实内容（卡片/文字），所以这条读起来是"顶栏"而不是"空白的白带"。 */}
             <View
               pointerEvents="none"
-              style={[FILL, { backgroundColor: "rgba(252,252,252,0.55)" }]}
+              style={[FILL, { backgroundColor: "rgba(252,252,252,0.32)" }]}
             />
             <View
               style={{
