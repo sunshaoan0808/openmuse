@@ -17,7 +17,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Store } from "./db.ts";
 
@@ -59,6 +59,8 @@ export interface Sandbox {
   exec(command: string, options?: { timeoutMs?: number }): Promise<ExecResult>;
   /** 往沙箱工作区写文件（相对路径） */
   write(relativePath: string, content: string): Promise<void>;
+  /** 读沙箱工作区里的文件（相对路径） */
+  read(relativePath: string): Promise<string>;
   /** 销毁：删掉整个目录（任务终态调用） */
   destroy(): Promise<void>;
   /** 已销毁？ */
@@ -66,6 +68,22 @@ export interface Sandbox {
 }
 
 const MAX_OUTPUT = 64 * 1024;
+/** 沙箱内单个文件的读写上限 */
+export const MAX_FILE = 512 * 1024;
+
+/**
+ * 工作区相对路径校验。校验放在**沙箱本身**而不是只放调用方：
+ * 这样即使上层工具有漏洞，也写/读不到工作区之外（不绝对路径、不含 ..、无空字节）。
+ */
+export function assertRelative(relativePath: string): string {
+  const value = relativePath.trim().replace(/^\.\//, "");
+  if (!value) throw new Error("路径不能为空");
+  if (value.startsWith("/")) throw new Error("只接受工作区内的相对路径，不接受绝对路径");
+  if (value.split("/").includes("..")) throw new Error("路径里不能有 ..");
+  if (value.includes("\0")) throw new Error("路径非法");
+  if (!/^[A-Za-z0-9._@+\-/]+$/.test(value)) throw new Error("路径只能包含字母数字 . _ @ + - 和 /");
+  return value;
+}
 
 function run(
   file: string,
@@ -229,9 +247,21 @@ export class BwrapSandbox implements Sandbox {
 
   async write(relativePath: string, content: string): Promise<void> {
     if (this.gone) throw new Error("沙箱已销毁");
-    const target = join(this.dir, "workspace", relativePath);
+    const target = join(this.dir, "workspace", assertRelative(relativePath));
     await mkdir(join(target, ".."), { recursive: true }).catch(() => {});
     await writeFile(target, content, "utf8");
+  }
+
+  async read(relativePath: string): Promise<string> {
+    if (this.gone) throw new Error("沙箱已销毁");
+    const target = join(this.dir, "workspace", assertRelative(relativePath));
+    const size = await stat(target).then(
+      (info) => info.size,
+      () => -1,
+    );
+    if (size < 0) throw new Error(`沙箱里没有这个文件：${relativePath}`);
+    if (size > MAX_FILE) throw new Error(`文件太大（${size} 字节），上限 ${MAX_FILE} 字节`);
+    return readFile(target, "utf8");
   }
 
   async destroy(): Promise<void> {
