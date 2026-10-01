@@ -1049,7 +1049,17 @@ export function FilesScreen() {
                     />
                   ))}
                 </View>
-                <View style={{ position: "absolute", bottom: 12, right: 14 }}>
+                <View
+                  style={{
+                    position: "absolute",
+                    bottom: 12,
+                    right: 14,
+                    flexDirection: "row",
+                    gap: 6,
+                  }}
+                >
+                  {/* 公开状态要在列表上就能看见：哪些文件是对外可访问的，不该只有点进去才知道 */}
+                  {f.published && <Chip>已发布</Chip>}
                   <Chip>{fileFormatLabel(f.name)}</Chip>
                 </View>
               </View>

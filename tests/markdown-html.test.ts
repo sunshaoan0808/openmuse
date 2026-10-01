@@ -60,3 +60,19 @@ test("包出来的文档带标题与字符集（中文不乱码）", () => {
   assert.match(document, /<title>月报\.md<\/title>/);
   assert.match(document, /<p>正文<\/p><\/body>/);
 });
+
+test("文档带分享元数据，且元数据里同样转义（双引号不能逃出属性）", () => {
+  const document = wrapHtmlDocument('月报 "引号" .md', "<p>正文</p>", '摘要里有 "引号" 和 <标签>');
+  assert.match(document, /<meta property="og:title" content="月报 &quot;引号&quot; \.md" \/>/);
+  assert.match(
+    document,
+    /<meta property="og:description" content="摘要里有 &quot;引号&quot; 和 &lt;标签&gt;" \/>/,
+  );
+  assert.match(document, /<meta name="viewport" content="width=device-width, initial-scale=1" \/>/);
+  assert.ok(
+    !/content="[^"]*"[^>]*"/.test(document.split("<style>")[0].replace(/<meta[^>]*>/g, "")),
+    "不该有多余引号逃逸",
+  );
+  // 不传摘要时不产生空的 og:description
+  assert.ok(!wrapHtmlDocument("x.md", "<p>y</p>").includes("og:description"));
+});
