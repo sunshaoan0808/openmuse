@@ -31,8 +31,10 @@ import {
   Text,
   TextInput,
   type TextStyle,
+  useWindowDimensions,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { z } from "zod";
 import type { ActionProposal } from "../../../packages/domain/src";
 import { ArtifactCard, IdeaChatCard } from "./agent-ui";
@@ -49,7 +51,12 @@ import { runConversationTurn } from "./conversation-run";
 import { loadCursor, outboxStorage, saveCursor } from "./conversation-store";
 import { guard } from "./crash-log";
 import { hapticPress, hapticSuccess, hapticTap, hapticWarn } from "./haptics";
-import { headerScrollHandler } from "./header-scrim";
+import {
+  chromeHeight,
+  headerScrollHandler,
+  markUserScroll,
+  trackHeaderCollapse,
+} from "./header-scrim";
 import {
   captureImage,
   type ImageSource,
@@ -443,6 +450,9 @@ export function ChatScreen({
   const [imageBusy, setImageBusy] = useState<ImageSource | "">("");
   const [attachError, setAttachError] = useState("");
   const list = useRef<ScrollView>(null);
+  // 顶栏内边距要用与外壳同一套口径算（同一函数），否则两边会差几个像素
+  const { width: chatWidth } = useWindowDimensions();
+  const chatInsets = useSafeAreaInsets();
   // 待发消息落本地：杀掉 App 也不丢（收到服务端确认才清）
   const [queue] = useState(() => new ConversationQueue(outboxStorage));
   const choiceCompletions = useRef(
@@ -820,12 +830,16 @@ export function ChatScreen({
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
           gap: 13,
-          paddingTop: 4,
+          // 静止时第一条消息正好落在顶栏下沿（照 Muse 的 contentInsetPx），不被遮；滚动时从顶栏底下穿过
+          paddingTop: chromeHeight(chatWidth >= 900, chatInsets.top) + 10,
           paddingBottom: 20,
           flexGrow: 1,
         }}
+        onScrollBeginDrag={markUserScroll}
         onScroll={headerScrollHandler(
           ({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
+            // 顶栏随滚动方向收起/展开
+            trackHeaderCollapse({ nativeEvent: { contentOffset } });
             const nearEnd = contentSize.height - contentOffset.y - layoutMeasurement.height < 100;
             followLatest.current = nearEnd;
             setAwayFromLatest(visible.length > 0 && !nearEnd);

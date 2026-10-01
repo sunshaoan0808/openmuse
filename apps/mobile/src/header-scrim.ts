@@ -1,4 +1,5 @@
 import { Animated } from "react-native";
+import { markUserScroll, nextCollapse } from "./header-collapse";
 
 /**
  * 顶栏磨砂强度跟着滚动走（照 Muse 的 ScrimScrollConnection / ScrimConfig）。
@@ -8,7 +9,52 @@ import { Animated } from "react-native";
  * 只动它的 opacity —— 静止时透明（内容从控件后面滚过去），滚动时加厚。
  * （opacity 能走原生驱动，代价最低）。
  */
+/**
+ * 顶栏总高度（含状态栏那条）。外壳用它算内容内边距与收起位移，对话页也用它 —— 共用一个函数，
+ * 免得两边各算一份、改了一处忘了另一处。
+ */
+export function chromeHeight(desktop: boolean, insetTop: number) {
+  return (desktop ? 124 : 104) + insetTop;
+}
+
 export const headerScrollY = new Animated.Value(0);
+
+/**
+ * 顶栏的收起程度：0 = 完全展开，1 = 完全滑出视野。
+ *
+ * 为什么按**方向**而不是按"滚了多远"（照 Muse 的 ScrimScrollState：它也是攒一个量、
+ * threshold 到了才算满，而不是位置映射）：在列表深处往回翻一屏，顶栏应该立刻回来，
+ * 而不是非要滚回顶部才出现。判定里留 2px 死区，免得手指微抖就来回抽。
+ */
+export const headerCollapse = new Animated.Value(0);
+let lastOffset = 0;
+let collapsed = false;
+
+/** 传给各屏的 onScroll：往上翻页收起顶栏，往回翻或回到顶部就展开 */
+export { markUserScroll } from "./header-collapse";
+
+export function trackHeaderCollapse(event: { nativeEvent: { contentOffset: { y: number } } }) {
+  const y = Math.max(0, event.nativeEvent.contentOffset.y);
+  const delta = y - lastOffset;
+  lastOffset = y;
+  const want = nextCollapse(y, delta, collapsed);
+  if (want === collapsed) return;
+  collapsed = want;
+  Animated.timing(headerCollapse, {
+    toValue: want ? 1 : 0,
+    duration: want ? 180 : 140,
+    useNativeDriver: true,
+  }).start();
+}
+
+/** 顶栏的位移：收起时整体上移一个顶栏高度（transform 走原生驱动，代价最低） */
+export function headerTranslateY(height: number) {
+  return headerCollapse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -height],
+    extrapolate: "clamp",
+  });
+}
 
 /** 直接用这个作为 ScrollView 的 onScroll（原生驱动 + 保留自己的 JS 逻辑走 listener）。 */
 export function headerScrollHandler(

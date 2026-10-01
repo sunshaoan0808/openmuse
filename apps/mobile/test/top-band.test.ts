@@ -29,14 +29,23 @@ test("外壳不再给顶部留内边距：SafeAreaView 的 edges 里不能有 to
   }
 });
 
-test("内容区顶部内边距必须很小：留成接近顶栏高度就会露出一条底色", () => {
+test("外壳内容区不能留静态顶距；顶栏高度的留白要落在滚动内容里（否则又是一条底色带）", () => {
   const code = strip(read("App.tsx"));
-  const match = code.match(/minHeight:\s*0,\s*paddingTop:\s*desktop\s*\?\s*(\d+)\s*:\s*(\d+)/);
-  assert.ok(match, "应该能找到内容区的 paddingTop");
-  const desktop = Number(match[1]);
-  const mobile = Number(match[2]);
-  assert.ok(mobile <= 16, `手机端内容顶部内边距必须很小，当前 ${mobile}`);
-  assert.ok(desktop <= 24, `桌面端内容顶部内边距必须很小，当前 ${desktop}`);
+  // 老翻车点：给外壳那层留接近顶栏高度的**静态**内边距 → 那块永远露着外壳底色 = 一条白带。
+  // 现在这层只当容器（不留给顶部留白），顶栏高度的留白放进 ScrollView 的 contentContainerStyle ——
+  // 它是滚动内容的一部分，会随内容滚走，静止时正好被顶栏盖住。
+  const container = code.match(
+    /minHeight:\s*0(\s*,\s*paddingTop:\s*(?:desktop\s*\?\s*)?(\d+))?\s*\}/,
+  );
+  assert.ok(container, "应该能找到外壳内容区那层容器");
+  const staticTop = container[2] === undefined ? 0 : Number(container[2]);
+  assert.ok(staticTop <= 16, `外壳内容区不该留静态顶距，当前 ${staticTop}`);
+  assert.match(code, /paddingTop:\s*chromeTop \+ 10/, "外壳滚动内容要按顶栏高度留内边距");
+  assert.match(
+    code,
+    /transform:\s*\[\{ translateY: headerTranslateY\(chromeTop\) \}\]/,
+    "顶栏要能随滚动收起",
+  );
 });
 
 test("顶栏底色不能用 BlurView：Android 模糊不可用时它退化成白色实底（第一轮的翻车点）", () => {
