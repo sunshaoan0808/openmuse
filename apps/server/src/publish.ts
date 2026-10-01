@@ -19,7 +19,7 @@ import { Hono } from "hono";
 import type { Files } from "./files.ts";
 import { escapeHtml, markdownToHtml, wrapHtmlDocument } from "./markdown-html.ts";
 
-export function publishRoutes(files: Files) {
+export function publishRoutes(files: Files, publicUrl: string) {
   const app = new Hono();
 
   /** token 长度先挡一道：真的 token 是 32 字符 base64url，短的一律当无效，连查都不查 */
@@ -50,6 +50,10 @@ export function publishRoutes(files: Files) {
       const text = new TextDecoder().decode(await files.bytes(published.owner, published.fileId));
       const isMarkdown =
         file.mimeType === "text/markdown" || /\.(md|mdown|markdown)$/i.test(file.name);
+      // 封面：可选，图片本身仍受 token 保护（/p/:token/cover）
+      const cover = published.coverId
+        ? `<img class="cover" src="/p/${c.req.param("token")}/cover" alt="" />`
+        : "";
       c.header("Content-Type", "text/html; charset=utf-8");
       // 摘要取正文头一段（去掉 markdown 记号），只为了让分享出去的链接有预览文字
       const excerpt = text
@@ -59,14 +63,27 @@ export function publishRoutes(files: Files) {
         .slice(0, 120);
       return c.body(
         wrapHtmlDocument(
-          file.name,
-          isMarkdown ? markdownToHtml(text) : `<pre>${escapeHtml(text)}</pre>`,
-          excerpt,
+          published.title ?? file.name,
+          cover + (isMarkdown ? markdownToHtml(text) : `<pre>${escapeHtml(text)}</pre>`),
+          published.description ?? excerpt,
+          // og:image 必须是**绝对**地址（抓取器不解析相对路径），用配置的公网地址而不是请求来源 ——
+          // 反代后 Host 未必可信，配置值才是确定的。
+          published.coverId
+            ? `${publicUrl.replace(/\/$/, "")}/p/${c.req.param("token")}/cover`
+            : undefined,
         ),
       );
     }
     // 其它类型（PDF/图片/音视频）：直接给字节
     return raw(c, published.owner, published.fileId);
+  });
+
+  /** 封面图：发布页与 og:image 共用一条地址，仍受 token 保护、仍是只读 */
+  app.get("/:token/cover", async (c) => {
+    const published = await lookup(c.req.param("token"));
+    if (!published?.coverId) return c.text("这个链接没有封面。", 404);
+    c.header("Cache-Control", "no-store");
+    return raw(c, published.owner, published.coverId);
   });
 
   app.get("/:token/raw", async (c) => {

@@ -20,6 +20,7 @@
     "@expo/metro-runtime": "~6.1.2",
     "expo": "~54.0.0",
     "expo-blur": "~15.0.8",
+    "expo-clipboard": "~8.0.8",
     "expo-dev-client": "~6.0.20",
     "expo-document-picker": "~14.0.8",
     "expo-file-system": "~19.0.17",
