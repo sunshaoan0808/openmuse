@@ -207,3 +207,22 @@ export const goalInputSchema = z.object({
   category: z.string().max(80).default("Personal"),
   milestones: z.array(z.string().min(1).max(200)).max(20).default([]),
 });
+
+/**
+ * 任务级**短时凭据**（照 Muse 的做法：`LinkDeviceTokenMinter.mintDeviceTokens/revokeDeviceTokens`
+ * + `ConfidentialVmTemporaryAccess`）。
+ * 要点：密钥不是长期放在配置里，而是"要用时铸一把、用完**显式吊销**"。
+ */
+export type CredentialKind = "git" | "api" | "ssh";
+export interface TemporaryCredential {
+  id: string;
+  label: string;
+  kind: CredentialKind;
+  scopes: string[];
+  /** 绑定到某个任务：该任务一结束就吊销（TemporaryAccess 的语义） */
+  taskId?: string;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt?: string;
+  revokeReason?: "task_finished" | "manual" | "expired";
+}
