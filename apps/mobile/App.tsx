@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
+  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -128,6 +129,11 @@ export default function App() {
       // 有令牌就直接用（重启不必再登录一次，跨境外链路上这一步很贵）；
       // 令牌过期由 401 续期钩子兜住，续不上才回到表单
       if (savedToken) setToken(savedToken);
+      // Web 验收专用（仅 dev 构建）：Web 上文件系统不可用、存不住令牌，于是"已登录"的界面在 Web 上
+      // 渲染不出来 —— 顶部白带这类只在登录后出现的问题就没法量。给个假令牌只是把外壳与各页面渲染
+      // 出来量尺寸（数据请求会失败，不影响布局）。真机与正式包都不受影响。
+      else if (__DEV__ && Platform.OS === "web" && process.env.EXPO_PUBLIC_FAKE_TOKEN)
+        setToken(process.env.EXPO_PUBLIC_FAKE_TOKEN);
       else if (savedKey) await connect(savedKey);
     })();
   }, [connect]);
@@ -148,7 +154,7 @@ export default function App() {
   }, []);
   return (
     <ErrorBoundary>
-      <SafeAreaProvider>
+      <SafeAreaProvider initialMetrics={webFakeInsets()}>
         <StatusBar style="dark" />
         <View style={{ flex: 1, paddingBottom: keyboardInset }}>
           <CrashNotice />
@@ -304,6 +310,26 @@ function WorkspaceApp({ token }: { token: string }) {
  * 否则只有半透明底色、没有模糊）+ 一层半透明白，让底下的内容透出来。
  * 尺寸由父容器给（absoluteFill），父容器负责圆角与 overflow: hidden。
  */
+/**
+ * Web 验收专用：Web 版没有状态栏（insets.top 恒为 0），因此"顶部白带"这类只在真机出现的问题
+ * 在 Web 上永远复现不出来 —— 前几轮 Web 检查全绿、真机仍有白带，就是这个原因。
+ * 给 Web 一个假的 insets（EXPO_PUBLIC_FAKE_INSET_TOP=44）就能真量、真验；真机不受影响。
+ */
+function webFakeInsets():
+  | {
+      frame: { x: number; y: number; width: number; height: number };
+      insets: { top: number; left: number; right: number; bottom: number };
+    }
+  | undefined {
+  if (Platform.OS !== "web") return undefined;
+  const top = Number(process.env.EXPO_PUBLIC_FAKE_INSET_TOP ?? 0);
+  if (!top) return undefined;
+  return {
+    frame: { x: 0, y: 0, width: 390, height: 844 },
+    insets: { top, left: 0, right: 0, bottom: 34 },
+  };
+}
+
 const FILL = { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 } as const;
 
 function GlassLayer({ radius = 999 }: { radius?: number }) {
@@ -390,20 +416,22 @@ function WorkspaceShell({
   return (
     <>
       <WorkspaceTools />
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.canvas }} edges={["top", "bottom"]}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.canvas }} edges={["bottom"]}>
         <View style={{ flex: 1, width: "100%", maxWidth: 760, alignSelf: "center" }}>
           <View
             // 这里原来用 expo-blur 的 BlurView（tint=light + dimezisBlurView）。
             // 真机实测：Android 上它没能真模糊时**退化成一层白色实底**，于是整条顶栏变成
             // 从屏幕左到右的白色横带（下边缘还是硬边），三个白色控件被同色淹没 ——
             // 用户看到的就是"一个白色块"。
-            // 现在顶栏的背景只由下面那层"画布色遮罩"负责：静止时几乎透明（内容从控件后面
-            // 滚过去），滚动时按 Muse 的 scrim 逻辑加厚。这样不依赖模糊是否可用，观感可控。
+            //
+            // 现在这条容器自己带 GlassLayer（见下面第一个子节点）：它采样的是**内容**（外壳已不再给
+            // 顶部留内边距，内容从 y=0 就铺上来），所以玻璃颜色跟着所在页面走 —— 对话页是灰的，
+            // 玻璃就是浅灰，状态栏那条与下面无缝。之前的问题是这条容器**没有任何背景**，
+            // 露出来的是外壳底色（#FCFCFC 近白）而内容偏灰，于是每个页面顶部都有一条"白带"。
             pointerEvents="box-none"
             style={{
               position: "absolute",
-              // 从屏幕最顶端开始（覆盖状态栏那条区域）：否则状态栏处会露出一条"窄白带"，
-              // 与下面顶栏区形成两块白底。
+              // 从屏幕最顶端开始，连状态栏那条区域一起盖住
               top: -insets.top,
               left: 0,
               right: 0,
@@ -413,6 +441,14 @@ function WorkspaceShell({
               paddingHorizontal: 20,
             }}
           >
+            {/* 顶栏的底色：**刻意不用 BlurView** —— 真机实测 expo-blur 在 Android 上模糊不可用时
+                会退化成"白色实底"，那样整条顶栏又变回一条白带（第一轮就是这么翻车的）。
+                这里用画布色的半透明遮罩：不依赖模糊能力，而外壳已不再给顶部留内边距，
+                底下就是真实内容（卡片/文字），所以这条读起来是"顶栏"而不是"空白的白带"。 */}
+            <View
+              pointerEvents="none"
+              style={[FILL, { backgroundColor: "rgba(252,252,252,0.55)" }]}
+            />
             <View
               style={{
                 position: "absolute",
@@ -522,7 +558,7 @@ function WorkspaceShell({
               </Pressable>
             </View>
           </View>
-          <View style={{ flex: 1, minHeight: 0, paddingTop: desktop ? 92 : 74 }}>
+          <View style={{ flex: 1, minHeight: 0, paddingTop: desktop ? 12 : 8 }}>
             {section !== "chat" && (
               <ScrollView
                 key={section}

@@ -33,7 +33,6 @@ import {
   type TextStyle,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { z } from "zod";
 import type { ActionProposal } from "../../../packages/domain/src";
 import { ArtifactCard, IdeaChatCard } from "./agent-ui";
@@ -812,9 +811,10 @@ export function ChatScreen({
   // 聊天滚动区的顶部本来就是历史消息，被顶栏压住不碍事（Muse 同款观感）。
   // 第三次真机反馈"白条上移了但没干掉"：说明剩下的是**状态栏那一条**（+4 里还带着 insets.top）。
   // 所以内边距只留 4，连状态栏那块也让内容铺上去 —— 系统图标本来就浮在内容上，Muse 亦然。
-  const insets = useSafeAreaInsets();
+  // 外壳已不再给顶部留内边距（根治顶部白带：内容从 y=0 铺上来，顶栏用真玻璃盖住它），
+  // 所以这里不再需要 -insets.top 抵消，那样反而会把内容推到屏幕外。
   return (
-    <View style={{ flex: 1, marginTop: -insets.top }}>
+    <View style={{ flex: 1 }}>
       <ScrollView
         ref={list}
         showsVerticalScrollIndicator={false}
