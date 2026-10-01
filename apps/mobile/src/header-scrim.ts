@@ -40,15 +40,21 @@ export function trackHeaderCollapse(event: { nativeEvent: { contentOffset: { y: 
   const want = nextCollapse(y, delta, collapsed);
   if (want === collapsed) return;
   collapsed = want;
+  // 走 JS 驱动：动画的是 marginTop（布局属性，原生驱动不支持它）。
+  // 这里必须是布局而不是 transform —— transform 只是视觉位移，顶栏原来的位置仍然占着，
+  // 正文便不会被顶下去，滑走时也不会补上来（用户实测："白条压住了正文导致遮挡"）。
   Animated.timing(headerCollapse, {
     toValue: want ? 1 : 0,
     duration: want ? 180 : 140,
-    useNativeDriver: true,
+    useNativeDriver: false,
   }).start();
 }
 
-/** 顶栏的位移：收起时整体上移一个顶栏高度（transform 走原生驱动，代价最低） */
-export function headerTranslateY(height: number) {
+/**
+ * 顶栏收起时的 marginTop：0 → -height。用**负外边距**而不是 transform，这样顶栏真的让出位置，
+ * 正文会顶上来（transform 只动画面、不动排版）。
+ */
+export function headerMarginTop(height: number) {
   return headerCollapse.interpolate({
     inputRange: [0, 1],
     outputRange: [0, -height],

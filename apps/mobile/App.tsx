@@ -52,8 +52,8 @@ import { ErrorBoundary } from "./src/error-boundary";
 import { hapticTap } from "./src/haptics";
 import {
   chromeHeight,
+  headerMarginTop,
   headerScrollHandler,
-  headerTranslateY,
   markUserScroll,
   trackHeaderCollapse,
 } from "./src/header-scrim";
@@ -440,14 +440,10 @@ function WorkspaceShell({
             // 露出来的是外壳底色（#FCFCFC 近白）而内容偏灰，于是每个页面顶部都有一条"白带"。
             pointerEvents="box-none"
             style={{
-              position: "absolute",
-              // 收起时整条上移出视野（展开时位置不变）
-              transform: [{ translateY: headerTranslateY(chromeTop) }],
-              // 从屏幕最顶端开始，连状态栏那条区域一起盖住
-              top: -insets.top,
-              left: 0,
-              right: 0,
-              zIndex: 6,
+              // **不做成绝对定位的覆盖层**：顶栏是布局里的一行，它占的高度就是正文的起点。
+              // 之前做覆盖层时正文会从它底下穿过去，读起来正是"白条压住了正文导致遮挡"。
+              // 收起 = 负 marginTop（真的让出位置，正文顶上来；transform 只动画面不动排版，不行）。
+              marginTop: headerMarginTop(chromeTop),
               height: chromeTop,
               paddingTop: insets.top + (desktop ? 12 : 2),
               paddingHorizontal: 20,
@@ -603,8 +599,7 @@ function WorkspaceShell({
                 contentContainerStyle={{
                   paddingHorizontal: desktop ? 42 : 22,
                   paddingBottom: 28,
-                  // 静止时第一条内容正好落在顶栏下沿，不被遮；滚动时从顶栏底下穿过去
-                  paddingTop: chromeTop + 10,
+                  paddingTop: 10,
                 }}
                 keyboardShouldPersistTaps="handled"
               >
