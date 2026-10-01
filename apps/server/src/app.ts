@@ -45,6 +45,14 @@ import {
 } from "./threads.ts";
 import { WorkspaceService } from "./workspace.ts";
 
+/** 日志脱敏：把常见令牌形状换成 [REDACTED]，避免 journald 里躺着可用凭据 */
+export function scrubSecrets(text: string): string {
+  return text
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/gi, "$1[REDACTED]")
+    .replace(/(sk-|pk-|ghp_|gho_|github_pat_)[A-Za-z0-9_-]{8,}/g, "$1[REDACTED]")
+    .replace(/([?&](?:token|key|access_key|apikey|api_key)=)[^&\s"']+/gi, "$1[REDACTED]");
+}
+
 export async function createApp(
   db: Store,
   config: Config,
@@ -120,7 +128,17 @@ export async function createApp(
       return c.json({ error: error.message }, 422);
     if (error instanceof SyntaxError) return c.json({ error: "请求数据无效" }, 400);
     // Provider and document errors are useful, but raw stack traces and token-bearing responses are not.
-    console.error(`[OpenMuse] ${error.name}`);
+    // 日志只留内部可用的信息：原来只打 error.name（例如 "TypeError"），线上等于没有线索 —— 补上消息与栈，
+    // 并顺手脱敏（日志进 journald，可能被转发或截图）。
+    console.error(`[OpenMuse] ${error.name}: ${scrubSecrets(error.message)}`);
+    if (error.stack)
+      console.error(
+        scrubSecrets(error.stack)
+          .split("\n")
+          .slice(0, 8)
+          .map((line) => `    ${line.trim()}`)
+          .join("\n"),
+      );
     return c.json(
       {
         error:
