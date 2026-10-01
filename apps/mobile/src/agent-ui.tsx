@@ -22,7 +22,16 @@ import {
   X,
 } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Animated, Image, Linking, Pressable, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Animated,
+  Image,
+  Linking,
+  Pressable,
+  Share,
+  Text,
+  View,
+} from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import type { ActionProposal, Artifact, BrowserSession } from "../../../packages/domain/src";
 import type {
@@ -1264,6 +1273,31 @@ function IdeaCard({ idea }: { idea: Idea }) {
   const [prompt, setPrompt] = useState(idea.prompt);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // 照 Muse 的 IdeaCardItem{selectable, isSelected}：卡里的小条目可以单独勾
+  const [chosen, setChosen] = useState<string[]>(
+    (idea.items ?? []).filter((item) => item.selected !== false).map((item) => item.id),
+  );
+  async function executeSelected() {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await mutate<Idea>(`/ideas/${idea.id}/execute`, {
+        itemIds: chosen,
+        mode: "selected",
+      });
+      if (result.taskId) open({ type: "task", taskId: result.taskId });
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function share() {
+    const lines = [idea.title, idea.reason, idea.buildSummary ? `会得到：${idea.buildSummary}` : ""]
+      .filter(Boolean)
+      .join("\n");
+    await Share.share({ message: lines }).catch(() => {});
+  }
   async function act(action: "accept" | "dismiss" | "feedback", value?: "up" | "down") {
     setBusy(true);
     setError("");
@@ -1300,10 +1334,61 @@ function IdeaCard({ idea }: { idea: Idea }) {
           <Text style={[s.heading, { fontSize: 16, lineHeight: 23 }]}>{idea.title}</Text>
           {/* 照 Muse 的 fitReason：说清"这条为什么贴合你"，而不是只给一句描述 */}
           <Text style={s.muted}>{idea.reason}</Text>
+          {/* 照 Muse 的 badges：角标由服务端下发 */}
+          {!!idea.badges?.length && (
+            <View style={[s.row, { gap: 6, flexWrap: "wrap" }]}>
+              {idea.badges.map((badge) => (
+                <Chip key={badge} tint={idea.seeded ? colors.sky : colors.lavender}>
+                  {badge}
+                </Chip>
+              ))}
+            </View>
+          )}
         </View>
       </Pressable>
       {expanded && (
         <View style={{ gap: 15, marginTop: 18, paddingLeft: 48 }}>
+          {/* 照 Muse 的 buildSummary："做出来会得到什么" */}
+          {!!idea.buildSummary && (
+            <Card style={{ gap: 6, padding: 13, backgroundColor: colors.sky }}>
+              <Text style={s.small}>做出来会得到</Text>
+              <Text style={s.text}>{idea.buildSummary}</Text>
+            </Card>
+          )}
+          {/* 照 Muse 的 IdeaCardItem：可勾选条目，执行时按 itemIds 走 */}
+          {!!idea.items?.length && (
+            <View style={{ gap: 9 }}>
+              <Text style={s.small}>这次要做哪几件（可多选）</Text>
+              {idea.items.map((item) => {
+                const on = chosen.includes(item.id);
+                return (
+                  <Pressable
+                    key={item.id}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: on }}
+                    accessibilityLabel={`${on ? "取消" : "选择"}：${item.title}`}
+                    disabled={busy}
+                    onPress={() =>
+                      setChosen((ids) =>
+                        on ? ids.filter((id) => id !== item.id) : [...ids, item.id],
+                      )
+                    }
+                    style={[s.row, { gap: 10, alignItems: "flex-start" }]}
+                  >
+                    <Check
+                      size={18}
+                      color={on ? colors.blueDark : colors.line}
+                      style={{ marginTop: 2 }}
+                    />
+                    <View style={{ flex: 1, gap: 2 }}>
+                      <Text style={s.text}>{item.title}</Text>
+                      {!!item.summary && <Text style={s.small}>{item.summary}</Text>}
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
           <EvidenceList items={idea.evidence} />
           {editing && (
             <Field
@@ -1318,16 +1403,19 @@ function IdeaCard({ idea }: { idea: Idea }) {
             <Button
               primary
               busy={busy}
-              disabled={!prompt.trim()}
-              onPress={() => void act("accept")}
+              disabled={!prompt.trim() || (!!idea.items?.length && !chosen.length)}
+              onPress={() => void (idea.items?.length ? executeSelected() : act("accept"))}
             >
-              开始这个
+              {idea.items?.length ? `只做勾选的 ${chosen.length} 件` : "开始这个"}
             </Button>
             <Button disabled={busy} onPress={() => setEditing(!editing)}>
               {editing ? "保留修改" : "编辑"}
             </Button>
             <Button disabled={busy} onPress={() => void act("dismiss")}>
               忽略
+            </Button>
+            <Button disabled={busy} onPress={() => void share()}>
+              分享
             </Button>
             {/* 照 Muse 的 IdeaFeedback：点踩过的方向，后面就不再推荐 */}
             <Button
@@ -1348,6 +1436,62 @@ function IdeaCard({ idea }: { idea: Idea }) {
         </View>
       )}
     </View>
+  );
+}
+/**
+ * 照 Muse 的 `HatchIdeaCardRow` / `IdeaCardDetailOrigin.CHAT`：
+ * 灵感不只在「灵感」页出现，**聊天里也会冒一张卡**（右上角标"来自灵感"）。
+ * 只展示最新一条未处理的；点「看看」去灵感页，点「就做这个」直接开干。
+ */
+export function IdeaChatCard({ onOpenIdeas }: { onOpenIdeas?: () => void }) {
+  const { data, mutate } = useAgentWorkspace();
+  const { open } = useWorkspace();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [dismissed, setDismissed] = useState<string[]>([]);
+  const idea = (data?.ideas || []).find(
+    (item) => item.status === "new" && !dismissed.includes(item.id),
+  );
+  if (!idea) return null;
+  const target = idea; // 闭包里保住类型收窄（不然 biome 会报非空断言）
+  async function act(action: "accept" | "dismiss") {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await mutate<Idea>(`/ideas/${target.id}`, { action, prompt: target.prompt });
+      if (action === "dismiss") setDismissed((ids) => [...ids, target.id]);
+      if (result.taskId && action === "accept") open({ type: "task", taskId: result.taskId });
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Card style={{ gap: 10, padding: 15, borderRadius: 20, backgroundColor: colors.lavender }}>
+      <View style={s.between}>
+        <Text style={s.small}>{idea.seeded ? "种子灵感" : "来自灵感"}</Text>
+        <Text style={s.small}>💡</Text>
+      </View>
+      <Text style={[s.heading, { fontSize: 15, lineHeight: 22 }]}>{idea.title}</Text>
+      <Text style={s.muted} numberOfLines={2}>
+        {idea.reason}
+      </Text>
+      <ErrorNotice error={error} />
+      <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
+        <Button small primary busy={busy} onPress={() => void act("accept")}>
+          就做这个
+        </Button>
+        {!!onOpenIdeas && (
+          <Button small disabled={busy} onPress={onOpenIdeas}>
+            看看
+          </Button>
+        )}
+        <Button small disabled={busy} onPress={() => void act("dismiss")}>
+          不用了
+        </Button>
+      </View>
+    </Card>
   );
 }
 export function GoalsScreen() {

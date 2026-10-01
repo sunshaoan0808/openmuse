@@ -164,3 +164,24 @@ Muse 有 `HatchOfflineConversationCipher`（设备端加密的离线会话库）
 3. 有**真机可见现象**（截图或现象描述来自你这边，我无法自测真机渲染）；
 4. **不破坏既有功能**：会话改名/归档、断线补拉、任务暂停/取消、审批这些既有路径复测通过；
 5. 若某条限制仍然存在（例如变形动画在低端机上掉帧），**明确写出来**，不算完成。
+
+---
+
+## 灵感（explore）对齐进度 —— 照 `docs/muse-原版挖掘记录.md` §11
+
+| # | Muse 的机制 | 我们 | 状态 |
+|---|---|---|---|
+| 1 | `IdeaFeedback{UP,DOWN}` | `Idea.feedback` + `rateIdea` + 路由 `action="feedback"`；`refreshIdeas` 里被踩过的方向不再推荐 | ✅ 已上线（真接口验过：点踩→该条 dismissed、方向不再出现；点回赞+restore→复原） |
+| 2 | `IdeaCardSection`（分区 feed） | App 按 `kind` 分三区：邮件里的文档 / 日程与对接 / 目标与计划 | ✅ 已实现（要装包） |
+| 3 | `fitReason` | `reason` + 卡片上「贴合 / 不感兴趣」两个按钮 | ✅ 已实现（要装包） |
+| 4 | `IdeaCardItem{selectable,isSelected}` + `Execute{itemIds,mode}` | `Idea.items[]` + `POST /ideas/:id/execute`；任务提示词里带上「这次只做这几件：…」 | ✅ 已上线（真接口验过：只勾 fill → 任务里只有"把表填好"） |
+| 5 | `buildSummary` / `badges` | `Idea.buildSummary` / `Idea.badges`（服务端下发，客户端只画） | ✅ 已上线（含存量记录回填） |
+| 6 | `SeededIdeaDetail{detail,isExecutable}` | `Idea.seeded` + `seededIdeas()`：没有任何真实来源时给 3 张**可直接执行**的种子灵感 | ✅ 已上线 |
+| 7 | `HatchIdeaCardRow` / `Origin.CHAT` | `IdeaChatCard` 在聊天流里出卡（「来自灵感/种子灵感」+ 就做这个/看看/不用了） | ✅ 已实现（Web 验过：卡片与按钮都在） |
+| 8 | `HatchSuggestionBar` | 输入框上方两条可点建议（点了直接派活） | ✅ 已实现（Web 验过） |
+| 9 | `IdeaCardsViewerStateJson.hasBuiltIdea` | `Idea.builtAt`（接受时写入） | ✅ 已上线 |
+| 10 | `IdeaCardShare*` | 卡片上的「分享」（RN Share，把标题/理由/会得到什么导出去） | ✅ 已实现（要装包） |
+| 11 | `IdeaCardsPaginationJson` | `GET /ideas?limit&offset` → `{ideas,total,hasMore}` | ✅ 已上线（验过 total=3/hasMore=true） |
+| 12 | `IdeaCardLayout{IDEAS,COMMUNITY_ROWS}` | 只做了 IDEAS 一种版式 | ⏳ 未做（社区流我们没有对应数据源） |
+| 13 | 多来源合并成一张卡的 items（如"填表+回信"来自同一封邮件） | items 是按 kind 静态拆的，还没有"从多个来源合并" | ⏳ 部分（够用，但不如 Muse 动态） |
+| 14 | `buildStatus` 构建进度 | 用任务的 progress 顶替 | ⏳ 未做独立状态 |

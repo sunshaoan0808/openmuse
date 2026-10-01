@@ -82,6 +82,20 @@ export interface Monitor {
   error?: string;
   checks: number;
 }
+/**
+ * 照 Muse 的 `explore/repo/IdeaCardItem`：一条灵感可以拆成**多个可勾选的小条目**，
+ * 执行时按 itemIds 传（而不是整卡一把梭）。字段名对齐 Muse：selectable / isSelected。
+ */
+export interface IdeaItem {
+  id: string;
+  kind: string;
+  title: string;
+  summary?: string;
+  /** 这一条做出来会得到什么（Muse 的 buildSummary） */
+  buildSummary?: string;
+  selectable: boolean;
+  selected?: boolean;
+}
 export interface Idea {
   id: string;
   title: string;
@@ -98,6 +112,18 @@ export interface Idea {
    * 用途不只是显示：`refreshIdeas` 会据此让后续推荐避开被踩过的方向。
    */
   feedback?: "up" | "down";
+  /** 照 Muse 的 IdeaCardItem：拆出来的可勾选条目 */
+  items?: IdeaItem[];
+  /** 照 Muse 的 badges/labels：卡片上的角标（数据驱动，客户端只负责画） */
+  badges?: string[];
+  /** 照 Muse 的 buildSummary：这条灵感"造出来"会得到什么 */
+  buildSummary?: string;
+  /** 照 Muse 的 SeededIdeaDetail：预置/种子灵感（没有任何来源时也能给出可执行的事） */
+  seeded?: boolean;
+  /** 照 Muse 的 IdeaCardsViewerStateJson.hasBuiltIdea：已经做过至少一次 */
+  builtAt?: string;
+  /** 照 Muse 的 IdeaCardExecuteRequestJson.mode：执行方式（默认按勾选的条目走） */
+  mode?: string;
 }
 export interface AgentMemory {
   id: string;
