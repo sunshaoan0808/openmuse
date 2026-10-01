@@ -31,6 +31,7 @@ import { agentRoutes } from "./engine/routes.ts";
 import { AgentService } from "./engine/service.ts";
 import { AppError } from "./errors.ts";
 import { Files } from "./files.ts";
+import { gitProxyRoutes } from "./git-proxy.ts";
 import { GoogleAuth } from "./google-auth.ts";
 import { friendlyToolError, recordActivity } from "./live-activity.ts";
 import { backgroundFailure } from "./log.ts";
@@ -209,6 +210,9 @@ export async function createApp(
     );
     return c.json(snapshot);
   });
+  // git 凭据代发代理：**故意挂在 /api/* 之外** —— 调用它的是沙箱，没有会话令牌，
+  // 认证靠句柄本身（32 字节随机）= 一次性能力，且每次转发都重新校验凭据是否还有效。
+  app.route("/git", gitProxyRoutes(db));
   app.route("/api/agent", agentRoutes(agent));
   app.route("/api/computer", computerRoutes(computer, files));
   app.get("/api/calendars", async (c) => c.json(await workspace.calendars(c.get("owner"))));

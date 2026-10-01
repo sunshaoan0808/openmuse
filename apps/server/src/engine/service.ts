@@ -37,6 +37,7 @@ import {
 import type { Store } from "../db.ts";
 import { AppError } from "../errors.ts";
 import type { Files } from "../files.ts";
+import { revokeGitHandles } from "../git-proxy.ts";
 import { backgroundFailure } from "../log.ts";
 import { defaultSandboxRoot, destroySandbox } from "../sandbox.ts";
 import { SearchService } from "../search.ts";
@@ -1185,6 +1186,12 @@ export class AgentService {
     // 照 Muse 的"用完就销毁"：任务一到终态，就把它名下的短时凭据全部吊销（显式吊销，不靠过期）
     try {
       const revoked = await revokeForTask(this.db, owner, saved.id);
+      // 同一时刻把 git 代发句柄也清掉（凭据吊销已让它们失效，这里再收一道）
+      const droppedHandles = revokeGitHandles(saved.id);
+      if (droppedHandles)
+        console.log(
+          `[git-proxy] 任务 ${saved.id.slice(0, 8)} 结束，回收 ${droppedHandles} 个代发句柄`,
+        );
       if (revoked)
         console.log(`[credentials] 任务 ${saved.id.slice(0, 8)} 结束，吊销短时凭据 ${revoked} 把`);
       // 沙箱"任务结束即重置"：任务里如果建过一次性工作区，这里连目录一起删掉

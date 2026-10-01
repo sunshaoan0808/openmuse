@@ -6,6 +6,7 @@ import {
   monitorInputSchema,
 } from "../../../../packages/domain/src/agent.ts";
 import { type TaskSecrets, taskSecrets } from "../credentials.ts";
+import { createGitHandle } from "../git-proxy.ts";
 import { withActivity } from "../live-activity.ts";
 import { assertRelative, ensureTaskSandbox, type Sandbox } from "../sandbox.ts";
 import { hasCjk, mergeSearchResults } from "../search.ts";
@@ -583,10 +584,17 @@ async function runSandboxGit(
   });
   const lines: string[] = [];
   try {
-    // 工作区里还没有这个仓库，就从只读挂载克隆一份（源仓库永远不被直接改动）
+    // 工作区里还没有这个仓库，就从只读挂载克隆一份（源仓库永远不被直接改动）。
+    // 注意：模型常"先写文件、再提交"，那时 work/ 已存在 → 裸 clone 会失败（destination path already exists）。
+    // 做法：克隆到临时目录，再把工作区里已有的文件覆盖过去（模型的改动优先），最后整体换过去。
     if (sourceRepo && action !== "push") {
       const present = await box.exec(`test -d /workspace/${args.repo}/.git && echo YES || echo NO`);
-      if (!/YES/.test(present.stdout)) lines.push(`git clone /repo /workspace/${args.repo}`);
+      if (!/YES/.test(present.stdout))
+        lines.push(
+          `git clone -q /repo /tmp/om-clone && ` +
+            `if [ -d /workspace/${args.repo} ]; then cp -a /workspace/${args.repo}/. /tmp/om-clone/; rm -rf /workspace/${args.repo}; fi && ` +
+            `mv /tmp/om-clone /workspace/${args.repo}`,
+        );
     }
     // 消息走文件：绝不把内容拼进命令行（防注入、也防出现在 ps 里）
     if (action === "commit") {
@@ -595,22 +603,22 @@ async function runSandboxGit(
         `cd /workspace/${args.repo} && git add -A && git -c user.email=agent@openmuse -c user.name=OpenMuse commit -F /workspace/.openmuse-commit-msg`,
       );
     } else {
-      const target = args.remote ? ` ${JSON.stringify(args.remote)}` : "";
+      // 远端是 http(s) 且任务有 git 凭据 → 交给**服务端代发代理**：
+      // 沙箱只拿到一次性句柄（路径即能力），真令牌从不进入沙箱进程（"密钥不进沙箱"）。
+      let remote = args.remote ?? "";
+      if (useCredential) {
+        const credentialId = secrets.ids[0];
+        if (!credentialId)
+          return { error: "这个任务没有可用的 git 凭据，先在派活时带上 credentials。" };
+        const handle = createGitHandle({ owner: ctx.owner, taskId: task.id, remote, credentialId });
+        remote = `http://127.0.0.1:${ctx.service.config.port}/git/${handle.id}`;
+      }
+      const target = remote ? ` ${JSON.stringify(remote)}` : "";
       const branch = args.branch ? ` ${JSON.stringify(args.branch)}` : "";
       lines.push(`cd /workspace/${args.repo} && git push${target}${branch}`);
     }
-    let env = "";
-    if (useCredential) {
-      const gitCredential = secrets.ids.length ? await secrets.get(secrets.ids[0]) : "";
-      if (!gitCredential)
-        return { error: "这个任务没有可用的 git 凭据，先在派活时带上 credentials。" };
-      // 凭据只经环境变量进沙箱，并由 askpass 脚本读取（不进 argv、不进 git config）
-      await box.write(
-        ".openmuse-askpass.sh",
-        '#!/bin/sh\ncase "$1" in *[Uu]sername*) echo openmuse;; *) echo "$OPENMUSE_GIT_TOKEN";; esac\n',
-      );
-      env = `OPENMUSE_GIT_TOKEN=${JSON.stringify(gitCredential)} GIT_ASKPASS=/workspace/.openmuse-askpass.sh GIT_TERMINAL_PROMPT=0 `;
-    }
+    // 沙箱里**不含任何密钥**：连 askpass 脚本都不需要了（凭据在服务端那一侧注入）
+    const env = useCredential ? "GIT_TERMINAL_PROMPT=0 " : "";
     const run = await box.exec(`${env}${lines.join(" && ")}`, { timeoutMs: 120_000 });
     const redact = (text: string) => (secrets.redact ? secrets.redact(text) : text);
     const output = redact([run.stdout, run.stderr].filter(Boolean).join("\n").trim()).slice(
