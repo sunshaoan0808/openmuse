@@ -489,6 +489,55 @@ function WorkspaceShell({
                 onPress={() => setThreadsOpen(true)}
               />
             </View>
+            <View
+              style={{ position: "absolute", right: 0, top: insets.top + CHROME_CENTER_Y - 17 }}
+            >
+              {/* 照 Muse：右侧是一个带文字的胶囊，而不是光秃秃一个图标 */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`通知：${pending} 条未读或待处理`}
+                onPress={() => open({ type: "notifications" })}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                  height: 34,
+                  paddingHorizontal: 14,
+                  borderRadius: 19,
+                  backgroundColor: "transparent",
+                  overflow: "hidden",
+                  borderWidth: 1,
+                  borderColor: "rgba(19,38,49,0.06)",
+                  shadowColor: "#132631",
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.08,
+                  shadowRadius: 12,
+                  elevation: 2,
+                }}
+              >
+                <GlassLayer radius={19} />
+                <Bell size={16} strokeWidth={1.8} color={colors.text} />
+                <Text style={[s.small, { color: colors.text }]}>
+                  {pending > 0 ? `通知 · ${pending}` : "通知"}
+                </Text>
+              </Pressable>
+            </View>
+          </Animated.View>
+          {/* 水豚卡片：**不跟着顶栏滑走**（用户要求"水豚保留"）。
+              它是绝对定位的兄弟层，几何与顶栏一致（同样的 paddingTop），所以位置看起来没变；
+              顶栏那一行滑出去时，它留在原处浮在内容上方（自带玻璃，所以压着文字也看得清）。
+              放在 Animated.View 之后 → 绘制在上面；pointerEvents=box-none → 不挡底下的操作。 */}
+          <View
+            pointerEvents="box-none"
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              top: 0,
+              paddingTop: insets.top + (desktop ? 12 : 2),
+              alignItems: "center",
+            }}
+          >
             <View style={{ alignItems: "center", gap: 1 }}>
               <Pressable
                 accessibilityRole="button"
@@ -547,40 +596,7 @@ function WorkspaceShell({
                 </View>
               </Pressable>
             </View>
-            <View
-              style={{ position: "absolute", right: 0, top: insets.top + CHROME_CENTER_Y - 17 }}
-            >
-              {/* 照 Muse：右侧是一个带文字的胶囊，而不是光秃秃一个图标 */}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`通知：${pending} 条未读或待处理`}
-                onPress={() => open({ type: "notifications" })}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 6,
-                  height: 34,
-                  paddingHorizontal: 14,
-                  borderRadius: 19,
-                  backgroundColor: "transparent",
-                  overflow: "hidden",
-                  borderWidth: 1,
-                  borderColor: "rgba(19,38,49,0.06)",
-                  shadowColor: "#132631",
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.08,
-                  shadowRadius: 12,
-                  elevation: 2,
-                }}
-              >
-                <GlassLayer radius={19} />
-                <Bell size={16} strokeWidth={1.8} color={colors.text} />
-                <Text style={[s.small, { color: colors.text }]}>
-                  {pending > 0 ? `通知 · ${pending}` : "通知"}
-                </Text>
-              </Pressable>
-            </View>
-          </Animated.View>
+          </View>
           {/* 内容区：顶部留一条 10px 的缝。缝里露的是外壳底色（与顶栏同色，看不出是"白带"），
               作用是让正文不要紧贴顶栏下沿 —— 紧贴时被视口切掉的那半行读起来就是"白条压住了正文"。 */}
           <View style={{ flex: 1, minHeight: 0, paddingTop: 10 }}>
