@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { foldActivity, stepsOfCurrentRun } from "../packages/domain/src/activity.ts";
+import { readFileSync } from "node:fs";
+import { familyOf, foldActivity, stepsOfCurrentRun } from "../packages/domain/src/activity.ts";
 
 test("连续的同类步骤合成一个任务（这是与 Muse 对齐的核心规则）", () => {
   const activity = foldActivity({
@@ -114,5 +115,26 @@ test("工具名的两种形状都要认（App 用的是 {function:{name}}，踩�
     steps.map((step) => step.name),
     ["search_web", "read_pages"],
     "两种形状都认，取不到名字的跳过而不是塞一个 undefined",
+  );
+});
+
+test("服务端每个真实工具名都要落到中文类目上（不许把英文工具名直接摆到界面）", () => {
+  const sources = [
+    "apps/server/src/engine/chat-tools.ts",
+    "apps/server/src/engine/tool-kit.ts",
+    "apps/server/src/computer-tools.ts",
+    "apps/server/src/jev/tools.ts",
+  ];
+  const names = new Set<string>();
+  for (const file of sources) {
+    const text = readFileSync(file, "utf8");
+    for (const match of text.matchAll(/name: "([a-z][a-z_]*)"/g)) names.add(match[1] as string);
+  }
+  assert.ok(names.size >= 15, `只抓到 ${names.size} 个工具名，说明抓取方式坏了`);
+  const unmapped = [...names].filter((name) => familyOf(name).title === name);
+  assert.deepEqual(
+    unmapped,
+    [],
+    `这些工具还没登记中文类目（界面会直接显示英文名）: ${unmapped.join(", ")}`,
   );
 });

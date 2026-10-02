@@ -60,12 +60,17 @@ const FAMILIES: { key: string; title: string; tools: readonly string[] }[] = [
   {
     key: "context",
     title: "整理上下文",
-    tools: ["create_goal", "read_workspace", "remember_fact", "agent_status"],
+    tools: ["create_goal", "remember_fact", "agent_status"],
+  },
+  {
+    key: "workspace",
+    title: "整理文件",
+    tools: ["workspace_read_file", "workspace_write_file", "workspace_edit_file", "workspace_list_files"],
   },
   {
     key: "artifact",
     title: "产出文件",
-    tools: ["import_pdf", "inspect_pdf", "fill_pdf", "save_artifact", "finish_task"],
+    tools: ["save_document", "import_pdf", "inspect_pdf", "fill_pdf", "save_artifact", "finish_task"],
   },
   {
     key: "computer",
