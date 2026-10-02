@@ -26,6 +26,11 @@ export interface ActivityTask {
   isDone: boolean;
   /** 这一步合并了几次工具调用 */
   count: number;
+  /**
+   * 这个任务下按顺序发生的工具名（用于"点开任务看它到底做了什么"）。
+   * 只留名字，标签在渲染时才换 —— 模型层不关心文案。
+   */
+  steps: string[];
 }
 
 export type ActivityStatus = "ACTIVE" | "COMPLETED";
@@ -122,6 +127,7 @@ export function foldActivity(input: {
     if (last && last.key === family.key) {
       last.count += 1;
       last.subtitle = `${family.title} ×${last.count}`;
+      last.steps.push(step.name);
       continue;
     }
     tasks.push({
@@ -130,6 +136,7 @@ export function foldActivity(input: {
       subtitle: family.title,
       isDone: true,
       count: 1,
+      steps: [step.name],
     });
   }
   // 还在跑：最后一个任务标成未完成（前面的一律算完成）
@@ -195,4 +202,50 @@ export function formatDurationMs(ms: number): string {
   const hours = Math.floor(minutes / 60);
   const restMinutes = minutes % 60;
   return restMinutes ? `${hours} 小时 ${restMinutes} 分` : `${hours} 小时`;
+}
+
+/**
+ * 工具名 → 一步的"动作短语"（点开任务后逐条列的文案）。
+ * 没登记的退回它所属类目的标题 —— 宁可用粗一点的词，也不摆英文工具名。
+ */
+const ACTION_TEXT: Record<string, string> = {
+  search_web: "搜索网页",
+  read_pages: "读网页",
+  browse_web: "打开网页",
+  page_elements: "看页面结构",
+  page_act: "操作页面",
+  look_page: "看页面截图",
+  watch_page: "盯网页变化",
+  search_mail: "翻邮件",
+  read_mail_thread: "读邮件",
+  prepare_email: "写邮件",
+  read_image: "看图",
+  set_plan: "列计划",
+  delegate_task: "派活",
+  create_goal: "定目标",
+  remember_fact: "记一笔",
+  agent_status: "看进展",
+  save_document: "写文件",
+  import_pdf: "导入 PDF",
+  inspect_pdf: "看 PDF 字段",
+  fill_pdf: "填 PDF",
+  save_artifact: "保存产物",
+  finish_task: "收尾",
+  workspace_read_file: "读工作区文件",
+  workspace_write_file: "写工作区文件",
+  workspace_edit_file: "改工作区文件",
+  workspace_list_files: "列工作区文件",
+  git_commit: "提交代码",
+  git_push: "推代码",
+  ask_user: "问你",
+  present_choices: "给你选项",
+  computer_status: "看电脑状态",
+  run_computer_command: "在电脑上跑命令",
+  write_computer_file: "往电脑写文件",
+  read_computer_file: "读电脑文件",
+  list_computer_files: "列电脑文件",
+};
+
+export function toolActionLabel(name: string): string {
+  return ACTION_TEXT[name] ?? familyOf(name, name).title;
 }

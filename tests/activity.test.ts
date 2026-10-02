@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
-import { familyOf, foldActivity, stepsOfCurrentRun } from "../packages/domain/src/activity.ts";
+import {
+  familyOf,
+  foldActivity,
+  stepsOfCurrentRun,
+  toolActionLabel,
+} from "../packages/domain/src/activity.ts";
 
 test("连续的同类步骤合成一个任务（这是与 Muse 对齐的核心规则）", () => {
   const activity = foldActivity({
@@ -137,4 +142,33 @@ test("服务端每个真实工具名都要落到中文类目上（不许把英�
     [],
     `这些工具还没登记中文类目（界面会直接显示英文名）: ${unmapped.join(", ")}`,
   );
+});
+
+test("每个任务要记住自己下面按顺序发生的步骤（点开任务才能看它做了什么）", () => {
+  const activity = foldActivity({
+    steps: [{ name: "search_web" }, { name: "read_pages" }, { name: "read_pages" }, { name: "save_document" }],
+    running: false,
+  });
+  assert.deepEqual(
+    activity.tasks.map((task) => task.steps),
+    [["search_web", "read_pages", "read_pages"], ["save_document"]],
+  );
+});
+
+test("每个真实工具名都要有中文动作短语（点开任务后逐条列的就是它）", () => {
+  const sources = [
+    "apps/server/src/engine/chat-tools.ts",
+    "apps/server/src/engine/tool-kit.ts",
+    "apps/server/src/computer-tools.ts",
+    "apps/server/src/jev/tools.ts",
+  ];
+  const names = new Set<string>();
+  for (const file of sources) {
+    for (const match of readFileSync(file, "utf8").matchAll(/name: "([a-z][a-z_]*)"/g)) {
+      names.add(match[1] as string);
+    }
+  }
+  assert.ok(names.size >= 15);
+  const bad = [...names].filter((name) => /^[a-z_]+$/.test(toolActionLabel(name)));
+  assert.deepEqual(bad, [], `这些工具的动作短语还是英文: ${bad.join(", ")}`);
 });
