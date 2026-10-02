@@ -45,6 +45,7 @@ import type {
   RunEvent,
   TemporaryCredential,
 } from "../../../packages/domain/src/agent";
+import { activitySummaryLine } from "../../../packages/domain/src/activity";
 import { useAgentWorkspace } from "./agent-workspace";
 import {
   actionKindLabel,
@@ -224,6 +225,12 @@ export function TaskCard({
               <Text numberOfLines={1} style={[s.small, { color: colors.blueDark }]}>
                 {task.lastStep.title}
                 {task.lastStep.detail ? ` · ${task.lastStep.detail}` : ""}
+              </Text>
+            )}
+            {/* 服务端折好的任务流：整条"做过的事" + 用时（与聊天页共用同一个 foldActivity） */}
+            {!!task.activity?.tasks.length && (
+              <Text numberOfLines={2} style={s.small}>
+                {activitySummaryLine(task.activity)}
               </Text>
             )}
           </View>
