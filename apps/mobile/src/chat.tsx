@@ -59,6 +59,7 @@ import { JevInteractionContext, JevToolCard } from "./jev-tool-card";
 import { actionDetail, actionKindLabel, agentActionLabel, proposalStatusLabel } from "./labels";
 import { MailToolCard } from "./mail-tool-card";
 import { type HeroRect, usePressScale, usePulse } from "./motion";
+import { RunActivityCard, stepsOfCurrentRun } from "./activity-card";
 import { RunningTasks } from "./running-tasks";
 import { SearchToolCard } from "./search-tool-card";
 import { useSpeechInput } from "./speech";
@@ -1038,6 +1039,11 @@ export function ChatScreen({
             ))}
           </View>
         )}
+        {/* 本次跑动的任务流（对齐 Muse 的 activity 卡：行是任务，不是工具调用） */}
+        <RunActivityCard
+          steps={stepsOfCurrentRun(messages)}
+          running={busy || agent.isRunning}
+        />
         {/* 并行子任务：Muse 会在聊天里按行列出现在跑的子代理，我们的派活任务也回到这里 */}
         <RunningTasks />
         {(!savedThreads || selection.id === mainId) && <BackgroundUpdates />}
