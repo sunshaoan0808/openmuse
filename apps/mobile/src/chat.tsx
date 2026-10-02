@@ -139,18 +139,16 @@ const noFocusRing =
  */
 function useDetailTool(options: {
   name: string;
-  render: (props: { status?: string }) => ReactNode;
+  render: (props: { args?: any; result?: any; status?: string }) => ReactNode;
 } & Record<string, unknown>) {
   const { name, render, ...rest } = options;
-  useRenderTool({
-    ...rest,
-    name,
-    render: (props: { status?: string }) => (
-      <ToolDetailRow name={name} loading={props.status !== "complete"}>
-        {render(props)}
-      </ToolDetailRow>
-    ),
-  } as Parameters<typeof useRenderTool>[0]);
+  // props 原样透传：这里只加一层"一行 + 展开"的外壳，不改各卡片拿到的东西。
+  const wrapped = (props: { args?: any; result?: any; status?: string }) => (
+    <ToolDetailRow name={name} loading={props.status !== "complete"}>
+      {render(props as { args?: any; result?: any; status?: string })}
+    </ToolDetailRow>
+  );
+  (useRenderTool as unknown as (o: Record<string, unknown>) => void)({ ...rest, name, render: wrapped });
 }
 
 export function WorkspaceTools() {
@@ -917,7 +915,6 @@ export function ChatScreen({
         onMomentumScrollEnd={endUserScroll}
         onTouchStart={beginUserScroll}
         onTouchEnd={endUserScroll}
-        onTouchStart={markUserScroll}
         onScroll={headerScrollHandler(
           ({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
             // 顶栏随滚动方向收起/展开
