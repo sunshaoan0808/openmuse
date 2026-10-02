@@ -56,6 +56,8 @@ export interface RunEvent {
   kind: "plan" | "step" | "observation" | "approval" | "result" | "error" | "status";
   title: string;
   detail: string;
+  /** 这一步是哪个工具做的（"step" 事件才有）。服务端据此把步骤折成任务流。 */
+  tool?: string;
 }
 export interface Goal {
   id: string;
