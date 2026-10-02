@@ -14,8 +14,8 @@ import {
 test("快速单向滑动：往下翻页收起，往回翻立刻展开", () => {
   resetUserScroll();
   markUserScroll();
-  assert.equal(nextCollapse(300, 24, false), true, "往下翻页要收起");
-  assert.equal(nextCollapse(300, -24, true), false, "往回翻要展开");
+  assert.equal(nextCollapse(300, 24, false, Date.now()), true, "往下翻页要收起");
+  assert.equal(nextCollapse(300, -24, true, Date.now()), false, "往回翻要展开");
 });
 
 test("没拖动过（程序化滚动）永不收起", () => {
@@ -78,5 +78,22 @@ test("换页/程序化滚动的大跳变不改变顶栏状态（也不污染累�
   // 跳变之后，正常的慢速上滑依然能正常收起
   let collapsed = false;
   for (let i = 0; i < COLLAPSE_AT / 2; i += 1) collapsed = nextCollapse(600, 2, collapsed);
+  assert.equal(collapsed, true);
+});
+
+test("非手指造成的滚动（自动跟随/重排）不改变顶栏，也不污染累计", () => {
+  resetUserScroll();
+  markUserScroll();
+  const t0 = Date.now();
+  // 窗口内：正常参与
+  assert.equal(nextCollapse(600, 4, false, t0), false, "还没到阈值");
+  // 窗口外（1.2 秒之后）：一次大位移也不该把它收起 —— 这就是"一直闪"的来源
+  const late = t0 + 5000;
+  assert.equal(nextCollapse(600, 120, false, late), false, "窗口外的位移不算拖动");
+  assert.equal(nextCollapse(600, -120, true, late), true, "窗口外也不该被推着展开");
+  // 重新触摸后恢复正常
+  markUserScroll();
+  let collapsed = false;
+  for (let i = 0; i < COLLAPSE_AT / 2; i += 1) collapsed = nextCollapse(600, 2, collapsed, Date.now());
   assert.equal(collapsed, true);
 });

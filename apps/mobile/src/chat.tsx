@@ -860,6 +860,10 @@ export function ChatScreen({
           flexGrow: 1,
         }}
         onScrollBeginDrag={markUserScroll}
+        // 手指离开后还有一段惯性滑动，这段也算用户滑动（窗口 1.2 秒）；Web 上 RN-Web
+        // 不派发 BeginDrag，所以 touchStart 也要接上，否则 Web 上永远打不开窗口。
+        onScrollEndDrag={markUserScroll}
+        onTouchStart={markUserScroll}
         onTouchStart={markUserScroll}
         onScroll={headerScrollHandler(
           ({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
