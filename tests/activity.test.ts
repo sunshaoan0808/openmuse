@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import {
+  activitySummaryLine,
   familyOf,
   foldActivity,
   stepsOfCurrentRun,
@@ -187,4 +188,18 @@ test("最后一条用户消息之后没步骤时，退回最近一次真有步�
   );
   // 真的什么都没跑过，仍然是空的
   assert.deepEqual(stepsOfCurrentRun([{ role: "user" }]), []);
+});
+
+test("任务行摘要：重复合成 ×N，末尾跟用时", () => {
+  assert.equal(
+    activitySummaryLine({
+      tasks: [
+        { title: "向你提问", count: 1 },
+        { title: "交付结果", count: 4 },
+      ],
+      durationMs: 546_000,
+    }),
+    "向你提问 · 交付结果 ×4 · 9 分 6 秒",
+  );
+  assert.equal(activitySummaryLine({ tasks: [{ title: "读工作区", count: 3 }] }), "读工作区 ×3");
 });

@@ -23,6 +23,8 @@ export interface TaskStep {
   status: "pending" | "running" | "succeeded" | "failed" | "waiting";
   detail?: string;
 }
+import type { RunActivity } from "./activity.ts";
+
 export interface AgentTask {
   id: string;
   title: string;
@@ -40,6 +42,8 @@ export interface AgentTask {
   nextRunAt?: string;
   leaseId?: string | null;
   leaseUntil?: string | null;
+  /** 服务端折好的任务流（activityForTask）：任务行可以直接显示"做了哪些事、跑了多久" */
+  activity?: RunActivity;
   attempts: number;
   actionId?: string | null;
   result?: string;

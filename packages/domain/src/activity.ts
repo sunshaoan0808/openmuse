@@ -267,3 +267,16 @@ const ACTION_TEXT: Record<string, string> = {
 export function toolActionLabel(name: string): string {
   return ACTION_TEXT[name] ?? familyOf(name, name).title;
 }
+
+/**
+ * 任务流的一行摘要，例如 "向你提问 · 交付结果 ×4 · 智能体更新 · 9 分 6 秒"。
+ * 任务行位置窄，所以用 ` · ` 拼接、重复的合成 ×N，末尾跟用时（没有用时就不跟）。
+ */
+export function activitySummaryLine(activity: {
+  tasks: readonly { title: string; count: number }[];
+  durationMs?: number;
+}): string {
+  const parts = activity.tasks.map((task) => (task.count > 1 ? `${task.title} ×${task.count}` : task.title));
+  if (activity.durationMs !== undefined) parts.push(formatDurationMs(activity.durationMs));
+  return parts.join(" · ");
+}

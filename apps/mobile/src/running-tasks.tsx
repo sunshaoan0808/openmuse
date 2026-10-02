@@ -1,6 +1,7 @@
 import { ListChecks } from "lucide-react-native";
 import { useEffect, useRef } from "react";
 import { Animated, Pressable, Text, View } from "react-native";
+import { activitySummaryLine } from "../../../packages/domain/src/activity";
 import { useAgentWorkspace } from "./agent-workspace";
 import { statusLabel } from "./labels";
 import { taskProgress, taskSummary, visibleTasks } from "./thread-tasks";
@@ -74,9 +75,17 @@ export function RunningTasks() {
             })}
           >
             {running ? <LiveDot /> : <View style={{ width: 7 }} />}
-            <Text numberOfLines={1} style={[s.text, { flex: 1, fontSize: 14 }]}>
-              {task.title}
-            </Text>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text numberOfLines={1} style={[s.text, { fontSize: 14 }]}>
+                {task.title}
+              </Text>
+              {/* 服务端折好的任务流：这一行就是它做过的事（重复的合成 ×N），末尾跟用时 */}
+              {task.activity && task.activity.tasks.length > 0 && (
+                <Text numberOfLines={1} style={s.small}>
+                  {activitySummaryLine(task.activity)}
+                </Text>
+              )}
+            </View>
             <Text style={s.small}>
               {statusLabel(task.status)}
               {progress.total ? ` · ${progress.done}/${progress.total} 步` : ""}
