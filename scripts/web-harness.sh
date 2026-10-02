@@ -38,6 +38,13 @@ bundle_url() {
   echo "http://localhost:${WEB_PORT}/apps/mobile/index.bundle?platform=web&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.routerRoot=app&unstable_transformProfile=hermes-stable"
 }
 
+bundle_api_base() {
+  curl -s "$(bundle_url)" 2>/dev/null | python3 -c '
+import re, sys
+m = re.search(r"EXPO_PUBLIC_API_URL\"?:\s*\{[^}]*value:\s*\"([^\"]+)\"", sys.stdin.read())
+print(m.group(1) if m else "")'
+}
+
 bundle_token_tail() {
   # 注意用 python 提取：bundle 里这个对象属性之间还有逗号，shell 的正则很容易被截断
   curl -s "$(bundle_url)" 2>/dev/null | python3 -c '
@@ -66,6 +73,10 @@ check_env() {
   in_bundle="$(bundle_token_tail || true)"
   echo "bundle 内联令牌后 6 位  : ...${in_bundle:-（取不到）}"
   [ "$in_bundle" = "$want_have" ] || { echo "✗ bundle 里的令牌与本地不一致 —— 服务跑的是旧代码/旧环境"; ok=0; }
+  local api_in_bundle
+  api_in_bundle="$(bundle_api_base || true)"
+  echo "bundle 内联 API 地址     : ${api_in_bundle:-（取不到）}（应为 ${API_BASE}）"
+  [ "$api_in_bundle" = "$API_BASE" ] || { echo "✗ 打包时没带上 API 地址 —— app 会去 localhost:8787 然后连接被拒"; ok=0; }
   local code
   code="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat "$TOKEN_FILE" 2>/dev/null)" "${API_BASE:-http://10.7.0.6:8787}/api/agent" || true)"
   echo "本地令牌对 API 的响应   : ${code}"
@@ -91,6 +102,11 @@ fi
 [ -z "$(owner_pid || true)" ] || { echo "✗ 端口 ${WEB_PORT} 仍被占用，放弃" >&2; exit 1; }
 echo "✓ 端口 ${WEB_PORT} 空闲"
 
+# 1b) 清 Metro 的 transform 缓存：`--clear` **不会**清 /tmp/metro-cache，
+#     而它就是"改了源码却还在跑几小时前的 transform"的来源（真事：查了两轮）。
+rm -rf /tmp/metro-cache /tmp/metro-file-map-* "$MOBILE/.expo" "$HOME/.expo" 2>/dev/null || true
+echo "✓ Metro 缓存已清（/tmp/metro-cache 等）"
+
 # 2) 铸一枚**新的**令牌（旧令牌会过期，这正是环境悄悄坏掉的原因之一）
 tok="$(mint_token)"
 [ -n "$tok" ] || { echo "✗ 铸造令牌失败" >&2; exit 1; }
@@ -103,6 +119,7 @@ echo "✓ 新令牌已写入 $TOKEN_FILE（后 6 位 ...${tok: -6}）"
 rm -f "$LOG"
 cd "$MOBILE"
 EXPO_PUBLIC_FAKE_INSET_TOP=44 EXPO_PUBLIC_FAKE_TOKEN="$tok" \
+  EXPO_PUBLIC_API_URL="$API_BASE" \
   nohup npx expo start --web --port "$WEB_PORT" --clear >"$LOG" 2>&1 &
 started=$!
 echo "→ expo 已启动（pid $started），日志 $LOG"
@@ -127,3 +144,23 @@ for _ in $(seq 1 20); do
 done
 echo
 check_env
+
+# 6) 新鲜度：用**服务器返回的 Last-Modified** 和最新源码比 —— 不能比较本地 curl 出来的文件
+#    （curl 每次都会覆盖它，时间永远是"现在"，那种检查是假的，我写过一版假的）。
+newest_source_epoch() {
+  find "$MOBILE/src" "$MOBILE/App.tsx" "$ROOT/packages" -type f \
+    \( -name '*.ts' -o -name '*.tsx' \) -printf '%T@\n' 2>/dev/null | sort -rn | head -1 | cut -d. -f1
+}
+for _ in $(seq 1 40); do
+  lm="$(curl -sI "$(bundle_url)" | tr -d '\r' | awk -F': ' 'tolower($1)=="last-modified"{print $2}')"
+  if [ -n "$lm" ]; then
+    lm_epoch="$(date -d "$lm" +%s 2>/dev/null || echo 0)"
+    src_epoch="$(newest_source_epoch || echo 0)"
+    if [ "$lm_epoch" -ge "$src_epoch" ] 2>/dev/null; then
+      echo "✓ bundle 比最新源码新（Last-Modified $lm）"
+      break
+    fi
+  fi
+  curl -s -o /dev/null "$(bundle_url)" || true
+  sleep 2
+done

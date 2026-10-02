@@ -57,3 +57,28 @@ bash scripts/web-harness.sh check    # 只检查当前环境是不是"当前代�
 1. `bash scripts/web-harness.sh check` 通过
 2. 用 patchright 打页面时，`page.on("request")` 抓到的 `Authorization` 后 6 位 == `/tmp/om-token` 的后 6 位
 3. 长时间没用环境后（令牌 24 小时过期、或 API 重启过），重新 `bash scripts/web-harness.sh`
+
+## 已知未解：页面执行的可能不是这台 server 的 bundle（务必当心）
+
+在修完上面四个坑之后，仍然出现如下现象（2026-10-02 记录）：
+
+- `curl` 拿到的 bundle：14,347,412 字节，含我最新写的模块级代码
+- **浏览器页面**加载的同一个 URL：**14,040,505 字节**，且我最新写的
+  模块级标记（在 `App.tsx` 里无条件赋值给 `globalThis` 的）在页面里**读不到**
+- 已排除：Metro transform 缓存（`/tmp/metro-cache` 已清）、`--clear`、服务进程新旧
+  （按 pid 核过、只有一个监听、三种 host 形式拿到的大小一致）、浏览器 HTTP 缓存
+  （CDP `Network.setCacheDisabled` + 清缓存）、页面在不在聊天页（有输入框）
+- 结论：**这一层尚未查清**，所以本文件的 `check` 通过**不等于**页面跑的一定是当前代码
+
+### 下次接着查的方向（按可能性排序）
+1. 比较"页面实际执行的那份 bundle 的字节数"与"curl 到的字节数"——**两者不一致就是铁证**
+   （用 `performance.getEntriesByType('resource')` 里的 URL 在页面内 `fetch` 后取 `length`）
+2. 页面 HTML 里 `<script>` 的 src 是不是绝对地址、指向了别的 host/port（`::1` vs `127.0.0.1`、
+   或 8080/8082 之类），用 `document.querySelectorAll('script')` 全部打出来
+3. patchright 的持久化配置目录里是否残留了旧 profile 的 Service Worker / Cache Storage
+   （`navigator.serviceWorker.getRegistrations()`、`caches.keys()`）
+4. `Network.responseReceived` 事件里看 `fromDiskCache` / `fromServiceWorker` 标记
+
+### 因此的纪律
+- 任何"Web 实测"结论，先做**页面内自证**：在页面里读到当前代码才写下的标记，否则结论作废。
+- 这轮我就是因为跳过这一步，先得出了错误结论。
