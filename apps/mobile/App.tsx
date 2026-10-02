@@ -50,8 +50,15 @@ import { CrashNotice } from "./src/crash-notice";
 import { Details } from "./src/details";
 import { ErrorBoundary } from "./src/error-boundary";
 import { hapticTap } from "./src/haptics";
-import { chromeHeight, headerMarginTop, headerScrollHandler, markUserScroll, trackHeaderCollapse } from "./src/header-scrim";
-import { beginUserScroll, endUserScroll, nextCollapse } from "./src/header-collapse";
+import {
+  chromeHeight,
+  headerMarginTop,
+  headerScrollHandler,
+  markUserScroll,
+  setChromeHeight,
+  trackHeaderCollapse,
+} from "./src/header-scrim";
+import { beginUserScroll, endUserScroll } from "./src/header-collapse";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
 import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from "./src/ui";
@@ -418,6 +425,8 @@ function WorkspaceShell({
   // 顶栏高度：内容按它留内边距（照 Muse 的 HatchForegroundHeaderState.contentInsetPx），
   // 顶栏收起时也按它整体上移。两处共用一个值，免得各改各的。
   const chromeTop = chromeHeight(desktop, insets.top);
+  // 位移映射的尺度：设置一次，对话页复用（两边必须一致）
+  useEffect(() => setChromeHeight(chromeTop), [chromeTop]);
   const utility = ["mail", "calendar", "browser", "files"].includes(section);
   return (
     <>
