@@ -207,3 +207,4 @@ export interface ExecutionBackend {
 }
 
 export type { ComputerCommand, ComputerDirectory, ComputerSnapshot } from "./computer.ts";
+export * from "./activity.ts";
