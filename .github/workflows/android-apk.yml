@@ -58,6 +58,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # 打包之前先类型检查：Metro 不做类型检查，所以"能打出包"完全不代表能跑起来。
+      # 真人真事：漏了一个 import（使用了一个不存在的导出）照样打包成功，用户装上启动即崩。
+      # 根 tsconfig 不包含 apps/mobile，所以两端都要跑。
+      - name: Typecheck (root + mobile)
+        run: |
+          pnpm exec tsc -p tsconfig.json --noEmit
+          pnpm exec tsc -p apps/mobile/tsconfig.json --noEmit
+
       - name: Expo prebuild (android)
         working-directory: apps/mobile
         run: pnpm exec expo prebuild --platform android --clean --no-install
