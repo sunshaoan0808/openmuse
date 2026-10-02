@@ -1,99 +1,64 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  COLLAPSE_AT,
-  JUMP_PX,
-  EXPAND_AT,
-  HEAD_TOP,
+  beginUserScroll,
+  collapseProgress,
+  endUserScroll,
   hasUserScrolled,
-  markUserScroll,
-  nextCollapse,
+  HEAD_TOP,
   resetUserScroll,
+  userScrollActive,
 } from "../src/header-collapse";
 
-test("快速单向滑动：往下翻页收起，往回翻立刻展开", () => {
-  resetUserScroll();
-  markUserScroll();
-  assert.equal(nextCollapse(300, 24, false, Date.now()), true, "往下翻页要收起");
-  assert.equal(nextCollapse(300, -24, true, Date.now()), false, "往回翻要展开");
+const H = 104; // 顶栏高度（手机竖屏，不含状态栏）
+
+test("位移映射：滚多少移多少，按比例", () => {
+  assert.equal(collapseProgress(0, H), 0, "在顶部完全展开");
+  assert.equal(collapseProgress(HEAD_TOP, H), 0, "顶部附近仍完全展开");
+  assert.equal(collapseProgress(H / 2, H), 0.5, "滚到一半 → 移出一半");
+  assert.equal(collapseProgress(H, H), 1, "滚满一个顶栏高度 → 完全滑出");
+  assert.equal(collapseProgress(H * 3, H), 1, "再往下滚也封顶在 1");
+  assert.equal(collapseProgress(-50, H), 0, "回弹成负数也当 0");
 });
 
-test("没拖动过（程序化滚动）永不收起", () => {
+test("同一位置永远同一进度（这就是'不闪'的结构性保证）", () => {
+  const samples = [0, 7, 13, 40, 52, 80, 103, 300];
+  for (const y of samples) {
+    const first = collapseProgress(y, H);
+    // 反复求值必须完全一致：没有状态、没有计时窗口、没有累计量
+    for (let i = 0; i < 5; i += 1) assert.equal(collapseProgress(y, H), first);
+  }
+});
+
+test("手指微抖只产生微小位移，不会跳变（真机反馈的闪烁）", () => {
+  let previous = collapseProgress(500, H);
+  let maxJump = 0;
+  // 在 500 附近做 1px 级抖动：进度差应当极小
+  for (const y of [500, 501, 500, 499, 500, 502, 500, 498, 500]) {
+    const now = collapseProgress(y, H);
+    maxJump = Math.max(maxJump, Math.abs(now - previous));
+    previous = now;
+  }
+  assert.ok(maxJump <= 3 / H + 1e-9, `1px 抖动带来的进度跳变应当 ≤ 1/H，实测 ${maxJump}`);
+});
+
+test("单调：滚得越远，顶栏移出得越多", () => {
+  let previous = -1;
+  for (let y = 0; y <= H * 2; y += 8) {
+    const now = collapseProgress(y, H);
+    assert.ok(now >= previous, `y=${y} 时进度不该回退`);
+    previous = now;
+  }
+});
+
+test("触摸信号仍可用（聊天页据此判断要不要停止自动跟随）", () => {
   resetUserScroll();
   assert.equal(hasUserScrolled(), false);
-  assert.equal(nextCollapse(300, 60, false), false);
-});
-
-test("顶部附近一律展开", () => {
-  resetUserScroll();
-  markUserScroll();
-  assert.equal(nextCollapse(HEAD_TOP, 60, false), false, "已经在顶部就展开");
-  assert.equal(nextCollapse(0, 60, true), false);
-});
-
-test("慢速上滑：累计够了就收起（不能永远不隐藏）", () => {
-  resetUserScroll();
-  markUserScroll();
-  let collapsed = false;
-  // 每帧只走 2px 的慢滑，累计 10px 就该收起
-  for (let i = 0; i < COLLAPSE_AT / 2; i += 1) collapsed = nextCollapse(600, 2, collapsed);
-  assert.equal(collapsed, true, "慢速上滑也必须能收起 —— 原来就是这里收不起来");
-});
-
-test("手指微抖不会让顶栏闪烁（真机反馈的那个 bug）", () => {
-  resetUserScroll();
-  markUserScroll();
-  let collapsed = false;
-  let flips = 0;
-  // 慢速上滑 + 每两帧一次 1-2px 的反向抖动：状态最多只该翻转一次
-  for (let i = 0; i < 40; i += 1) {
-    const delta = i % 2 === 0 ? 2 : -1;
-    const next = nextCollapse(700, delta, collapsed);
-    if (next !== collapsed) flips += 1;
-    collapsed = next;
-  }
-  assert.ok(flips <= 1, `抖动过程中状态翻转了 ${flips} 次，会看到闪烁`);
-  assert.equal(collapsed, true, "抖动之后仍然应该收起");
-});
-
-test("收起后往回翻：要累计够 EXPAND_AT 才展开（迟滞）", () => {
-  resetUserScroll();
-  markUserScroll();
-  let collapsed = nextCollapse(800, COLLAPSE_AT, false);
-  assert.equal(collapsed, true);
-  assert.equal(nextCollapse(700, -3, collapsed), true, "往回挪一点点不该立刻展开");
-  let total = 3;
-  while (total < EXPAND_AT) {
-    total += 3;
-    collapsed = nextCollapse(700, -3, collapsed);
-  }
-  assert.equal(collapsed, false, "累计够了才展开");
-});
-
-test("换页/程序化滚动的大跳变不改变顶栏状态（也不污染累计）", () => {
-  resetUserScroll();
-  markUserScroll();
-  assert.equal(nextCollapse(5000, JUMP_PX + 1, false), false, "跳变不该让它收起");
-  assert.equal(nextCollapse(800, -(JUMP_PX + 1), true), true, "跳变也不该让它展开");
-  // 跳变之后，正常的慢速上滑依然能正常收起
-  let collapsed = false;
-  for (let i = 0; i < COLLAPSE_AT / 2; i += 1) collapsed = nextCollapse(600, 2, collapsed);
-  assert.equal(collapsed, true);
-});
-
-test("非手指造成的滚动（自动跟随/重排）不改变顶栏，也不污染累计", () => {
-  resetUserScroll();
-  markUserScroll();
+  assert.equal(userScrollActive(), false, "没碰过就不算用户滑动");
+  beginUserScroll();
+  assert.equal(userScrollActive(), true, "拖拽期间一直有效（不受定时窗口限制）");
   const t0 = Date.now();
-  // 窗口内：正常参与
-  assert.equal(nextCollapse(600, 4, false, t0), false, "还没到阈值");
-  // 窗口外（1.2 秒之后）：一次大位移也不该把它收起 —— 这就是"一直闪"的来源
-  const late = t0 + 5000;
-  assert.equal(nextCollapse(600, 120, false, late), false, "窗口外的位移不算拖动");
-  assert.equal(nextCollapse(600, -120, true, late), true, "窗口外也不该被推着展开");
-  // 重新触摸后恢复正常
-  markUserScroll();
-  let collapsed = false;
-  for (let i = 0; i < COLLAPSE_AT / 2; i += 1) collapsed = nextCollapse(600, 2, collapsed, Date.now());
-  assert.equal(collapsed, true);
+  endUserScroll();
+  assert.equal(userScrollActive(t0 + 1000), true, "抬手后 1.2 秒内给惯性滑动留窗口");
+  assert.equal(userScrollActive(t0 + 60000), false, "更久之后就不算了");
 });
