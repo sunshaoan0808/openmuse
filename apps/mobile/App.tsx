@@ -586,10 +586,11 @@ function WorkspaceShell({
                 onScroll={headerScrollHandler(trackHeaderCollapse)}
                 // 只有用户真的碰过才让顶栏收起（否则页面打开时的程序化滚动会把顶栏收掉）。
                 // onTouchStart 也接上：原生上比 BeginDrag 更早，Web 上 RN-Web 根本不派发 BeginDrag。
-                onScrollBeginDrag={markUserScroll}
-                onTouchStart={markUserScroll}
+                onScrollBeginDrag={beginUserScroll}
+                onTouchStart={beginUserScroll}
                 // 抬手后的惯性滑动也算用户滑动（触摸窗口 1.2 秒）
-                onScrollEndDrag={markUserScroll}
+                onScrollEndDrag={endUserScroll}
+                onMomentumScrollEnd={endUserScroll}
                 scrollEventThrottle={16}
                 contentContainerStyle={{
                   paddingHorizontal: desktop ? 42 : 22,

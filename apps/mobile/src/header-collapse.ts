@@ -24,6 +24,7 @@ export const JUMP_PX = 200;
  * 原因：进对话页会自动滚到最新消息，那是一次程序化滚动 —— 不设这道闸，页面一打开顶栏就是收起的。
  */
 let userScrolled = false;
+let dragActive = false;
 let touchUntil = 0;
 let pullUp = 0;
 let pullDown = 0;
@@ -42,14 +43,30 @@ export function markUserScroll() {
   userScrolled = true;
   touchUntil = Date.now() + 1200;
 }
+/** 手指按下/开始拖动：拖拽期间**一直**有效（慢速长拖可以超过 1 秒，不能靠过期时间）。 */
+export function beginUserScroll() {
+  userScrolled = true;
+  dragActive = true;
+  touchUntil = Date.now() + 1200;
+}
+/** 手指抬起：留给惯性滑动一段窗口 */
+export function endUserScroll() {
+  dragActive = false;
+  touchUntil = Date.now() + 1200;
+}
 export function resetUserScroll() {
   userScrolled = false;
+  dragActive = false;
   touchUntil = 0;
   pullUp = 0;
   pullDown = 0;
 }
 export function hasUserScrolled() {
   return userScrolled;
+}
+/** 此刻是否处于"用户手指造成的滚动"窗口内（聊天页用它判断该不该继续自动跟随） */
+export function userScrollActive(now: number = Date.now()) {
+  return userScrolled && (dragActive || now <= touchUntil);
 }
 
 export function nextCollapse(
