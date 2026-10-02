@@ -14,7 +14,7 @@ export interface TaskContext {
   signal: AbortSignal;
   guard(): Promise<void>;
   checkpoint(patch: Partial<AgentTask>): Promise<AgentTask>;
-  event(kind: RunEvent["kind"], title: string, detail?: string): Promise<void>;
+  event(kind: RunEvent["kind"], title: string, detail?: string, tool?: string): Promise<void>;
   /**
    * 这个任务的短时凭据（照 Muse：任务级 + 用完即销毁）。
    * 明文只在这条通道里出现；`redact()` 用来把日志/事件里的明文换成 …后6位。
@@ -157,7 +157,7 @@ export class TaskWorker {
       task = next;
       return next;
     };
-    const event = async (kind: RunEvent["kind"], title: string, detail = "") => {
+    const event = async (kind: RunEvent["kind"], title: string, detail = "", tool?: string) => {
       await guard();
       await this.db.put(owner, "run-events", {
         id: randomUUID(),
@@ -166,6 +166,7 @@ export class TaskWorker {
         kind,
         title,
         detail,
+        ...(tool ? { tool } : {}),
       });
     };
     const startedAt = new Date(this.now()).toISOString();

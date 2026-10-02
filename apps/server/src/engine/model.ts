@@ -78,7 +78,7 @@ export async function executeModelTask(
           await ctx.guard();
           // 时间线里的一步：中文动作名 + 参数摘要（原来是工具的英文长描述，完全不可读）
           const step = stepEventFor(name, args, description);
-          await ctx.event("step", step.title, step.detail);
+          await ctx.event("step", step.title, step.detail, name);
           // 任务也上报实时活动：App 的动态页在任务跑的时候同样能显示"正在读网页"这类状态
           void recordActivity(service.db, owner, activityFor(name, args, { threadId: task.id }));
           try {

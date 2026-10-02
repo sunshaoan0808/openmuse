@@ -45,6 +45,7 @@ import type { WorkspaceService } from "../workspace.ts";
 import { analyzeSpending } from "./finance.ts";
 import { executeModelTask } from "./model.ts";
 import { LostLeaseError, type TaskContext, TaskWorker } from "./worker.ts";
+import { activityForTask } from "./activity-fold.ts";
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const date = () => new Date().toISOString();
@@ -156,9 +157,12 @@ export class AgentService {
     }
     const tasksWithSteps = tasks.map((task) => {
       const step = latestStep.get(task.id);
+      // 任务流：直接由这个任务的 step 事件折出来（客户端不用再各写一份）
+      const activity = activityForTask(task, runEvents);
       return step
         ? {
             ...task,
+            activity,
             lastStep: {
               kind: step.kind,
               title: step.title,
@@ -166,7 +170,7 @@ export class AgentService {
               date: step.date,
             },
           }
-        : task;
+        : { ...task, activity };
     });
     return {
       tasks: tasksWithSteps,
