@@ -259,7 +259,17 @@ export function createMastraChatAgent(
               } as BaseEvent);
               subscriber.complete();
             },
-            complete: () => subscriber.complete(),
+            complete: () => {
+              // 收流前必须发终止事件。客户端和 CPK 运行时都靠 RUN_FINISHED 认定"这次 run 结束"：
+              // 少了它，服务端 turn 早已 succeeded，SSE 却不会收，App 就一直停在"正在干活"
+              // （实测：库里 115 秒 succeeded 的同一轮，客户端 24 秒后仍显示正在干活）。
+              subscriber.next({
+                type: EventType.RUN_FINISHED,
+                threadId: input.threadId,
+                runId: input.runId,
+              } as BaseEvent);
+              subscriber.complete();
+            },
           });
           return () => sub.unsubscribe();
         });
