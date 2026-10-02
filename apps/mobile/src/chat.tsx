@@ -48,6 +48,7 @@ import { loadCursor, outboxStorage, saveCursor } from "./conversation-store";
 import { guard } from "./crash-log";
 import { hapticPress, hapticSuccess, hapticTap, hapticWarn } from "./haptics";
 import { headerScrollHandler, markUserScroll, trackHeaderCollapse } from "./header-scrim";
+import { beginUserScroll, endUserScroll, userScrollActive } from "./header-collapse";
 import {
   captureImage,
   type ImageSource,
@@ -467,6 +468,10 @@ export function ChatScreen({
   const [imageBusy, setImageBusy] = useState<ImageSource | "">("");
   const [attachError, setAttachError] = useState("");
   const list = useRef<ScrollView>(null);
+  // 用户不在底部时，用来把视口钉回原处（见 onContentSizeChange）
+  const lastOffset = useRef(0);
+  const lastContentHeight = useRef<number | null>(null);
+  const lastViewportHeight = useRef<number | null>(null);
   // 待发消息落本地：杀掉 App 也不丢（收到服务端确认才清）
   const [queue] = useState(() => new ConversationQueue(outboxStorage));
   const choiceCompletions = useRef(
@@ -848,6 +853,9 @@ export function ChatScreen({
   // 所以这里不再需要 -insets.top 抵消，那样反而会把内容推到屏幕外。
   return (
     <View style={{ flex: 1 }}>
+      {/* 外面这层只负责接触摸：RN-Web 的 ScrollView 不派发 onTouchStart/onScrollBeginDrag，
+          只把信号挂在它身上会导致"用户滑动"窗口在 Web 上永远打不开（顶栏也就永远不收起）。 */}
+      <View style={{ flex: 1, minHeight: 0 }} onTouchStart={beginUserScroll} onTouchEnd={endUserScroll}>
       <ScrollView
         ref={list}
         showsVerticalScrollIndicator={false}
@@ -859,25 +867,53 @@ export function ChatScreen({
           paddingBottom: 20,
           flexGrow: 1,
         }}
-        onScrollBeginDrag={markUserScroll}
+        onScrollBeginDrag={beginUserScroll}
         // 手指离开后还有一段惯性滑动，这段也算用户滑动（窗口 1.2 秒）；Web 上 RN-Web
         // 不派发 BeginDrag，所以 touchStart 也要接上，否则 Web 上永远打不开窗口。
-        onScrollEndDrag={markUserScroll}
-        onTouchStart={markUserScroll}
+        onScrollEndDrag={endUserScroll}
+        onMomentumScrollEnd={endUserScroll}
+        onTouchStart={beginUserScroll}
+        onTouchEnd={endUserScroll}
         onTouchStart={markUserScroll}
         onScroll={headerScrollHandler(
           ({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) => {
             // 顶栏随滚动方向收起/展开
             trackHeaderCollapse({ nativeEvent: { contentOffset } });
-            const nearEnd = contentSize.height - contentOffset.y - layoutMeasurement.height < 100;
-            followLatest.current = nearEnd;
-            setAwayFromLatest(visible.length > 0 && !nearEnd);
+            const gap = contentSize.height - contentOffset.y - layoutMeasurement.height;
+            const nearEnd = gap < 100;
+            lastOffset.current = contentOffset.y;
+            // 慢速往上翻时，人还停在距底 100px 的带子里，而流式回复每来一个分片就会
+            // scrollToEnd 把人拽回底部 —— 于是「你往上推、它往下拉」来回打，看起来就是界面在闪。
+            // 所以只要检测到**手指自己**在往上滑，就立刻停止跟随，直到重新回到底部才恢复。
+            if (gap > 4 && userScrollActive()) followLatest.current = false;
+            else followLatest.current = nearEnd;
+            setAwayFromLatest(visible.length > 0 && !followLatest.current);
           },
         )}
         scrollEventThrottle={16}
-        onContentSizeChange={() => {
-          if (active && visible.length > 0 && followLatest.current)
+        // 顶栏收起会让这个滚动视口**变高**（104px，而且动画期间一直在变），浏览器为保持
+        // "贴底"会把内容往下甩 —— 用户慢速往上翻时就成了"你往上推、它往下拉"，看起来是闪；
+        // 顶栏彻底隐藏后高度不再变，所以就"正常"了。视口一变就把位置钉回用户所在处。
+        onLayout={(event) => {
+          if (followLatest.current) return;
+          const height = event.nativeEvent.layout.height;
+          if (lastViewportHeight.current === null || height === lastViewportHeight.current) {
+            lastViewportHeight.current = height;
+            return;
+          }
+          lastViewportHeight.current = height;
+          list.current?.scrollTo({ y: lastOffset.current, animated: false });
+        }}
+        onContentSizeChange={(_w, height) => {
+          if (active && visible.length > 0 && followLatest.current) {
             list.current?.scrollToEnd({ animated: false });
+          } else if (lastContentHeight.current !== null && height > lastContentHeight.current) {
+            // 用户正在往回看，而流式回复让内容在下方变长 —— 浏览器/RN-Web 会把视口甩到底部，
+            // 于是"你往上推、它往下拉"，慢速滑动时看起来就是界面在闪（快滑能一下逃出去）。
+            // 这里把视口钉回用户原来的位置（相当于手动实现 maintainVisibleContentPosition）。
+            list.current?.scrollTo({ y: lastOffset.current, animated: false });
+          }
+          lastContentHeight.current = height;
         }}
         keyboardShouldPersistTaps="handled"
       >
@@ -1151,6 +1187,7 @@ export function ChatScreen({
           </Button>
         )}
       </ScrollView>
+      </View>
       {awayFromLatest && (
         <Button
           small
