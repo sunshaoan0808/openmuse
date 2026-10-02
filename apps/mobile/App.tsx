@@ -50,13 +50,8 @@ import { CrashNotice } from "./src/crash-notice";
 import { Details } from "./src/details";
 import { ErrorBoundary } from "./src/error-boundary";
 import { hapticTap } from "./src/haptics";
-import {
-  chromeHeight,
-  headerMarginTop,
-  headerScrollHandler,
-  markUserScroll,
-  trackHeaderCollapse,
-} from "./src/header-scrim";
+import { chromeHeight, headerMarginTop, headerScrollHandler, markUserScroll, trackHeaderCollapse } from "./src/header-scrim";
+import { beginUserScroll, endUserScroll, nextCollapse } from "./src/header-collapse";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
 import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from "./src/ui";
