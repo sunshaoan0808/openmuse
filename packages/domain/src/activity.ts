@@ -157,8 +157,12 @@ export function foldActivity(input: {
 }
 
 /**
- * 从一次对话的步骤里取"当前这一段跑动"：最后一条用户消息之后的所有步骤。
- * 一次用户提问 = 一次跑动，这和 Muse 的 activity 边界一致（也是人理解的边界）。
+ * 从一次对话的步骤里取"当前这一段跑动"。
+ *
+ * 规则：最后一条用户消息之后的所有步骤（一次提问 = 一次跑动，和人的理解一致）。
+ * 但**如果最后那条用户消息之后没有任何步骤**，就往前退到最近一次真有步骤的跑动 ——
+ * 否则会出现这种尴尬：消息发出去了还没跑起来（或那轮被中断了，本地留着一条没被服务端
+ * 确认的用户消息），卡片会凭空消失，而工具行还在（刷新后的真实现象）。
  */
 export function stepsOfCurrentRun(
   messages: readonly { role: string; toolCalls?: readonly unknown[] }[],
@@ -170,6 +174,20 @@ export function stepsOfCurrentRun(
       break;
     }
   }
+  const steps = stepsBetween(messages, start);
+  if (steps.length) return steps;
+  // 最后一条用户消息之后什么都没跑：退到最近一次真有步骤的跑动
+  for (let i = start - 1; i >= 0; i -= 1) {
+    const found = stepsBetween(messages, i);
+    if (found.length) return found;
+  }
+  return [];
+}
+
+function stepsBetween(
+  messages: readonly { role: string; toolCalls?: readonly unknown[] }[],
+  start: number,
+): ActivityStep[] {
   const steps: ActivityStep[] = [];
   for (const message of messages.slice(start)) {
     for (const call of message.toolCalls ?? []) {

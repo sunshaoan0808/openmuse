@@ -172,3 +172,19 @@ test("每个真实工具名都要有中文动作短语（点开任务后逐条�
   const bad = [...names].filter((name) => /^[a-z_]+$/.test(toolActionLabel(name)));
   assert.deepEqual(bad, [], `这些工具的动作短语还是英文: ${bad.join(", ")}`);
 });
+
+test("最后一条用户消息之后没步骤时，退回最近一次真有步骤的跑动（否则刷新后卡片会莫名消失）", () => {
+  const steps = stepsOfCurrentRun([
+    { role: "user" },
+    { role: "assistant", toolCalls: [{ function: { name: "search_web" } }] },
+    { role: "assistant", toolCalls: [{ function: { name: "read_pages" } }] },
+    { role: "user" }, // 发出去了但这一轮被中断，后面什么都没有
+  ]);
+  assert.deepEqual(
+    steps.map((step) => step.name),
+    ["read_pages"],
+    "退回的是最近一次真有步骤的那段（不是整条历史拼起来）",
+  );
+  // 真的什么都没跑过，仍然是空的
+  assert.deepEqual(stepsOfCurrentRun([{ role: "user" }]), []);
+});
