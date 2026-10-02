@@ -476,7 +476,9 @@ export function ChatScreen({
   // Web 专用：RN-Web 的 ScrollView（以及被它包住的 View）不会把触摸事件交给 React 属性，
   // 直接在 DOM 节点上挂监听才能拿到"手指正在拖"。原生端走 onScrollBeginDrag，不需要这段。
   useEffect(() => {
-    if (Platform.OS !== "web") return;
+    // 不要用 Platform.OS 判断：实测在 Web 上它并没有成立（于是监听和埋点一起被跳过，
+    // 而表现就是"慢速拖动永远打不开判定窗口、顶栏不收"）。改用"有没有 document"来判断。
+    if (typeof document === "undefined") return;
     // 挂在 document 上：ScrollView 内部的节点未必收得到（RN-Web 会拦掉一部分事件），
     // 但触摸事件一定会冒泡到 document。touchmove 也接上，保证"手指一直按着"期间窗口持续有效。
     // 验收埋点：Web 上把触摸信号计数挂到全局，patchright 可以直接读，

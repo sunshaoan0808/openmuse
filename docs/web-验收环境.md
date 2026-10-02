@@ -58,13 +58,27 @@ bash scripts/web-harness.sh check    # 只检查当前环境是不是"当前代�
 2. 用 patchright 打页面时，`page.on("request")` 抓到的 `Authorization` 后 6 位 == `/tmp/om-token` 的后 6 位
 3. 长时间没用环境后（令牌 24 小时过期、或 API 重启过），重新 `bash scripts/web-harness.sh`
 
-## 已知未解：页面执行的可能不是这台 server 的 bundle（务必当心）
+## 排查心得：哪些"证据"是假的（血泪）
+
+1. **页面内 `fetch(bundleUrl).text()` 的长度不可信** —— app 自己会打补丁接管 fetch/XHR
+   （CPK 的 installStreamingFetch），量出来的不是真网络响应。
+2. **`grep` 打包产物找字符串也不可靠** —— dev bundle 内联 sourcemap，源码文本也在里面。
+   要判断"跑的是不是当前代码"，用 **CDP `Network.getResponseBody`** 直读页面那份响应体，
+   再找只有当前源码才有的标记（这是这轮唯一可信的方法，也正是它证明了代码确实在包里）。
+3. **比较字节数也要同口径**：响应头有 `Vary: Accept-Encoding`，浏览器要 br/zstd、curl 不带，
+   拿两边的大小直接比会得出错误结论。
+4. **判断"是否在聊天页"看输入框**，不能看顶栏（顶栏每个页面都有）。
+5. **运行时埋点会被条件挡住**：`Platform.OS !== "web"` 这类判断在 Web 上实测没成立，
+   埋点和监听会一起被静默跳过 —— 于是"读不到标记"被误读成"代码是旧的"。
+
+## 仍然要说清的一点
 
 在修完上面四个坑之后，仍然出现如下现象（2026-10-02 记录）：
 
-- `curl` 拿到的 bundle：14,347,412 字节，含我最新写的模块级代码
-- **浏览器页面**加载的同一个 URL：**14,040,505 字节**，且我最新写的
-  模块级标记（在 `App.tsx` 里无条件赋值给 `globalThis` 的）在页面里**读不到**
+- ~~curl 与页面拿到的 bundle 不同~~ → **已澄清为假象**：用 CDP 直读页面那份响应体，
+  里面**确实有**我最新写的代码（`__omTouch` / `__omCollapse`），字节数差异来自编码口径。
+- 真正的现象是：**代码在包里，但运行时没执行**（`Platform.OS !== "web"` 挡住了那段 effect），
+  已在 chat.tsx 里改为按 `typeof document` 判断。
 - 已排除：Metro transform 缓存（`/tmp/metro-cache` 已清）、`--clear`、服务进程新旧
   （按 pid 核过、只有一个监听、三种 host 形式拿到的大小一致）、浏览器 HTTP 缓存
   （CDP `Network.setCacheDisabled` + 清缓存）、页面在不在聊天页（有输入框）
