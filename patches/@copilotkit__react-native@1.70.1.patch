@@ -1,3 +1,59 @@
+diff --git a/dist/streaming-fetch-BTESzLKX.cjs b/dist/streaming-fetch-BTESzLKX.cjs
+index 71a58ca403e3cbda813eb6e242e8e5c0b73cc021..44f44479a1aff0a50c05b4dbbbdacc0394e1412a 100644
+--- a/dist/streaming-fetch-BTESzLKX.cjs
++++ b/dist/streaming-fetch-BTESzLKX.cjs
+@@ -135,10 +135,7 @@ function installStreamingFetch() {
+ 				const xhrStatusText = xhr.statusText;
+ 				const rawHeaders = xhr.getAllResponseHeaders() || "";
+ 				setTimeout(() => {
+-					if (readyState === 4 && !settled && !resp) {
+-						fail(/* @__PURE__ */ new TypeError(`Network request to ${url} completed with status ${xhrStatus} but no response was produced. This may indicate a CORS failure, DNS error, or React Native networking issue.`));
+-						return;
+-					}
++										// 先判这条：readyState >= 2 且有状态码，就能组装响应并 resolve
+ 					if (readyState >= 2 && !resp && xhrStatus !== 0) {
+ 						const respHeaders = {};
+ 						for (const line of rawHeaders.trim().split("\r\n")) {
+@@ -192,6 +189,11 @@ function installStreamingFetch() {
+ 						settled = true;
+ 						resolve(resp);
+ 					}
++					if (readyState === 4 && !settled && !resp) {
++						fail(/* @__PURE__ */ new TypeError(`Network request to ${url} completed with status ${xhrStatus} but no response was produced. This may indicate a CORS failure, DNS error, or React Native networking issue.`));
++						return;
++					}
++					// 先判这条之前：能把服务端响应先组装起来，安全网只兜真正没响应的情况
+ 				}, 0);
+ 			};
+ 			xhr.send(body ?? null);
+diff --git a/dist/streaming-fetch-BnQh3vBz.mjs b/dist/streaming-fetch-BnQh3vBz.mjs
+index 51f19f91a590854b00b785cfbbc322ecf66cc18c..1b5713cf00a6beee6b2824095d01f3d7a9de2e19 100644
+--- a/dist/streaming-fetch-BnQh3vBz.mjs
++++ b/dist/streaming-fetch-BnQh3vBz.mjs
+@@ -134,10 +134,7 @@ function installStreamingFetch() {
+ 				const xhrStatusText = xhr.statusText;
+ 				const rawHeaders = xhr.getAllResponseHeaders() || "";
+ 				setTimeout(() => {
+-					if (readyState === 4 && !settled && !resp) {
+-						fail(/* @__PURE__ */ new TypeError(`Network request to ${url} completed with status ${xhrStatus} but no response was produced. This may indicate a CORS failure, DNS error, or React Native networking issue.`));
+-						return;
+-					}
++										// 先判这条：readyState >= 2 且有状态码，就能组装响应并 resolve
+ 					if (readyState >= 2 && !resp && xhrStatus !== 0) {
+ 						const respHeaders = {};
+ 						for (const line of rawHeaders.trim().split("\r\n")) {
+@@ -191,6 +188,11 @@ function installStreamingFetch() {
+ 						settled = true;
+ 						resolve(resp);
+ 					}
++					if (readyState === 4 && !settled && !resp) {
++						fail(/* @__PURE__ */ new TypeError(`Network request to ${url} completed with status ${xhrStatus} but no response was produced. This may indicate a CORS failure, DNS error, or React Native networking issue.`));
++						return;
++					}
++					// 先判这条之前：能把服务端响应先组装起来，安全网只兜真正没响应的情况
+ 				}, 0);
+ 			};
+ 			xhr.send(body ?? null);
 diff --git a/src/streaming-fetch.ts b/src/streaming-fetch.ts
 index df5e0beccc89d14c88a6b4e2bc32abee1332bb51..952a81230549225e593aedaf41b602c05b8795a0 100644
 --- a/src/streaming-fetch.ts
