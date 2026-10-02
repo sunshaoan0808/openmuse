@@ -63,6 +63,7 @@ import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from 
 import { useAndroidKeyboardInset } from "./src/use-android-keyboard-inset";
 import { type Detail, useWorkspace, WorkspaceContext } from "./src/workspace";
 
+
 const nav: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: "chat", label: "聊天", icon: MessageCircle },
   { id: "activity", label: "动态", icon: PanelsTopLeft },

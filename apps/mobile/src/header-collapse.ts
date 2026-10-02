@@ -115,3 +115,18 @@ export function nextCollapse(
   }
   return collapsed;
 }
+
+// 仅 dev 构建：把判定内部状态挂到全局，验收环境（patchright）可以直接读，
+// 免得靠猜哪一项卡住。生产构建里 __DEV__ 为 false，这段会被去掉。
+// 只在 Web（验收环境）注册：APK 里 Platform.OS 是 android/ios，这段不会执行。
+// （最初写的是 __DEV__，但在 Web 上它没成立，钩子被静默跳过，白查了一轮。）
+if (typeof window !== "undefined") {
+  (globalThis as unknown as Record<string, unknown>).__omCollapse = () => ({
+    userScrolled,
+    dragActive,
+    pullUp,
+    pullDown,
+    touchUntil,
+    sinceTouchMs: touchUntil - Date.now(),
+  });
+}

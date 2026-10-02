@@ -470,7 +470,42 @@ export function ChatScreen({
   const list = useRef<ScrollView>(null);
   // 用户不在底部时，用来把视口钉回原处（见 onContentSizeChange）
   const lastOffset = useRef(0);
+  const touchLayer = useRef<View>(null);
   const lastContentHeight = useRef<number | null>(null);
+
+  // Web 专用：RN-Web 的 ScrollView（以及被它包住的 View）不会把触摸事件交给 React 属性，
+  // 直接在 DOM 节点上挂监听才能拿到"手指正在拖"。原生端走 onScrollBeginDrag，不需要这段。
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    // 挂在 document 上：ScrollView 内部的节点未必收得到（RN-Web 会拦掉一部分事件），
+    // 但触摸事件一定会冒泡到 document。touchmove 也接上，保证"手指一直按着"期间窗口持续有效。
+    // 验收埋点：Web 上把触摸信号计数挂到全局，patchright 可以直接读，
+    // 用来判断"到底有没有收到手指事件"，而不是靠猜。（APK 里不执行这段。）
+    const log = { started: 0, moved: 0, ended: 0 };
+    (globalThis as unknown as Record<string, unknown>).__omTouch = log;
+    const start = () => {
+      log.started += 1;
+      beginUserScroll();
+    };
+    const move = () => {
+      log.moved += 1;
+      beginUserScroll();
+    };
+    const end = () => {
+      log.ended += 1;
+      endUserScroll();
+    };
+    document.addEventListener("touchstart", start, { passive: true });
+    document.addEventListener("touchmove", move, { passive: true });
+    document.addEventListener("touchend", end, { passive: true });
+    document.addEventListener("touchcancel", end, { passive: true });
+    return () => {
+      document.removeEventListener("touchstart", start);
+      document.removeEventListener("touchmove", move);
+      document.removeEventListener("touchend", end);
+      document.removeEventListener("touchcancel", end);
+    };
+  }, []);
   const lastViewportHeight = useRef<number | null>(null);
   // 待发消息落本地：杀掉 App 也不丢（收到服务端确认才清）
   const [queue] = useState(() => new ConversationQueue(outboxStorage));
@@ -853,9 +888,15 @@ export function ChatScreen({
   // 所以这里不再需要 -insets.top 抵消，那样反而会把内容推到屏幕外。
   return (
     <View style={{ flex: 1 }}>
-      {/* 外面这层只负责接触摸：RN-Web 的 ScrollView 不派发 onTouchStart/onScrollBeginDrag，
-          只把信号挂在它身上会导致"用户滑动"窗口在 Web 上永远打不开（顶栏也就永远不收起）。 */}
-      <View style={{ flex: 1, minHeight: 0 }} onTouchStart={beginUserScroll} onTouchEnd={endUserScroll}>
+      {/* 外面这层负责接触摸信号。RN-Web 的 ScrollView 会把触摸属性丢掉，所以 Web 上要
+          直接挂 DOM 监听（见下面的 useEffect）—— 否则"用户滑动"窗口永远打不开，
+          表现就是「快速上滑能收起（靠抬手后的惯性事件），慢速上滑从来不收起」。 */}
+      <View
+        style={{ flex: 1, minHeight: 0 }}
+        ref={touchLayer}
+        onTouchStart={beginUserScroll}
+        onTouchEnd={endUserScroll}
+      >
       <ScrollView
         ref={list}
         showsVerticalScrollIndicator={false}
