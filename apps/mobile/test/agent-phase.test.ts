@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import {
-  actionEmoji,
-  agentPhase,
-  agentPhaseLabel,
-} from "../src/labels.ts";
+import { actionEmoji, agentPhase, agentPhaseLabel } from "../src/labels.ts";
 
 test("相位优先级：用工具 > 出字 > 思考 > 后台任务 > 等审批 > 空闲", () => {
   const base = {
@@ -17,7 +13,10 @@ test("相位优先级：用工具 > 出字 > 思考 > 后台任务 > 等审批 >
   assert.equal(agentPhase(base), "IDLE");
   // 逐层点亮
   assert.equal(agentPhase({ ...base, pendingApprovals: true }), "NEEDS_APPROVAL");
-  assert.equal(agentPhase({ ...base, pendingApprovals: true, backgroundTasks: true }), "WAITING_FOR_SUBAGENTS");
+  assert.equal(
+    agentPhase({ ...base, pendingApprovals: true, backgroundTasks: true }),
+    "WAITING_FOR_SUBAGENTS",
+  );
   assert.equal(agentPhase({ ...base, pendingApprovals: true, runActive: true }), "THINKING");
   assert.equal(agentPhase({ ...base, runActive: true, startedTyping: true }), "TYPING");
   assert.equal(

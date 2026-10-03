@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import {
-  type ImageStyle,
   Image,
+  type ImageStyle,
   Linking,
   ScrollView,
   Text,
@@ -17,7 +17,7 @@ import {
   isSafeAssistantUrl,
   tidyAssistantText,
 } from "./assistant-markdown";
-import { codeLanguageOf, highlightCode, type CodeTokenKind } from "./code-highlight";
+import { type CodeTokenKind, codeLanguageOf, highlightCode } from "./code-highlight";
 import { colors, ErrorNotice } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -106,15 +106,21 @@ function CodeBlock({ code, info }: { code: string; info: string }) {
         style={{ flexGrow: 0 }}
       >
         <Text selectable style={{ color: colors.text, fontSize: 13, lineHeight: 20 }}>
-          {tokens.map((token, index) =>
-            token.kind === "plain" ? (
-              token.text
-            ) : (
-              <Text key={index} style={{ color: syntaxColors[token.kind] }}>
-                {token.text}
-              </Text>
-            ),
-          )}
+          {/* key 用字符偏移：静态内容里唯一且稳定，不依赖数组下标 */}
+          {(() => {
+            let offset = 0;
+            return tokens.map((token) => {
+              const key = `${offset}`;
+              offset += token.text.length;
+              return token.kind === "plain" ? (
+                token.text
+              ) : (
+                <Text key={key} style={{ color: syntaxColors[token.kind] }}>
+                  {token.text}
+                </Text>
+              );
+            });
+          })()}
         </Text>
       </ScrollView>
     </View>
