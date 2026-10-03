@@ -27,6 +27,17 @@ export function collapseProgress(y: number, height: number): number {
   return Math.max(0, Math.min(1, y / h));
 }
 
+/**
+ * 顶栏位移（像素，负值向上）：同一 scroll offset **永远**得到同一位移——
+ * 位移映射无状态、无计时窗口、无累计量，"慢滑闪烁"的反馈环在数学上不可能发生。
+ * 生产里的 headerTranslateY（Animated interpolate）与它是同一个映射；这个纯函数版本
+ * 供单测钉死（也供 Web 验收台 scripts/accept-topbar.mjs 的判据 B 对照）。
+ */
+export function headerTranslateFor(y: number, height: number): number {
+  const translate = -collapseProgress(y, height) * Math.max(1, height);
+  return translate === 0 ? 0 : translate; // 归一化 -0：0 像素位移不该有符号
+}
+
 let userScrolled = false;
 let dragActive = false;
 let touchUntil = 0;

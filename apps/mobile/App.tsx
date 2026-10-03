@@ -53,8 +53,8 @@ import { hapticTap } from "./src/haptics";
 import { beginUserScroll, endUserScroll } from "./src/header-collapse";
 import {
   chromeHeight,
-  headerTranslateY,
   headerScrollHandler,
+  headerTranslateY,
   markUserScroll,
   setChromeHeight,
   trackHeaderCollapse,
@@ -471,7 +471,10 @@ function WorkspaceShell({
                 透明只有在顶栏**浮在内容之上**时才需要。 */}
             {/* 半透明（不是不透明）：顶栏现在是覆盖层，正文会从它底下穿过 —— 不透明就等于"白条压正文"。
                 0.72 是为了让穿过来的文字可读但不刺眼；玻璃层另外负责采样内容色。 */}
-            <View pointerEvents="none" style={[FILL, { backgroundColor: "rgba(252,252,252,0.72)" }]} />
+            <View
+              pointerEvents="none"
+              style={[FILL, { backgroundColor: "rgba(252,252,252,0.72)" }]}
+            />
             {/* 下沿一条发丝线：边界清楚，比阴影轻，也不会在内容上投出灰雾 */}
             <View
               pointerEvents="none"
@@ -535,84 +538,6 @@ function WorkspaceShell({
               </Pressable>
             </View>
           </Animated.View>
-          {/* 水豚卡片：**不跟着顶栏滑走**（用户要求"水豚保留"）。
-              它是绝对定位的兄弟层，几何与顶栏一致（同样的 paddingTop），所以位置看起来没变；
-              顶栏那一行滑出去时，它留在原处浮在内容上方（自带玻璃，所以压着文字也看得清）。
-              放在 Animated.View 之后 → 绘制在上面；pointerEvents=box-none → 不挡底下的操作。 */}
-          <View
-            pointerEvents="box-none"
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              top: 0,
-              // 抬到内容与顶栏之上：正文在滚动时会上移，不抬层就会被正文盖住（用户反馈"不是在最前端/滑动会隐藏"）。
-              // Android 上 zIndex 常不生效，必须同时给 elevation。
-              zIndex: 30,
-              elevation: 30,
-              paddingTop: insets.top + (desktop ? 12 : 2),
-              alignItems: "center",
-            }}
-          >
-            <View style={{ alignItems: "center", gap: 1 }}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Open ${agentName} activity and approvals`}
-                onPress={() => setAvatarOpen(true)}
-                style={({ pressed }) => ({
-                  alignItems: "center",
-                  maxWidth: "70%",
-                  opacity: pressed ? 0.65 : 1,
-                })}
-              >
-                <Mascot size={desktop ? 46 : 38} variant={data?.identity.avatar} glass />
-                {/* Muse 实测结构：中间是一张白色圆角卡片（头像叠在上沿），
-                    第二行可变——空闲是入口，干活时是"当前在做什么"。 */}
-                <View
-                  style={{
-                    // 叠得比之前多一点：头像像"坐在卡片上沿"，而不是贴纸一样浮在边上
-                    marginTop: -7,
-                    marginBottom: 7,
-                    paddingHorizontal: 14,
-                    paddingTop: 8,
-                    paddingBottom: 9,
-                    borderRadius: 18,
-                    // 改成玻璃：不再是不透明白底，底下滚动的文字能透出来（用户选的方案 1）
-                    backgroundColor: "transparent",
-                    overflow: "hidden",
-                    borderWidth: 1,
-                    borderColor: "rgba(19,38,49,0.06)",
-                    alignItems: "center",
-                    gap: 1,
-                    // Muse 实测：中间卡片是可变的窄卡片（名字 + 一行状态），不是信息堆栈；
-                    // 限宽是防止长状态把它撑成一条白带（这正是之前看起来像"白色块"的原因）。
-                    minWidth: 132,
-                    maxWidth: 188,
-                    shadowColor: "#132631",
-                    shadowOffset: { width: 0, height: 3 },
-                    shadowOpacity: 0.06,
-                    shadowRadius: 16,
-                    elevation: 2,
-                  }}
-                >
-                  <GlassLayer radius={18} />
-                  <Text
-                    style={{
-                      fontSize: 16,
-                      fontWeight: "600",
-                      color: colors.text,
-                      letterSpacing: -0.4,
-                    }}
-                  >
-                    {agentName}
-                  </Text>
-                  <Text numberOfLines={1} style={{ fontSize: 11, color: colors.muted }}>
-                    {status}
-                  </Text>
-                </View>
-              </Pressable>
-            </View>
-          </View>
           {/* 内容区：顶部留一条 10px 的缝。缝里露的是外壳底色（与顶栏同色，看不出是"白带"），
               作用是让正文不要紧贴顶栏下沿 —— 紧贴时被视口切掉的那半行读起来就是"白条压住了正文"。 */}
           <View style={{ flex: 1, minHeight: 0, paddingTop: 10 }}>
@@ -732,6 +657,85 @@ function WorkspaceShell({
                   </Pressable>
                 );
               })}
+            </View>
+          </View>
+          {/* 水豚卡片：**不跟着顶栏滑走**（用户要求"水豚保留"）。
+            「水豚固定层」挂在内容区与底栏**之后**（父容器最后一个子节点），并加 zIndex:30 +
+            elevation:30（Android 上 zIndex 常不生效，必须配 elevation 才真正抬层）：
+            正文滚动时会上移，层级不够就会被正文盖住（用户反馈「不是最前端/滑动被盖住」）；
+            pointerEvents=box-none → 抬层但不挡底下的操作。 */}
+          <View
+            pointerEvents="box-none"
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              top: 0,
+              // 抬到内容与顶栏之上：正文在滚动时会上移，不抬层就会被正文盖住（用户反馈"不是在最前端/滑动会隐藏"）。
+              // Android 上 zIndex 常不生效，必须同时给 elevation。
+              zIndex: 30,
+              elevation: 30,
+              paddingTop: insets.top + (desktop ? 12 : 2),
+              alignItems: "center",
+            }}
+          >
+            <View style={{ alignItems: "center", gap: 1 }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${agentName} activity and approvals`}
+                onPress={() => setAvatarOpen(true)}
+                style={({ pressed }) => ({
+                  alignItems: "center",
+                  maxWidth: "70%",
+                  opacity: pressed ? 0.65 : 1,
+                })}
+              >
+                <Mascot size={desktop ? 46 : 38} variant={data?.identity.avatar} glass />
+                {/* Muse 实测结构：中间是一张白色圆角卡片（头像叠在上沿），
+                    第二行可变——空闲是入口，干活时是"当前在做什么"。 */}
+                <View
+                  style={{
+                    // 叠得比之前多一点：头像像"坐在卡片上沿"，而不是贴纸一样浮在边上
+                    marginTop: -7,
+                    marginBottom: 7,
+                    paddingHorizontal: 14,
+                    paddingTop: 8,
+                    paddingBottom: 9,
+                    borderRadius: 18,
+                    // 改成玻璃：不再是不透明白底，底下滚动的文字能透出来（用户选的方案 1）
+                    backgroundColor: "transparent",
+                    overflow: "hidden",
+                    borderWidth: 1,
+                    borderColor: "rgba(19,38,49,0.06)",
+                    alignItems: "center",
+                    gap: 1,
+                    // Muse 实测：中间卡片是可变的窄卡片（名字 + 一行状态），不是信息堆栈；
+                    // 限宽是防止长状态把它撑成一条白带（这正是之前看起来像"白色块"的原因）。
+                    minWidth: 132,
+                    maxWidth: 188,
+                    shadowColor: "#132631",
+                    shadowOffset: { width: 0, height: 3 },
+                    shadowOpacity: 0.06,
+                    shadowRadius: 16,
+                    elevation: 2,
+                  }}
+                >
+                  <GlassLayer radius={18} />
+                  <Text
+                    style={{
+                      fontSize: 16,
+                      fontWeight: "600",
+                      color: colors.text,
+                      letterSpacing: -0.4,
+                    }}
+                  >
+                    {agentName}
+                  </Text>
+                  <Text numberOfLines={1} style={{ fontSize: 11, color: colors.muted }}>
+                    {status}
+                  </Text>
+                </View>
+              </Pressable>
             </View>
           </View>
         </View>
