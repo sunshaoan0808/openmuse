@@ -247,8 +247,7 @@ const PHASE_LABELS: Record<AgentPhase, string> = {
 
 /** 相位 → 一句话（WAITING_FOR_SUBAGENTS 带上数量更有心跳感）。 */
 export function agentPhaseLabel(phase: AgentPhase, subagentCount = 0): string {
-  if (phase === "WAITING_FOR_SUBAGENTS" && subagentCount > 0)
-    return `${subagentCount} 个任务在跑`;
+  if (phase === "WAITING_FOR_SUBAGENTS" && subagentCount > 0) return `${subagentCount} 个任务在跑`;
   return PHASE_LABELS[phase];
 }
 

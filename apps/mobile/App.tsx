@@ -50,6 +50,7 @@ import { CrashNotice } from "./src/crash-notice";
 import { Details } from "./src/details";
 import { ErrorBoundary } from "./src/error-boundary";
 import { hapticTap } from "./src/haptics";
+import { beginUserScroll, endUserScroll } from "./src/header-collapse";
 import {
   chromeHeight,
   headerMarginTop,
@@ -58,13 +59,11 @@ import {
   setChromeHeight,
   trackHeaderCollapse,
 } from "./src/header-scrim";
-import { beginUserScroll, endUserScroll } from "./src/header-collapse";
 import { BrowserScreen, CalendarScreen, FilesScreen, MailScreen } from "./src/screens";
 import { ThreadsProvider, ThreadsSheet, useMuseThread } from "./src/threads";
 import { Button, Card, colors, ErrorNotice, Field, IconButton, Mascot, s } from "./src/ui";
 import { useAndroidKeyboardInset } from "./src/use-android-keyboard-inset";
 import { type Detail, useWorkspace, WorkspaceContext } from "./src/workspace";
-
 
 const nav: { id: Section; label: string; icon: LucideIcon }[] = [
   { id: "chat", label: "聊天", icon: MessageCircle },

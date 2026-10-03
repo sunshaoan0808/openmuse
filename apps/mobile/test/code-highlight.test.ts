@@ -20,11 +20,7 @@ test("round-trip：token 拼回原样恒等于输入（不上色也不能改坏�
   for (const sample of samples) {
     for (const lang of ["ts", "py", "json", "sql", ""]) {
       const tokens = highlightCode(sample, lang);
-      assert.equal(
-        tokens.map((t) => t.text).join(""),
-        sample,
-        `lang=${lang} sample=${sample}`,
-      );
+      assert.equal(tokens.map((t) => t.text).join(""), sample, `lang=${lang} sample=${sample}`);
     }
   }
 });

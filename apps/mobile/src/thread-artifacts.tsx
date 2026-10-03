@@ -89,13 +89,7 @@ export function FileThreadCard({ file }: { file: Artifact }) {
  * 对应 Muse 的 HatchInlineFileChipKt：她到底给没给你文件，聊天里要一眼可见。
  * 放在这个文件而不是 chat.tsx：文件卡的归属地在这里，chat.tsx 只负责接线。
  */
-export function SavedDocumentCard({
-  result,
-  loading,
-}: {
-  result?: unknown;
-  loading: boolean;
-}) {
+export function SavedDocumentCard({ result, loading }: { result?: unknown; loading: boolean }) {
   const parsed = z
     .object({
       id: z.string(),
