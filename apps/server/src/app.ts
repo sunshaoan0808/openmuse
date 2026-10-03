@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { MessageSchema } from "@ag-ui/core";
 import { CopilotKitIntelligence } from "@copilotkit/runtime/v2";
 import { Hono } from "hono";
+import type { Handler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { z } from "zod";
@@ -636,7 +637,7 @@ export async function createApp(
   const knownThreads = new Set<string>();
   const THREAD_ID_RE =
     /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-  app.all("/api/copilotkit/*", async (c) => {
+  const copilotRuntimeHandler: Handler = async (c) => {
     // 本轮对话的 turn 记录（请求内局部，避免并发互相覆盖）
     let turn: ChatTurn | undefined;
     if (!agentConfigured(config))
@@ -756,7 +757,11 @@ export async function createApp(
       }
     })();
     return new Response(toClient, { status: response.status, headers: response.headers });
-  });
+  };
+  // 客户端 runtimeUrl 是**不带尾段**的 /api/copilotkit，而 Hono 的 "/*" 不匹配裸路径 ——
+  // 之前裸路径落到 404，用户侧表现为「Runtime info request failed with status 404」。两条都注册。
+  app.all("/api/copilotkit", copilotRuntimeHandler);
+  app.all("/api/copilotkit/*", copilotRuntimeHandler);
   app.get("/", (c) =>
     c.json({ name: "OpenMuse", app: "http://localhost:8081", health: "/api/health" }),
   );
