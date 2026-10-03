@@ -71,12 +71,13 @@
 - **涉及文件**：`apps/mobile/src/screens.tsx`（`FilesScreen.upload`）、`apps/mobile/src/chat.tsx`（"+"菜单）、`apps/mobile/src/image-attachment.ts`（抽一个通用 `uploadFile`）。
 - **验收方式**：真机从手机选一个 .md 与一个 .mp3 → 都进文件页并可预览（文本/markdown 渲染、媒体走 MediaPlayer）→ 在对话里 @ 到；Web 端同样路径走 FormData 复测。
 
-### P0-7 聊天建议条（补齐对齐计划声称已做的那条）②①
+### P0-7 聊天建议条 —— **不做**（对齐 Muse：灵感独立页，聊天正文不出现灵感内容）
 
-- **差距**：`chat.tsx:877` 只有一行「照 Muse 的 HatchSuggestionBar」注释，无实现。Muse 在输入框上方给可直接点的短建议（文案按动作类型取资源）。
-- **目标形态**：空闲且主会话时，从 `/api/agent` 的 ideas 取前 2 条（已有数据源，服务端 `buildSummary` 已下发），输入框上方渲染两条可点 pill，点按即 `enqueue()` 派活；跑动中隐藏。
-- **涉及文件**：`apps/mobile/src/chat.tsx`（composer 上方）、`apps/mobile/src/agent-workspace.tsx`（ideas 已随轮询返回）。
-- **验收方式**：真机空闲时见两条建议 pill，点按即发送对应消息并开始跑动；跑动中与侧边会话不出现；`apps/mobile/test` 加一条过滤逻辑单测（有 ideas/无 ideas/跑动中）。
+> **2026-10-03 拍板，结论定了，不是待定**：对齐 Muse 的真实结构——灵感有自己独立的页面，
+> **聊天正文不出现任何灵感内容**（输入框上方的建议 pill 也属于此列）。旧文档说"聊天内出卡
+> 已实现"是错的（已核实：`chat.tsx` 里只有一行注释占位，无实现）——但错误的结论不是"补齐它"，
+> 而是确认本来就不该做。`chat-clean.test.ts` 的既有断言（灵感种子别放进聊天）本来就是对的，保持不动。
+> 原「补齐建议条」的四要素方案作废。
 
 ---
 
@@ -131,12 +132,10 @@
 - **涉及文件**：`apps/mobile/src/assistant-markdown.ts`（$ 定界规则）、`assistant-response.tsx`（新增 math 规则）、可选 `apps/server/src/markdown-html.ts`（预渲染分支）。
 - **验收方式**：单测（行内/块级/未闭合定界回退）；真机贴一段含公式的回复可读、不撑破版面。
 
-### P1-8 灵感卡回流聊天流（`Origin.CHAT`）②
+### P1-8 灵感卡回流聊天流（`Origin.CHAT`）—— **不做**（与 P0-7 同一件事）
 
-- **差距**：灵感只在独立页；Muse 的卡片会直接出现在聊天里（`HatchIdeaCardRow`），可"就做这个/看看/不用了"。
-- **目标形态**：空闲时服务端把 1 条新灵感随 `/api/agent` 下发 → 聊天尾部（消息流之后）渲染灵感卡（标题+贴合理由+三个动作）；「就做这个」= `enqueue` 其 prompt 并把该条标记 builtAt；「不用了」= 点踩降权（`rateIdea` 已有）。
-- **涉及文件**：`apps/mobile/src/chat.tsx`（消息流尾部）、`apps/mobile/src/agent-workspace.tsx`、服务端 `ideas` 相关（对齐计划 §灵感 已有 API 基础）。
-- **验收方式**：真机：主会话出现灵感卡，三按钮行为正确，接受后卡片收束为一行回执；`refreshIdeas` 后点踩过的不再出现。
+> **2026-10-03 随 P0-7 一并取消**，理由相同：对齐 Muse——灵感独立页，聊天正文不出现任何
+> 灵感内容。别在 P1 阶段又绕回来。
 
 ### P1-9 发布/分享动作进对话 ④
 
@@ -239,6 +238,7 @@
 | 搬运 Muse 专有资产（statusVideos、字体、色板、代码） | 版权与项目既定约定；水豚为自有原画 |
 | 机密 VM 形态（Noise 信道/attestation/CCV） | 已有等价物：Docker 沙箱 + 任务级短时凭据（`credentials.ts`）+ git 句柄代理（`git-proxy.ts`）；凭据"mint→用→revoke"模型已对齐 |
 | resources.arsc 精确色值/圆角/动效曲线 | 加固读不到，动态测量成本高；视觉对齐以截图近似值为准 |
+| 灵感进聊天正文（建议条/灵感卡回流聊天流，P0-7 与 P1-8） | **2026-10-03 拍板**：对齐 Muse 的真实结构——灵感有独立页面，聊天正文不出现任何灵感内容；`chat-clean.test.ts` 的既有断言保持不动 |
 
 ---
 
