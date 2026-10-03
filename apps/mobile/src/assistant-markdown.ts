@@ -73,3 +73,24 @@ export function fileIdFromUrl(url: string): string | undefined {
   const match = url.match(/\/api\/files\/([0-9a-zA-Z_-]{6,80})(?:[/?#]|$)/);
   return match?.[1];
 }
+
+/**
+ * 正文里的图片能不能直接显示（对标 Muse 的 HatchInlineImageKt——此前一律渲染成
+ * "[Image]" 文字占位，正文贴图等于没有）：
+ * - 本应用文件接口（/api/files/:id/…）：带会话令牌取图，直接显示；
+ * - https 外链：直接显示（http 不放行——明文图混进明文页会告警，且内网地址多半打不开）；
+ * - 其余（javascript:、相对路径、裸 http）：保持文字占位，宁缺毋滥。
+ */
+export function assistantImageSource(
+  url: string,
+): { kind: "file"; fileId: string } | { kind: "external"; uri: string } | { kind: "blocked" } {
+  const fileId = fileIdFromUrl(url);
+  if (fileId) return { kind: "file", fileId };
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "https:" && parsed.hostname) return { kind: "external", uri: url };
+  } catch {
+    // 不是合法 URL → 占位
+  }
+  return { kind: "blocked" };
+}

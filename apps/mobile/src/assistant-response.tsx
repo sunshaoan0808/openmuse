@@ -1,13 +1,22 @@
-import { useCallback, useState } from "react";
-import { type ImageStyle, Linking, Text, type TextStyle, type ViewStyle } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import {
+  type ImageStyle,
+  Image,
+  Linking,
+  Text,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 import Markdown, { type RenderRules } from "react-native-markdown-display";
 import {
+  assistantImageSource,
   assistantMarkdown,
   fileIdFromUrl,
   isSafeAssistantUrl,
   tidyAssistantText,
 } from "./assistant-markdown";
 import { colors, ErrorNotice } from "./ui";
+import { useWorkspace } from "./workspace";
 
 const textStyle = { color: colors.text, fontSize: 16, lineHeight: 24 };
 
@@ -57,26 +66,43 @@ const renderCodeBlock: RenderRules["fence"] = (node, _children, _parent, styles)
   </Text>
 );
 
-const rules: RenderRules = {
-  // 普通文本（含表格单元格内文本）走这里 → 长 token 折行
-  text: (node, _children, _parent, styles, inheritedStyles = {}) => (
-    <Text key={node.key} selectable style={[inheritedStyles, styles.text]}>
-      {breakLongTokens(String(node.content ?? ""))}
-    </Text>
-  ),
-  textgroup: (node, children) => (
-    <Text key={node.key} selectable style={textStyle}>
-      {children}
-    </Text>
-  ),
-  image: (node) => (
-    <Text key={node.key} selectable style={{ color: colors.muted }}>
-      {node.attributes?.alt ? `[Image: ${node.attributes.alt}]` : "[Image]"}
-    </Text>
-  ),
-  code_block: renderCodeBlock,
-  fence: renderCodeBlock,
+/** 图片的固定高度占位：真尺寸未知，contain + 固定高防版面跳动。 */
+const imageStyle: ImageStyle = {
+  width: "100%",
+  height: 220,
+  borderRadius: 12,
+  backgroundColor: colors.canvas,
+  marginTop: 4,
+  marginBottom: 6,
 };
+
+/** 正文里的图片：加载失败回退成文字占位（不出破图图标、不撑破版面）。 */
+function AssistantImage({
+  uri,
+  headers,
+  alt,
+}: {
+  uri: string;
+  headers?: Record<string, string>;
+  alt: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (failed)
+    return (
+      <Text style={{ color: colors.muted, fontSize: 13, lineHeight: 20 }}>
+        {alt ? `[图片：${alt}]` : "[图片]"}
+      </Text>
+    );
+  return (
+    <Image
+      source={{ uri, headers }}
+      style={imageStyle}
+      resizeMode="contain"
+      accessibilityLabel={alt || "图片"}
+      onError={() => setFailed(true)}
+    />
+  );
+}
 
 export function AssistantResponse({
   content,
@@ -87,7 +113,48 @@ export function AssistantResponse({
   onOpenFile?: (fileId: string) => boolean;
 }) {
   const [linkError, setLinkError] = useState("");
-  // 抄写抖动（书名号里的星号、重复片名、只开不闭）在渲染前清掉，不改模型输出也不进存档。
+  // 文件接口的图片要带会话令牌取（与其他文件内容同一套鉴权）
+  const { api } = useWorkspace();
+  // rules 依赖 api（图片规则的鉴权头），放进组件里构建；其余规则与原先一致
+  const rules = useMemo<RenderRules>(
+    () => ({
+      // 普通文本（含表格单元格内文本）走这里 → 长 token 折行
+      text: (node, _children, _parent, styles, inheritedStyles = {}) => (
+        <Text key={node.key} selectable style={[inheritedStyles, styles.text]}>
+          {breakLongTokens(String(node.content ?? ""))}
+        </Text>
+      ),
+      textgroup: (node, children) => (
+        <Text key={node.key} selectable style={textStyle}>
+          {children}
+        </Text>
+      ),
+      image: (node) => {
+        const src = String(node.attributes?.src ?? "");
+        const alt = String(node.attributes?.alt ?? "");
+        const source = assistantImageSource(src);
+        if (source.kind === "file")
+          return (
+            <AssistantImage
+              key={node.key}
+              uri={api.url(`/api/files/${source.fileId}/content`)}
+              headers={{ Authorization: `Bearer ${api.token}` }}
+              alt={alt}
+            />
+          );
+        if (source.kind === "external")
+          return <AssistantImage key={node.key} uri={source.uri} alt={alt} />;
+        return (
+          <Text key={node.key} style={{ color: colors.muted }}>
+            {alt ? `[图片：${alt}]` : "[图片]"}
+          </Text>
+        );
+      },
+      code_block: renderCodeBlock,
+      fence: renderCodeBlock,
+    }),
+    [api],
+  );
   const shown = tidyAssistantText(content);
   const onLinkPress = useCallback(
     (url: string) => {

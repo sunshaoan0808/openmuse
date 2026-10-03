@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  assistantImageSource,
   assistantMarkdown,
   isSafeAssistantUrl,
   tidyAssistantText,
@@ -46,4 +47,34 @@ test("清洗不碰片名里的正当字符（连字符、撇号、数字）", ()
   assert.equal(tidyAssistantText("《Spider-Man: No Way Home》"), "《Spider-Man: No Way Home》");
   assert.equal(tidyAssistantText("《I'm Still Here》"), "《I'm Still Here》");
   assert.equal(tidyAssistantText("《KPop Demon Hunters》"), "《KPop Demon Hunters》");
+});
+
+test("正文图片：本应用文件接口识别为 file 并抽出文件 id", () => {
+  assert.deepEqual(assistantImageSource("/api/files/abc123/content"), {
+    kind: "file",
+    fileId: "abc123",
+  });
+  // 带签名 query 的地址同样认得（工作区下发的就是这种形状）
+  assert.deepEqual(
+    assistantImageSource(
+      "https://api.example.com/api/files/abc123/content?owner=x&expires=1&signature=s",
+    ),
+    { kind: "file", fileId: "abc123" },
+  );
+});
+
+test("正文图片：只有 https 外链直接显示，http/相对路径/伪协议保持占位", () => {
+  assert.deepEqual(assistantImageSource("https://example.com/a.png?w=640"), {
+    kind: "external",
+    uri: "https://example.com/a.png?w=640",
+  });
+  for (const blocked of [
+    "http://example.com/a.png",
+    "相对/路径.png",
+    "javascript:alert(1)",
+    "file:///tmp/private.png",
+    "",
+  ]) {
+    assert.deepEqual(assistantImageSource(blocked), { kind: "blocked" }, blocked);
+  }
 });
