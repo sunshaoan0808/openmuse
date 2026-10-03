@@ -53,8 +53,11 @@ import {
   captureImage,
   type ImageSource,
   imageUploadMessage,
+  uploadDocument,
   uploadImage,
+  documentUploadMessage,
 } from "./image-attachment";
+import * as DocumentPicker from "expo-document-picker";
 import { confirmedJevSelection, displayJevUserMessage, latestJevPanelId } from "./jev-actions";
 import { JevInteractionContext, JevToolCard } from "./jev-tool-card";
 import {
@@ -470,9 +473,9 @@ export function ChatScreen({
   const [receipts, setReceipts] = useState<ActionProposal[]>([]);
   const [allApprovals, setAllApprovals] = useState(false);
   const seenPending = useRef<Set<string> | null>(null);
-  // 图片输入（拍照 / 相册）与语音输入的状态
+  // 图片输入（拍照 / 相册 / 任意文件）与语音输入的状态
   const [imageMenu, setImageMenu] = useState(false);
-  const [imageBusy, setImageBusy] = useState<ImageSource | "">("");
+  const [imageBusy, setImageBusy] = useState<ImageSource | "file" | "">("");
   const [attachError, setAttachError] = useState("");
   const list = useRef<ScrollView>(null);
   // 用户不在底部时，用来把视口钉回原处（见 onContentSizeChange）
@@ -847,6 +850,33 @@ export function ChatScreen({
         return;
       }
       enqueue(imageUploadMessage(artifact));
+    } catch (e) {
+      hapticWarn();
+      setAttachError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setImageBusy("");
+    }
+  }
+  /** 任意文件：DocumentPicker 全类型选 → 上传 → 报文件名给智能体（类型由服务端嗅探把关）。 */
+  async function pickDocument() {
+    setImageMenu(false);
+    setAttachError("");
+    setImageBusy("file");
+    try {
+      const picked = await DocumentPicker.getDocumentAsync({
+        // 全类型交给服务端校验（files.ts 的魔数+扩展名嗅探决定收不收）
+        type: "*/*",
+        copyToCacheDirectory: true,
+      });
+      if (picked.canceled) return;
+      const artifact = await uploadDocument(api, picked.assets[0]);
+      await refresh().catch(() => {});
+      hapticSuccess();
+      if (!isReady || !loaded) {
+        setAttachError(`文件「${artifact.name}」已上传，但会话还没准备好，请稍后再发一次消息。`);
+        return;
+      }
+      enqueue(documentUploadMessage(artifact));
     } catch (e) {
       hapticWarn();
       setAttachError(e instanceof Error ? e.message : String(e));
@@ -1380,7 +1410,7 @@ export function ChatScreen({
         {imageMenu && (
           <RiseIn style={{ marginBottom: 12 }}>
             <Card style={{ padding: 15, gap: 10 }}>
-              <Text style={s.heading}>添加图片</Text>
+              <Text style={s.heading}>添加图片或文件</Text>
               <View style={[s.row, { gap: 8, flexWrap: "wrap" }]}>
                 <Button
                   small
@@ -1400,8 +1430,19 @@ export function ChatScreen({
                 >
                   从相册选择
                 </Button>
+                <Button
+                  small
+                  icon={FileText}
+                  disabled={!!imageBusy}
+                  busy={imageBusy === "file"}
+                  onPress={() => void pickDocument()}
+                >
+                  选择文件…
+                </Button>
               </View>
-              <Text style={s.small}>图片会存进你的工作区，并把文件名交给智能体识别。</Text>
+              <Text style={s.small}>
+                图片会存进你的工作区并交给智能体识别；文档/音频等文件同样进工作区，需要时它会去读。
+              </Text>
             </Card>
           </RiseIn>
         )}

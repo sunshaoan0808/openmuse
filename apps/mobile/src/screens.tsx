@@ -944,13 +944,9 @@ export function FilesScreen() {
     setBusy(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        // PDF 与 Office 文档都能导入；Web 端与 Android 端都按 MIME 过滤
-        type: [
-          "application/pdf",
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        ],
+        // 全类型交给服务端校验（files.ts 的魔数+扩展名嗅探决定收不收）：
+        // 文档/源码/音视频都是一等文件，PDF 与 Office 只是其中一部分
+        type: "*/*",
         copyToCacheDirectory: true,
       });
       if (result.canceled) return;
