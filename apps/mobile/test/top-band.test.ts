@@ -29,39 +29,44 @@ test("外壳不再给顶部留内边距：SafeAreaView 的 edges 里不能有 to
   }
 });
 
-test("顶栏必须占位：不能是绝对定位的覆盖层（否则正文从它底下穿过去 = 白条压住正文）", () => {
+test("顶栏是绝对定位覆盖层（Muse 模型，a7f77ec 定案）：位移只动 transform 不动布局", () => {
   const code = strip(read("App.tsx"));
-  // 用户实测过两次：① 留极小的静态顶距 → 正文被白条压住；② 把留白放进滚动内容 → 一滚动就被滚走，照样被压。
-  // 正确做法是顶栏作为**布局里的一行**占位，收起时用负 marginTop 真的让出位置（正文自动顶上来）。
+  // a7f77ec 实测定案：绝对定位覆盖层是唯一能同时满足三件事的做法——视口高度恒定
+  // （"每帧钉回"的反馈环消失，慢滑不闪）、正文从 y=0 铺满、位移用 translateY 只动像素。
+  // 正文不被顶栏推下去，靠**列表内部的 paddingTop** 让静止时第一条消息落在顶栏下沿。
   assert.match(
     code,
-    /marginTop:\s*headerMarginTop\(chromeTop\)/,
-    "顶栏要用负外边距收起（真的让出位置）",
+    /position: "absolute",\s*top: 0,\s*left: 0,\s*right: 0,\s*height: chromeTop,/,
+    "顶栏应是绝对定位覆盖层（高度与 chrome 一致）",
   );
-  const headerAt = code.indexOf("marginTop: headerMarginTop(");
-  const headerBlock = code.slice(headerAt, headerAt + 300);
-  assert.ok(!/position:\s*"absolute"/.test(headerBlock), "顶栏不能是绝对定位的覆盖层");
-  assert.ok(
-    !/transform:\s*\[\{ translateY/.test(headerBlock),
-    "收起不能用 transform（它只动画面、不动排版）",
+  assert.match(
+    code,
+    /transform:\s*\[\{\s*translateY:\s*headerTranslateY\(chromeTop\)\s*\}\]/,
+    "收起位移必须走 translateY（只动像素、不触发布局）",
   );
-  // 滚动内容只留呼吸，不再靠"按顶栏高度留白"绕开遮挡
-  assert.match(code, /paddingTop:\s*10,/, "滚动内容只留呼吸内边距");
-  assert.ok(!/paddingTop:\s*chromeTop/.test(code), "不该再用 chromeTop 做滚动内边距");
+  // 旧的"负 marginTop 布局行"方案已废除，防止回退
+  assert.ok(!/marginTop:\s*headerMarginTop\(/.test(code), "不该再回到负外边距占位方案");
+  // 滚动内容只留呼吸；工具页（mail/calendar…）在覆盖层模型下用 chromeTop 清开顶栏
+  assert.match(code, /paddingTop:\s*10,/, "聊天流只留呼吸内边距");
+  assert.match(
+    code,
+    /paddingTop:\s*chromeTop \+ 10/,
+    "工具页要用 chromeTop 清开覆盖层顶栏（正文从顶栏底下穿过只发生在聊天页）",
+  );
 });
 
-test("顶栏底色：不透明实色 + 不用 BlurView（半透明只在它浮在内容上时才需要，现在已经占位）", () => {
+test("顶栏底色：半透明覆盖层底 + 整条不套玻璃（正文会从底下穿过，玻璃只给小控件）", () => {
   const code = strip(read("App.tsx"));
   // 第一轮翻车点：整条顶栏套玻璃，Android 模糊不可用时退化成白色实底
   assert.ok(!/<GlassLayer radius=\{0\}/.test(code), "整条顶栏不能套玻璃");
-  // 底色必须是不透明实色：顶栏占位之后，半透明只会让下沿那行被裁掉的字透出来，
-  // 看着就像"正文被白条盖住"（用户实测反馈）。
+  // a7f77ec：覆盖层之下正文会穿过，底必须是**半透明**（0.72：可读但不刺眼），
+  // 不透明的画布色在这里反而等于"白条压正文"；玻璃采样色由控件自带的 GlassLayer 负责。
   assert.match(
     code,
-    /\[FILL, \{ backgroundColor: colors\.canvas \}\]/,
-    "顶栏底色应是不透明的画布色",
+    /backgroundColor:\s*"rgba\(252,\s*252,\s*252,\s*0\.72\)"/,
+    "覆盖层底应是 0.72 半透明画布色",
   );
-  assert.ok(!/rgba\(252,\s*252,\s*252/.test(code), "不该再用半透明白做顶栏底色");
+  assert.ok(!/\[FILL, \{ backgroundColor: colors\.canvas \}\]/.test(code), "不该再回不透明实底");
   // 下沿一条发丝线
   assert.match(
     code,
