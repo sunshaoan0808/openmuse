@@ -3,10 +3,13 @@ appId: app.openmuse.mobile
 ---
 - launchApp
 - waitForAnimationToEnd
-# 已登录态（CI 传了 fake_token 时）→ 直接跑顶栏/水豚那几条真机判据
+# 已登录态 → 直接跑顶栏/水豚那几条真机判据。
+# 判据用登录界面**真实存在**的文案：「登录卡片上有『工作区访问密钥』这个字段」。
+# （以前写的是 notVisible "请登录 OpenMuse" —— 那个字符串 App 里根本不存在，条件恒真，
+#   等于永远走"已登录"分支；配上当时 CI 根本登录不上，topbar 一直是跑在未登录界面上然后失败。）
 - runFlow:
     when:
-      notVisible: "请登录 OpenMuse"
+      notVisible: "工作区访问密钥"
     file: topbar.yaml
 # 未登录态 → 只验证"启动没崩 + 登录引导在"
 - assertVisible:
