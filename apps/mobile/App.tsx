@@ -53,7 +53,7 @@ import { hapticTap } from "./src/haptics";
 import { beginUserScroll, endUserScroll } from "./src/header-collapse";
 import {
   chromeHeight,
-  headerMarginTop,
+  headerTranslateY,
   headerScrollHandler,
   markUserScroll,
   setChromeHeight,
@@ -446,11 +446,20 @@ function WorkspaceShell({
             // 露出来的是外壳底色（#FCFCFC 近白）而内容偏灰，于是每个页面顶部都有一条"白带"。
             pointerEvents="box-none"
             style={{
-              // **不做成绝对定位的覆盖层**：顶栏是布局里的一行，它占的高度就是正文的起点。
-              // 之前做覆盖层时正文会从它底下穿过去，读起来正是"白条压住了正文导致遮挡"。
-              // 收起 = 负 marginTop（真的让出位置，正文顶上来；transform 只动画面不动排版，不行）。
-              marginTop: headerMarginTop(chromeTop),
+              // **改成绝对定位覆盖层（Muse 模型）**：这是唯一能同时满足三件事的做法 —
+              //   1) 视口高度恒定 → 上面那个"每帧钉回"的反馈环彻底消失（慢滑不再闪）；
+              //   2) 正文不再被"顶栏占位"推下去，而是从 y=0 铺到屏幕顶，靠**列表内部的 paddingTop**
+              //      让静止时第一条消息落在顶栏下沿（滚动时正文从顶栏底下穿过 —— Muse 就是这样）；
+              //   3) 位移用 transform: translateY（只动像素、不触发布局）。
+              // 半透明由下面的玻璃层负责：既然正文会从底下穿过，底就必须是透的，否则就是"白条压正文"。
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
               height: chromeTop,
+              zIndex: 20,
+              elevation: 20,
+              transform: [{ translateY: headerTranslateY(chromeTop) }],
               paddingTop: insets.top + (desktop ? 12 : 2),
               paddingHorizontal: 20,
             }}
@@ -460,7 +469,9 @@ function WorkspaceShell({
                 也不用半透明遮罩 —— 顶栏现在是**占位的布局行**（正文从它下沿开始，不会从它底下穿过），
                 半透明只会让下沿那行被裁掉的字透出来，看着就是"正文被白条盖住"。
                 透明只有在顶栏**浮在内容之上**时才需要。 */}
-            <View pointerEvents="none" style={[FILL, { backgroundColor: colors.canvas }]} />
+            {/* 半透明（不是不透明）：顶栏现在是覆盖层，正文会从它底下穿过 —— 不透明就等于"白条压正文"。
+                0.72 是为了让穿过来的文字可读但不刺眼；玻璃层另外负责采样内容色。 */}
+            <View pointerEvents="none" style={[FILL, { backgroundColor: "rgba(252,252,252,0.72)" }]} />
             {/* 下沿一条发丝线：边界清楚，比阴影轻，也不会在内容上投出灰雾 */}
             <View
               pointerEvents="none"
@@ -535,6 +546,10 @@ function WorkspaceShell({
               left: 0,
               right: 0,
               top: 0,
+              // 抬到内容与顶栏之上：正文在滚动时会上移，不抬层就会被正文盖住（用户反馈"不是在最前端/滑动会隐藏"）。
+              // Android 上 zIndex 常不生效，必须同时给 elevation。
+              zIndex: 30,
+              elevation: 30,
               paddingTop: insets.top + (desktop ? 12 : 2),
               alignItems: "center",
             }}
@@ -601,6 +616,8 @@ function WorkspaceShell({
           {/* 内容区：顶部留一条 10px 的缝。缝里露的是外壳底色（与顶栏同色，看不出是"白带"），
               作用是让正文不要紧贴顶栏下沿 —— 紧贴时被视口切掉的那半行读起来就是"白条压住了正文"。 */}
           <View style={{ flex: 1, minHeight: 0, paddingTop: 10 }}>
+            {/* 注意：这里**不再**给顶栏留高度（顶栏是覆盖层）。静止时第一条消息落在顶栏下沿这件事，
+                改由各滚动列表自己的 contentContainerStyle.paddingTop 承担（见下面的 ScrollView 与 chat.tsx）。 */}
             {section !== "chat" && (
               <ScrollView
                 key={section}
@@ -617,7 +634,8 @@ function WorkspaceShell({
                 contentContainerStyle={{
                   paddingHorizontal: desktop ? 42 : 22,
                   paddingBottom: 28,
-                  paddingTop: 10,
+                  // 顶栏是覆盖层 → 静止时给正文让出顶栏的高度（滚动时这段 padding 随内容滚走，正文顶到屏幕最上）
+                  paddingTop: chromeTop + 10,
                 }}
                 keyboardShouldPersistTaps="handled"
               >

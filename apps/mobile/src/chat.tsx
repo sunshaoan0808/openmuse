@@ -14,6 +14,7 @@ import {
   ArrowUp,
   Camera,
   Check,
+  Clock,
   FileText,
   ImagePlus,
   Mic,
@@ -50,13 +51,18 @@ import { BackgroundUpdates } from "./background-updates";
 import { BrowserActionCard } from "./browser-action-card";
 import { BrowserRunContext, BrowserToolCard } from "./browser-tool-card";
 import { acknowledgedIds, mergeConversation } from "./conversation-merge";
-import { ConversationQueue, type QueuedMessage } from "./conversation-queue";
+import {
+  ConversationQueue,
+  type QueuedMessage,
+  QueueBusyError,
+  STUCK_AFTER_ATTEMPTS,
+} from "./conversation-queue";
 import { runConversationTurn } from "./conversation-run";
 import { loadCursor, outboxStorage, saveCursor } from "./conversation-store";
 import { guard } from "./crash-log";
 import { hapticPress, hapticSuccess, hapticTap, hapticWarn } from "./haptics";
 import { beginUserScroll, endUserScroll, userScrollActive } from "./header-collapse";
-import { headerScrollHandler, markUserScroll, trackHeaderCollapse } from "./header-scrim";
+import { getChromeHeight, headerScrollHandler, markUserScroll, trackHeaderCollapse } from "./header-scrim";
 import {
   captureImage,
   documentUploadMessage,
@@ -802,11 +808,13 @@ export function ChatScreen({
   const run = useCallback(
     async (message?: QueuedMessage) => {
       if (runLock.current || agent.isRunning || !isReady || !loaded)
-        throw new Error("会话还没准备好。");
+        throw new QueueBusyError();
       runLock.current = true;
       setBusy(true);
       setError("");
-      if (message) agent.addMessage({ id: message.id, role: "user", content: message.text });
+      // 乐观上屏已在 enqueue 时做过；这里只补漏（恢复/重试路径可能还没上过屏）
+      if (message && !agent.messages.some((m) => m.id === message.id))
+        agent.addMessage({ id: message.id, role: "user", content: message.text });
       try {
         await runConversationTurn(
           agentId,
@@ -842,23 +850,52 @@ export function ChatScreen({
       syncConversation,
     ],
   );
+  /**
+   * 断流后把这一轮的回复捞回来。服务端把 /api/copilotkit/* 的响应用 tee() 分了后台一支
+   * （见 app.ts），客户端断开它照样把这一轮写进会话；syncConversation 返回的正是**游标之后
+   * 的增量消息**，所以只要里面出现了助手消息，就说明这一轮其实跑完了。
+   * （重试前的幂等预检与失败后的兜底捞取都用它；泵接管了重试节奏，不再有终局报错。）
+   */
+  const recoverTurn = useCallback(async () => {
+    const result = await syncConversation();
+    return (result.messages ?? []).some((message) => message.role === "assistant");
+  }, [syncConversation]);
   const runQueued = useCallback(
     async (message: QueuedMessage) => {
       try {
+        // 幂等要点：重试（attempts>0）先按消息 id 向服务端确认是否已收到/已回复——
+        // 服务端在 run 请求到达时就会把输入里的用户消息按 id 落库（app.ts 的 tee），
+        // 所以「游标增量里出现回复」= 这一轮已完成：只补 ACK，绝不把同一轮 agent 跑两遍。
+        if ((message.attempts ?? 0) > 0 && (await recoverTurn().catch(() => false))) {
+          choiceCompletions.current.get(message.id)?.resolve();
+          return;
+        }
         await run(message);
         choiceCompletions.current.get(message.id)?.resolve();
       } catch (error) {
+        if (error instanceof QueueBusyError) {
+          choiceCompletions.current.get(message.id)?.reject(error);
+          throw error; // 泵让位重试：不算失败、不计 attempts
+        }
+        // 断流 ≠ 失败：给服务端 tee 一点时间落库（1.5s 老经验值），先按游标捞一次；
+        // 捞不到才抛回给后台泵——指数退避无限重试，永不把失败当终局。
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        if (await recoverTurn().catch(() => false)) {
+          choiceCompletions.current.get(message.id)?.resolve();
+          return;
+        }
         choiceCompletions.current.get(message.id)?.reject(error);
         throw error;
       } finally {
         choiceCompletions.current.delete(message.id);
       }
     },
-    [run],
+    [run, recoverTurn],
   );
   const flush = useCallback(() => {
     if (!loaded || !isReady || runLock.current || agent.isRunning) return;
-    void queue.flush(runQueued).catch((e) => setError(humanizeNetworkError(e)));
+    // 泵永不把失败当终局：这里不再需要把「连不上服务器」翻给用户
+    void queue.flush(runQueued).catch(() => {});
   }, [agent, isReady, loaded, queue, runQueued]);
   // 会话就绪后把上次没发出去的补发出去（配合 api.ts 的重试：网络恢复即自动续上）
   useEffect(() => {
@@ -868,12 +905,18 @@ export function ChatScreen({
   }, [loaded, isReady, agent, queue, flush]);
   const enqueue = useCallback(
     (text: string) => {
-      queue.enqueue({ id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text });
+      const id = `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      // 发送即写本地持久化 outbox（带客户端生成的 id）+ 立刻乐观上屏（TG 的时钟态）：
+      // 界面马上能看到这条消息，徽标只在「发送中 / 已发送」之间变化。
+      queue.enqueue({ id, text });
+      enqueuedIds.current.add(id);
+      if (isReady && loaded && !agent.messages.some((m) => m.id === id))
+        agent.addMessage({ id, role: "user", content: text });
       followLatest.current = true;
       setAwayFromLatest(false);
       flush();
     },
-    [queue, flush],
+    [queue, flush, agent, isReady, loaded],
   );
   const sendChoice = useCallback(
     (text: string, retry = false): Promise<void> => {
@@ -904,61 +947,25 @@ export function ChatScreen({
     if (active && prompt && isReady && loaded && claimPrompt(prompt.id) && prompt.text.trim())
       enqueue(prompt.text);
   }, [active, prompt, isReady, loaded, enqueue, claimPrompt]);
-  /**
-   * 断流后把这一轮的回复捞回来。服务端把 /api/copilotkit/* 的响应用 tee() 分了后台一支
-   * （见 app.ts），客户端断开它照样把这一轮写进会话；syncConversation 返回的正是**游标之后
-   * 的增量消息**，所以只要里面出现了助手消息，就说明这一轮其实跑完了。
-   */
-  const recoverTurn = useCallback(async () => {
-    const result = await syncConversation();
-    return (result.messages ?? []).some((message) => message.role === "assistant");
-  }, [syncConversation]);
-  /**
-   * 跨境链路上长连接常被掐（真机实测：半小时里小 GET 17 次全通，长流的 run 只成功 1 次，
-   * 服务器侧一条错误都没有）。所以"流断了"不等于"这一轮失败"：先按游标捞回回复，
-   * 捞不到再自动重发一次（同一条消息 id，服务端按最后一条用户消息 id 去重，不会跑两遍），
-   * 只有两次都没结果才如实报错。之前直接弹 Network request failed，用户体验就是"每次都失败"。
-   */
-  const recovering = useRef(false);
-  const recoverDroppedTurn = useCallback(
-    async (failure: unknown) => {
-      if (recovering.current) return;
-      recovering.current = true;
-      const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-      try {
-        await wait(1500); // 给服务端那支 tee 一点时间把这一轮落库
-        if (await recoverTurn().catch(() => false)) {
-          setError("");
-          return;
-        }
-        if (!agent.isRunning && !runLock.current) {
-          const pending = queue.getSnapshot().pending.length > 0;
-          if (pending) flush();
-          else await run().catch(() => {});
-          await wait(5000);
-          if (await recoverTurn().catch(() => false)) {
-            setError("");
-            return;
-          }
-        }
-        setError(humanizeNetworkError(failure));
-      } finally {
-        recovering.current = false;
-      }
-    },
-    [agent.isRunning, flush, queue, recoverTurn, run],
-  );
+  /** 「已发送」徽标的短暂回执：ACK（游标里出现这条 id → outbox 清账）后闪现 2.5 秒，
+   *  然后该消息回归普通历史消息的样式。enqueuedIds 只记本会话里发出去的——历史消息不带徽标。 */
+  const [recentlySent, setRecentlySent] = useState<Set<string>>(new Set());
+  const enqueuedIds = useRef(new Set<string>());
   useEffect(() => {
-    const subscription = copilotkit.subscribe({
-      onError: (event) => {
-        if (event.context?.agentId && event.context.agentId !== agentId) return;
-        const failure = event.error instanceof Error ? event.error : new Error(String(event.error));
-        // 断流不等于这一轮失败：先自愈（捞回复 / 重发一次），确实没结果才翻成中文报错
-        void recoverDroppedTurn(failure);
-      },
-    });
-    return () => subscription.unsubscribe();
-  }, [copilotkit, agentId, queue, recoverDroppedTurn]);
+    const acked = [...enqueuedIds.current].filter(
+      (id) => !outbox.pending.some((message) => message.id === id),
+    );
+    if (!acked.length) return;
+    for (const id of acked) enqueuedIds.current.delete(id);
+    setRecentlySent((current) => new Set([...current, ...acked]));
+    const timer = setTimeout(() => {
+      setRecentlySent((current) => {
+        const next = new Set(current);
+        for (const id of acked) next.delete(id);
+        return next;
+      });
+    }, 2500);
+  }, [outbox.pending]);
   async function stop() {
     hapticTap();
     queue.pause();
@@ -1193,6 +1200,7 @@ export function ChatScreen({
             : message.content
           : "";
       const toolCalls = "toolCalls" in message ? message.toolCalls || [] : [];
+      const pendingEntry = outbox.pending.find((entry) => entry.id === message.id);
       const messageReactions = Array.isArray((message as { reactions?: unknown }).reactions)
         ? ((message as unknown as { reactions: unknown[] }).reactions ?? []).filter(
             (emoji): emoji is string => typeof emoji === "string",
@@ -1251,6 +1259,34 @@ export function ChatScreen({
                 />
               </Pressable>
             ))}
+          {/* 发送状态徽标（TG 式）：outbox 里有它 = 发送中（时钟）；ACK 后短暂显示「已发送」。
+              卡住（失败 ≥3 次）出现可点的小重发图标——徽标永远不出现「失败」。 */}
+          {user && (pendingEntry || recentlySent.has(message.id)) && (
+            <View style={[s.row, { gap: 5, alignSelf: "flex-end" }]}>
+              {pendingEntry ? (
+                <>
+                  <Clock size={12} color={colors.muted} />
+                  <Text style={s.small}>发送中</Text>
+                  {(pendingEntry.attempts ?? 0) >= STUCK_AFTER_ATTEMPTS && (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="立即重发这条消息"
+                      hitSlop={8}
+                      onPress={() => queue.resendNow(message.id)}
+                      style={{ padding: 2 }}
+                    >
+                      <RotateCcw size={12} color={colors.blueDark} />
+                    </Pressable>
+                  )}
+                </>
+              ) : (
+                <>
+                  <Check size={12} color={colors.blueDark} />
+                  <Text style={s.small}>已发送</Text>
+                </>
+              )}
+            </View>
+          )}
           {messageReactions.length > 0 && (
             <View
               style={[
@@ -1342,6 +1378,9 @@ export function ChatScreen({
       threadId,
       setActionsFor,
       toggleReaction,
+      outbox.pending,
+      recentlySent,
+      queue,
     ],
   );
 
@@ -1556,8 +1595,10 @@ export function ChatScreen({
           contentContainerStyle={{
             gap: 13,
             // 静止时第一条消息正好落在顶栏下沿（照 Muse 的 contentInsetPx），不被遮；滚动时从顶栏底下穿过
-            // 顶栏现在自己占位（布局里的一行），正文天然从它下沿开始，这里只留呼吸
-            paddingTop: 10,
+            // 顶栏现在是**绝对定位的覆盖层**（不再在布局里占位）→ 这里必须自己让出顶栏高度：
+            // 静止时第一条消息落在顶栏下沿、不被遮；滚动时这段 padding 随内容滚走，正文顶到屏幕最上（Muse 的 contentInsetPx 做法）。
+            // 用 getChromeHeight() 而不是常量：手机/桌面、带不带状态栏都由 App 设置的那一个值统一决定。
+            paddingTop: getChromeHeight() + 10,
             paddingBottom: 20,
             flexGrow: 1,
           }}
@@ -1678,45 +1719,21 @@ export function ChatScreen({
             重试保存对话
           </Button>
         )}
-        {!!outbox.pending.length && (
+        {/* 待发消息已在消息流里以「发送中」时钟态呈现（见 renderItem 的徽标），
+            这里只保留「已暂缓」的说明与恢复入口（stop 会暂缓队列，是用户主动的选择）。 */}
+        {outbox.paused && !!outbox.pending.length && (
           <View style={{ padding: 12, gap: 6 }}>
-            <Text style={s.small}>
-              {outbox.paused ? "消息已暂缓" : "接下来"} · 发送前请保持应用在前台
-            </Text>
-            {outbox.pending.map((message) => (
-              <View key={message.id} style={[s.row, { gap: 8 }]}>
-                <Text numberOfLines={2} style={[s.muted, { flex: 1 }]}>
-                  {displayJevUserMessage(message.text, messages)}
-                </Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Remove queued message: ${displayJevUserMessage(message.text, messages)}`}
-                  hitSlop={10}
-                  onPress={() => {
-                    queue.remove(message.id);
-                    choiceCompletions.current
-                      .get(message.id)
-                      ?.reject(new Error("Choice removed from queue."));
-                    choiceCompletions.current.delete(message.id);
-                  }}
-                  style={{ padding: 8 }}
-                >
-                  <X size={16} color={colors.muted} />
-                </Pressable>
-              </View>
-            ))}
-            {outbox.paused && (
-              <Button
-                small
-                disabled={busy || !!saveError}
-                onPress={() => {
-                  queue.resume();
-                  flush();
-                }}
-              >
-                发送排队中的消息
-              </Button>
-            )}
+            <Text style={s.small}>消息已暂缓 · 点下面按钮继续发送</Text>
+            <Button
+              small
+              disabled={busy || !!saveError}
+              onPress={() => {
+                queue.resume();
+                flush();
+              }}
+            >
+              继续发送
+            </Button>
           </View>
         )}
         {picking && (
