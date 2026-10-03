@@ -26,15 +26,20 @@ appId: app.openmuse.mobile
 - tapOn:
     text: "应用"
 
-# ② 应用页里的「文件」入口
+# ② 应用页里的「文件」入口：它在折叠线以下，必须先滚到可见（真机上直接 tapOn 会报找不到）
+- scrollUntilVisible:
+    element:
+      text: "文件.*"
+    direction: DOWN
+    timeout: 20000
 - tapOn:
     text: "文件.*"
 
-# ③ 文件列表：打开一份 markdown（选出现在列表靠上处的那份）
+# ③ 文件列表：打开一份 markdown —— 选真机上出现在列表**靠上**处的那份，避免依赖长距离滚动
 - scrollUntilVisible:
     element:
       text: ".*金球奖新闻三篇摘要\\.md.*"
-    direction: UP
+    direction: DOWN
     timeout: 20000
 - tapOn:
     text: ".*金球奖新闻三篇摘要\\.md.*"
