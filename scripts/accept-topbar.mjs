@@ -33,14 +33,22 @@ await page.goto(URL, { waitUntil: "domcontentloaded" });
 await page.waitForTimeout(15000); // 等 dev bundle 起来
 
 const probe = () =>
-  page.evaluate(() => {
+  page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    // 等元素出现（最多 3s），避免时序问题把"没测到"误判成"被盖住"
+    const waitFor = async (fn, ms = 3000) => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < ms) { const v = fn(); if (v) return v; await sleep(80); }
+      return null;
+    };
+    const byLabel = (pred) => Array.from(document.querySelectorAll("[aria-label]")).find((e) => pred(e.getAttribute("aria-label") || ""));
     const findScroller = () => Array.from(document.querySelectorAll("div")).find((n) => n.scrollHeight > n.clientHeight + 150);
     const sc = findScroller();
     // 顶栏那一行：带 marginTop 的动画行（有 ZCode 之外的容器里最靠上的那条）
-    const bar = document.querySelector('[aria-label*="会话与菜单"]');
-    const barRow = bar ? bar.closest("div[style*='margin'], div") : null;
-    // 水豚卡片：点开头像面板的可点元素（aria-label 以 Open 开头）
-    const mascot = document.querySelector('[aria-label^="Open "]');
+    const bar = await waitFor(() => byLabel((l) => l.includes("会话") || l.includes("菜单")));
+    const barRow = bar;
+    // 水豚卡片：即"Open <名字> activity and approvals"那个可点元素
+    const mascot = await waitFor(() => byLabel((l) => l.startsWith("Open ") && l.includes("activity")));
     const box = (el) => {
       if (!el) return null;
       const r = el.getBoundingClientRect();
@@ -54,6 +62,7 @@ const probe = () =>
       barRow: box(barRow),
       mascot: box(mascot),
       content: content ? { top: Math.round(content.getBoundingClientRect().top), h: Math.round(content.getBoundingClientRect().height) } : null,
+      labels: Array.from(document.querySelectorAll("[aria-label]")).slice(0, 14).map((e) => (e.getAttribute("aria-label") || "").slice(0, 26)),
     };
   });
 
@@ -64,6 +73,7 @@ const setY = (y) =>
   }, y);
 
 const start = await probe();
+if (!start.bar && !start.mascot) console.log("  （诊断：当前 aria-label 有 → " + JSON.stringify(start.labels) + "）");
 if (start.y === null) {
   console.log("❌ 没找到可滚动容器（应用可能没起来）");
   await browser.close();
@@ -93,18 +103,27 @@ console.log("\n【B】顶栏位移的纯函数性（同一 y 两次读数必须�
 let deterministic = true;
 const marks = [0, 26, 52, 78, 104, 130];
 for (const m of marks) {
-  await setY(m);
-  await page.waitForTimeout(350);
-  const a = (await probe()).bar;
-  await setY(m);
-  await page.waitForTimeout(350);
-  const b = (await probe()).bar;
-  const same = a && b && a.top === b.top;
-  if (!same) deterministic = false;
-  console.log(`    y=${String(m).padStart(3)} → top ${a?.top} / ${b?.top} ${same ? "✓" : "✗"}`);
+  // 两次读数都记录**实际滚动位置**：用来区分"顶栏自身不确定"与"列表被复位到别处"
+  await setY(m); await page.waitForTimeout(400);
+  const r1 = await probe();
+  await setY(m); await page.waitForTimeout(400);
+  const r2 = await probe();
+  const same = r1.bar && r2.bar && r1.bar.top === r2.bar.top;
+  const scrollStable = r1.y === r2.y && r1.y === m;
+  if (!same) {
+    deterministic = false;
+    if (!scrollStable) {
+      console.log(`    y=${String(m).padStart(3)} → top ${r1.bar?.top} / ${r2.bar?.top} ✗  但实际滚动 ${r1.y} / ${r2.y} ≠ 目标 → **列表被复位**`);
+      fails.push(`列表在设定 y=${m} 时被复位到 ${r2.y}（滚动位置不听话）`);
+    } else {
+      console.log(`    y=${String(m).padStart(3)} → top ${r1.bar?.top} / ${r2.bar?.top} ✗  滚动位置正常 → **顶栏自身不确定**`);
+      fails.push(`同一 offset 顶栏位置不一致（y=${m}）`);
+    }
+  } else {
+    console.log(`    y=${String(m).padStart(3)} → top ${r1.bar?.top} / ${r2.bar?.top}  滚动 ${r1.y}/${r2.y} ✓`);
+  }
 }
-if (deterministic) pass("同一 offset 顶栏位置一致");
-else fail("同一 offset 顶栏位置不一致（会闪）");
+if (deterministic) pass("同一 offset 顶栏位置一致（且滚动位置听话）");
 
 console.log("\n【C】水豚卡片：层级 + 是否随滚动隐藏");
 await setY(0);
