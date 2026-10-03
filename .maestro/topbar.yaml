@@ -5,6 +5,13 @@
 #             目前先用文案/无障碍名近似匹配。
 appId: app.openmuse.mobile
 ---
+# 这个文件既被 smoke.yaml 当子流程 runFlow 调用，也会被 `maestro test .maestro/` **单独**当成一条 flow 跑。
+# 单独跑时必须自己把 App 拉起来 —— 否则断言是对着桌面（Launcher）做的：
+# 真事，2026-10-03 的 run 里 topbar 单跑就是这样挂的（失败层级里写的是
+# accessibilityText=Apps list / Search / Gallery / Phone …，那是桌面，不是我们的界面）。
+# 而 smoke 里内联跑的那次是 COMPLETED —— 顶栏与 4 条判据在真机上是过的。
+- launchApp
+- waitForAnimationToEnd
 - assertVisible:
     id: ".*"
     optional: true
