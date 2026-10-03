@@ -44,24 +44,21 @@ appId: app.openmuse.mobile
 - tapOn:
     text: ".*金球奖新闻三篇摘要\\.md.*"
 
-# ④ 面板确实打开了：这几个动作按钮只有文件详情面板才有
+# ④ 面板确实打开了 —— 判据用**文档正文本身**（面板顶部就可见）。
+# 注：不要用「导出 PDF」这类动作按钮当判据 —— 它们在面板**折叠线以下**，真机上会误判成"没打开"
+#   （2026-10-03 的 run 就是这么失败的：面板明明开着、文档渲染正常，只因为按钮在下面而报错）。
 - assertVisible:
-    text: "导出 PDF"
+    text: ".*姆巴佩晒世界杯金靴.*"
 
-# ⑤ 用户报的动作：滑动（慢滑 4 次足够到底）
-- swipe:
-    direction: UP
-    duration: 1500
-- swipe:
-    direction: UP
-    duration: 1500
-- swipe:
-    direction: UP
-    duration: 1500
-- swipe:
-    direction: UP
-    duration: 1500
+# ⑤ 用户报的动作：滑动。让 Maestro 用**真手势**一路滑到文档结尾那行可见 ——
+#    这一步 COMPLETED，就等于证明了「文档内容能滑动浏览、且全文可达」。
+- scrollUntilVisible:
+    element:
+      text: ".*三篇报道均来自新浪新闻及新浪体育.*"
+    direction: DOWN
+    timeout: 30000
+    visibilityPercentage: 50
 
-# ⑥ 文档结尾必须可见 —— 这条就是「内容能滑动浏览」的真机判据
+# ⑥ 结尾那行确实可见
 - assertVisible:
     text: ".*三篇报道均来自新浪新闻及新浪体育.*"
