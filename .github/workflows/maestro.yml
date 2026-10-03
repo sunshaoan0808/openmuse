@@ -60,6 +60,24 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # 令牌必须在**打包之前**换：EXPO_PUBLIC_* 是打包时内联进 bundle 的，包打完了再设环境变量对 APK 毫无影响
+      # （之前这一步排在 gradle 之后，等于白做）。变量用 E2E 专用名，由 App.tsx 显式读取 —— release 包里
+      # __DEV__ 为 false，原来那条 `__DEV__ && web` 的分支在真机上永远不成立（所以以前 CI 装出来的包必然是未登录态）。
+      - name: 用 access key 换会话令牌（必须在打包之前；供真机 E2E 以已登录态启动）
+        if: env.OPENMUSE_ACCESS_KEY != ''
+        run: |
+          set -e
+          TOKEN=$(curl -sS -X POST "$EXPO_PUBLIC_API_URL/api/session" \
+            -H "content-type: application/json" \
+            -d "{\"accessKey\":\"$OPENMUSE_ACCESS_KEY\"}" \
+            | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('token') or '')")
+          if [ -z "$TOKEN" ]; then
+            echo "::error::换不到会话令牌 —— 未登录态下顶栏/文件预览那几条真机判据会被静默跳过，等于白跑"
+            exit 1
+          fi
+          echo "EXPO_PUBLIC_E2E_FAKE_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "已换取会话令牌 ✓（长度 ${#TOKEN}，值不打印）"
+
       # 打包之前先类型检查：Metro 不做类型检查，所以"能打出包"完全不代表能跑起来。
       # 真人真事：漏了一个 import（使用了一个不存在的导出）照样打包成功，用户装上启动即崩。
       # 根 tsconfig 不包含 apps/mobile，所以两端都要跑。
@@ -105,17 +123,6 @@ jobs:
           cp "$APK" "out/openmuse-$(echo '${{ inputs.api_url }}' | tr -c 'A-Za-z0-9' '_').apk"
           ls -lh out
 
-      - name: 现有 access key 换取会话令牌（供 App 以已登录态启动）
-        if: env.OPENMUSE_ACCESS_KEY != ''
-        run: |
-          set -e
-          TOKEN=$(curl -sS -X POST "$EXPO_PUBLIC_API_URL/api/session" \
-            -H "authorization: Bearer $OPENMUSE_ACCESS_KEY" \
-            -H "content-type: application/json" -d "{\"accessKey\":\"$OPENMUSE_ACCESS_KEY\"}" \
-            | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('token') or d.get('sessionToken') or '')")
-          if [ -n "$TOKEN" ]; then echo "EXPO_PUBLIC_FAKE_TOKEN=$TOKEN" >> $GITHUB_ENV; echo "已换取会话令牌 ✓（长度 ${#TOKEN}，不打印内容）"; 
-          else echo "::warning::换取会话令牌失败，本次只跑登录态冒烟"; fi
-
       - name: Enable KVM（模拟器需要硬件加速，ubuntu runner 有）
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -135,13 +142,10 @@ jobs:
           ram-size: 4096M
           cores: 4
           disable-animations: false
-          script: |
-            set -e
-            APK=$(find . -name "*.apk" | head -1)
-            echo "安装 $APK"
-            adb install -r "$APK"
-            adb shell settings put global window_animation_scale 1.0 || true
-            maestro test .maestro/ --format junit --output maestro-report.xml || echo "MAESTRO_FAILED=1" >> $GITHUB_ENV
+          # 注意：这个 script 是**按行拆分、每行单独 sh -c** 执行的 —— 变量不跨行存活
+          # （原来 `APK=$(find ...)` 到下一行就没了 → `adb install -r ""` 直接失败，job 死在 Maestro 之前）。
+          # 所以真正的逻辑放在单一 shell 的脚本文件里。
+          script: bash .github/scripts/maestro-emulator.sh
 
       - name: 归档验收证据（报告 + 截图 + 录屏）
         if: always()
