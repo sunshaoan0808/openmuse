@@ -10,8 +10,10 @@ appId: app.openmuse.mobile
     optional: true
 
 # ① 顶栏存在
+# 注意：按钮的无障碍名是「打开会话与菜单」（App.tsx 的 label），Maestro 的 text 是**整串正则匹配**，
+# 所以必须用 .* 包住；写成裸 "会话与菜单" 会永远匹配不到（这条以前从没真跑过，一直没暴露）。
 - assertVisible:
-    text: "会话与菜单"
+    text: ".*会话与菜单.*"
     optional: false
 
 # ② 慢滑 2 秒（用户报的场景：慢速滑动）
