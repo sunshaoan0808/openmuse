@@ -281,11 +281,14 @@ export function MeasureCard({
   style,
   label,
   onPress,
+  onLongPress,
 }: {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
   label?: string;
   onPress: (rect: HeroRect) => void;
+  /** 可选的长按（同样量出矩形）：对话文件卡用它弹出「分享/复制链接/导出」操作菜单。 */
+  onLongPress?: (rect: HeroRect) => void;
 }) {
   const ref = useRef<ComponentRef<typeof AnimatedPressable>>(null);
   const { scale, onPressIn, onPressOut } = usePressScale(0.98);
@@ -303,6 +306,14 @@ export function MeasureCard({
         const node = ref.current as View | null;
         node?.measureInWindow((x, y, width, height) => onPress({ x, y, width, height }));
       }}
+      onLongPress={
+        onLongPress
+          ? () => {
+              const node = ref.current as View | null;
+              node?.measureInWindow((x, y, width, height) => onLongPress({ x, y, width, height }));
+            }
+          : undefined
+      }
       style={[style, { transform: [{ scale }] }]}
     >
       {children}

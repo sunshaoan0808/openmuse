@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
-const code = readFileSync(join(import.meta.dirname, "..", "src", "details.tsx"), "utf8");
+const details = readFileSync(join(import.meta.dirname, "..", "src", "details.tsx"), "utf8");
+// 文件判定与分享映射在 P1-9 抽到了 file-actions.ts（对话文件卡菜单与详情页共用同一份），
+// 这些断言跟着代码走：函数定义与映射钉 file-actions.ts，渲染分支顺序仍钉 details.tsx。
+const actions = readFileSync(join(import.meta.dirname, "..", "src", "file-actions.ts"), "utf8");
 /** 断言前先剥注释：文件里写着"以前掉进 Office 渲染器"之类的说明，注释会误导匹配 */
 const strip = (source: string) =>
   source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
@@ -14,7 +17,7 @@ const strip = (source: string) =>
  * 这组测试钉住：图片必须自己有一条分支，且在 Office 兜底**之前**。
  */
 test("图片有独立的预览分支，且排在 Office 兜底之前", () => {
-  const body = strip(code);
+  const body = strip(details);
   const image = body.indexOf("isImage(f) ? (");
   assert.ok(image > 0, "预览区里应该有 isImage(f) 的分支");
   const office = body.indexOf("<OfficeReader");
@@ -23,7 +26,7 @@ test("图片有独立的预览分支，且排在 Office 兜底之前", () => {
 });
 
 test("图片用 Image + Authorization 头取图（与 PdfReader 同一套鉴权）", () => {
-  const body = strip(code);
+  const body = strip(details);
   const start = body.indexOf("isImage(f) ? (");
   const branch = body.slice(start, start + 900);
   assert.match(branch, /<Image/, "图片分支里应该用 Image 组件");
@@ -32,26 +35,31 @@ test("图片用 Image + Authorization 头取图（与 PdfReader 同一套鉴权�
 });
 
 test("图片不会被当成 PDF/文本处理，也不会显示“N pages”", () => {
-  const body = strip(code);
-  assert.match(body, /function isImage/, "应该定义了 isImage");
+  const defined = strip(actions);
+  assert.match(defined, /function isImageFile/, "应该定义了 isImage（file-actions，两处共用）");
+  // 副标题里图片不该显示页数（仍在详情页的渲染分支里）
   assert.match(
-    body,
+    strip(details),
     /isText\(f\) \|\| isImage\(f\)[\s\S]{0,40}\? "" : `\$\{f\.pageCount\} pages/,
     "副标题里图片不该显示页数",
   );
-  // 分享时要跟着图片的真实格式走，不能再一律 .pdf
+  // 分享时要跟着图片的真实格式走，不能再一律 .pdf（映射在 file-actions，两个调用方共用）
   assert.match(
-    body,
-    /isImage\(f\)\s*\n?\s*\?\s*imageExtension\(f\)/,
+    defined,
+    /if \(isImageFile\(file\)\) return imageExtensionFor\(file\)/,
     "分享的扩展名要走 imageExtension",
   );
-  assert.match(body, /"public\.image"/, "分享的 UTI 要区分图片");
+  assert.match(defined, /"public\.image"/, "分享的 UTI 要区分图片");
 });
 
 test("文本型不再只有 md/txt：csv / json / 源码也进文本预览，且只有 markdown 走富文本", () => {
-  const body = strip(code);
-  assert.match(body, /csv/, "isText 应认识 csv");
-  assert.match(body, /function isMarkdown/, "应该区分 markdown 与其它文本");
+  assert.match(strip(actions), /csv/, "isText 应认识 csv");
+  assert.match(
+    strip(actions),
+    /function isMarkdownFile/,
+    "应该区分 markdown 与其它文本（file-actions，两处共用）",
+  );
+  const body = strip(details);
   const markdown = body.indexOf("isMarkdown(f) ? (");
   const plain = body.indexOf("{content}", markdown);
   const office = body.indexOf("<OfficeReader");
@@ -67,16 +75,21 @@ test("文本型不再只有 md/txt：csv / json / 源码也进文本预览，且
 });
 
 test("音视频有独立分支（排在 Office 之前），交给 MediaPlayer 播", () => {
-  const body = strip(code);
-  assert.match(body, /function isMedia/, "应该定义了 isMedia");
+  const defined = strip(actions);
+  assert.match(defined, /function isMediaFile/, "应该定义了 isMedia（file-actions，两处共用）");
+  const body = strip(details);
   const media = body.indexOf("isMedia(f) ? (");
   const office = body.indexOf("<OfficeReader");
-  assert.ok(media > 0, "预览区里应该有 isMedia 的分支");
+  assert.ok(media > 0, "预览区里应该有 isMedia(f) 的分支");
   assert.ok(media < office, "音视频分支必须排在 Office 兜底之前");
   assert.match(body, /<MediaPlayer url=\{url\}/, "音视频应交给 MediaPlayer");
-  // 分享也要跟着媒体走：扩展名、MIME、UTI 都不能再落到 pdf
-  assert.match(body, /mediaExtension\(f\)/, "分享扩展名要走 mediaExtension");
-  assert.match(body, /"public\.movie"|"public\.audio"/, "分享 UTI 要区分音视频");
+  // 分享也要跟着媒体走：扩展名、MIME、UTI 都不能再落到 pdf（映射在 file-actions）
+  assert.match(
+    defined,
+    /if \(isMediaFile\(file\)\) return mediaExtensionFor\(file\)/,
+    "分享扩展名要走 mediaExtension",
+  );
+  assert.match(defined, /"public\.movie"|"public\.audio"/, "分享 UTI 要区分音视频");
   // 副标题不该给音视频显示页数
   assert.match(body, /isText\(f\) \|\| isImage\(f\) \|\| isMedia\(f\) \? ""/, "音视频不该显示页数");
 });

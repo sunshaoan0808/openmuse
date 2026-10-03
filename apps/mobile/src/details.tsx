@@ -1,6 +1,4 @@
 import * as Clipboard from "expo-clipboard";
-import * as FileSystem from "expo-file-system/legacy";
-import * as Sharing from "expo-sharing";
 import {
   CalendarDays,
   Check,
@@ -50,6 +48,16 @@ import { browserAddress, browserSite } from "./browser-address";
 import { ComputerSheet } from "./computer";
 import DateTimeEditor from "./DateTimeEditor";
 import { localDateTime, zonedInstant } from "./date-time";
+// 文件判定与分享映射抽到了 file-actions.ts（对话里的文件卡菜单与这里共用同一份，可单测）
+import {
+  isHtmlFile as isHtml,
+  isImageFile as isImage,
+  isMarkdownFile as isMarkdown,
+  isMediaFile as isMedia,
+  isPdfFile as isPdf,
+  isTextFile as isText,
+} from "./file-actions";
+import { shareArtifactToSystem } from "./file-share";
 import HtmlReader from "./HtmlReader";
 import { fieldLabel, proposalStatusLabel } from "./labels";
 import MediaPlayer from "./MediaPlayer";
@@ -741,82 +749,7 @@ function ReviewLine({ label, value }: { label: string; value: string }) {
     </View>
   );
 }
-function isPdf(file: Artifact) {
-  return file.mimeType === "application/pdf" || /\.pdf$/i.test(file.name.trim());
-}
-/** 智能体写出来的文本文件（markdown / 纯文本）：直接读出来渲染，而不是丢给 Office 渲染器。 */
-function isText(file: Artifact) {
-  const mime = file.mimeType.toLowerCase();
-  if (mime.startsWith("text/")) return true;
-  if (/^application\/(json|.*\+json|yaml|.*\+yaml|toml|x-ndjson|xml)$/.test(mime)) return true;
-  return /\.(md|mdown|markdown|txt|log|csv|tsv|json|jsonl|ya?ml|toml|ini|conf|env|html?|xml|py|ts|tsx|jsx?|mjs|cjs|kt|java|go|rs|c|h|cpp|hpp|cc|sql|sh|bash|zsh|scss|css|plist)$/i.test(
-    file.name.trim(),
-  );
-}
-
-/** HTML：按文档渲染（Muse 也把 html 当文档）。注意它同时是 text/*，分支必须排在文本预览之前 */
-function isHtml(file: Artifact) {
-  return file.mimeType.toLowerCase() === "text/html" || /\.html?$/i.test(file.name.trim());
-}
-
-/** 音视频：对照 Muse，媒体也是"一等文件"。播放交给 MediaPlayer（native 用 WebView 内联播） */
-function isMedia(file: Artifact) {
-  const mime = file.mimeType.toLowerCase();
-  if (mime.startsWith("audio/") || mime.startsWith("video/")) return true;
-  return /\.(mp3|m4a|wav|ogg|aac|flac|mp4|mov|webm|mkv|avi)$/i.test(file.name.trim());
-}
-
-/** 分享/落盘用的扩展名：以 mimeType 为准，兜底 mp4 */
-function mediaExtension(file: Artifact): string {
-  const fromMime: Record<string, string> = {
-    "audio/mpeg": "mp3",
-    "audio/mp4": "m4a",
-    "audio/wav": "wav",
-    "audio/ogg": "ogg",
-    "audio/aac": "aac",
-    "audio/flac": "flac",
-    "video/mp4": "mp4",
-    "video/quicktime": "mov",
-    "video/webm": "webm",
-    "video/x-msvideo": "avi",
-  };
-  const known = fromMime[file.mimeType.toLowerCase()];
-  if (known) return known;
-  const fromName = file.name
-    .trim()
-    .match(/\.([A-Za-z0-9]+)$/)?.[1]
-    ?.toLowerCase();
-  return fromName ?? "mp4";
-}
-
-/** markdown 才走富文本渲染；csv / json / 源码按纯文本（等宽）渲染，否则表格与缩进会被吃掉 */
-function isMarkdown(file: Artifact) {
-  return (
-    file.mimeType.toLowerCase() === "text/markdown" ||
-    /\.(md|mdown|markdown)$/i.test(file.name.trim())
-  );
-}
-
-/** 图片：服务端一直认得（png/jpg/webp/gif），但移动端预览以前把它丢给 Office 渲染器 ⇒ 等于不能预览 */
-function isImage(file: Artifact) {
-  return (
-    file.mimeType.startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp|heic)$/i.test(file.name.trim())
-  );
-}
-
-/** 分享时用的扩展名：以 mimeType 为准，兜底看文件名，再兜底 png */
-function imageExtension(file: Artifact): string {
-  const fromMime = file.mimeType.split("/")[1]?.toLowerCase();
-  if (fromMime && /^(png|jpeg|jpg|webp|gif|bmp|heic)$/.test(fromMime))
-    return fromMime === "jpeg" ? "jpg" : fromMime;
-  const fromName = file.name
-    .trim()
-    .match(/\.([A-Za-z0-9]+)$/)?.[1]
-    ?.toLowerCase();
-  return fromName && /^(png|jpe?g|webp|gif|bmp|heic)$/.test(fromName)
-    ? fromName.replace("jpeg", "jpg")
-    : "png";
-}
+// 文件判定与分享映射见 file-actions.ts（文件顶部统一导入）——此处不再有本地副本
 function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
   const { api, refresh, open, close, workspace: w } = useWorkspace();
   const [values, setValues] = useState<Record<string, string | boolean>>(() =>
@@ -871,50 +804,8 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
   async function share() {
     setError("");
     try {
-      if (Platform.OS === "web") {
-        await Linking.openURL(url);
-        return;
-      }
-      // 扩展名与类型要跟着文件走：之前一律存成 .pdf 并声明 PDF，文本文件分享出去会是坏文件
-      const extension = isHtml(f)
-        ? "html"
-        : textFile
-          ? /[.](txt)$/i.test(f.name)
-            ? "txt"
-            : "md"
-          : isImage(f)
-            ? imageExtension(f)
-            : isMedia(f)
-              ? mediaExtension(f)
-              : "pdf";
-      const target = `${FileSystem.cacheDirectory}${f.id}.${extension}`;
-      await FileSystem.downloadAsync(url, target, {
-        headers: { Authorization: `Bearer ${api.token}` },
-      });
-      if (await Sharing.isAvailableAsync())
-        await Sharing.shareAsync(target, {
-          mimeType: isHtml(f)
-            ? "text/html"
-            : textFile
-              ? extension === "txt"
-                ? "text/plain"
-                : "text/markdown"
-              : isImage(f)
-                ? f.mimeType || `image/${extension}`
-                : isMedia(f)
-                  ? f.mimeType || "video/mp4"
-                  : "application/pdf",
-          UTI: isMedia(f)
-            ? f.mimeType.startsWith("video/")
-              ? "public.movie"
-              : "public.audio"
-            : isImage(f)
-              ? "public.image"
-              : extension === "pdf"
-                ? "com.adobe.pdf"
-                : "net.daringfireball.markdown",
-        });
-      else throw new Error("此设备不支持分享。");
+      // 分享的下载与扩展名/MIME/UTI 映射在 file-share.ts（对话里的文件卡菜单用同一份）
+      await shareArtifactToSystem(api, f);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
