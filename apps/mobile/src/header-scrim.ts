@@ -59,10 +59,6 @@ export function trackHeaderCollapse(event: { nativeEvent: { contentOffset: { y: 
 }
 
 /**
- * 顶栏收起时的 marginTop：0 → -height。用**负外边距**而不是 transform，这样顶栏真的让出位置，
- * 正文会顶上来（transform 只动画面、不动排版）。
- */
-/**
  * 顶栏位移（Muse 模型）：用 transform: translateY 只动像素、**不触发布局**。
  * 为什么必须这样：之前用 marginTop 位移 → 每帧改内容区视口高度 → chat.tsx 的 onLayout
  * 里"视口一变就 scrollToOffset 钉回"每帧触发 → 与滚动互相拉扯 = 慢滑持续闪烁的反馈环。

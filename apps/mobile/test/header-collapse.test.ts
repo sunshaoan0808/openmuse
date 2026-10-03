@@ -4,8 +4,9 @@ import {
   beginUserScroll,
   collapseProgress,
   endUserScroll,
-  hasUserScrolled,
   HEAD_TOP,
+  hasUserScrolled,
+  headerTranslateFor,
   resetUserScroll,
   userScrollActive,
 } from "../src/header-collapse";
@@ -28,6 +29,32 @@ test("同一位置永远同一进度（这就是'不闪'的结构性保证）", 
     // 反复求值必须完全一致：没有状态、没有计时窗口、没有累计量
     for (let i = 0; i < 5; i += 1) assert.equal(collapseProgress(y, H), first);
   }
+});
+
+test("顶栏位移（像素）是 scroll offset 的纯函数：同一 y 永远同一位移、交错求值不串状态", () => {
+  // 慢滑闪烁的根因（已修复）是位移触发布局重排 → 钉回逻辑被每帧触发 → 反馈环。
+  // 这里钉死数学面：位移映射无状态——同一 offset 交错、反复求值必须逐位一致。
+  const samples = [0, 12, 13, 26, 52, 78, 104, 160, 300];
+  const firstPass = samples.map((y) => headerTranslateFor(y, H));
+  for (let round = 0; round < 3; round += 1) {
+    // 交错求值（先大后小再回头）：任何隐藏状态/hysteresis 都会让结果漂移
+    const interleaved = [...samples]
+      .reverse()
+      .map((y) => headerTranslateFor(y, H))
+      .reverse();
+    assert.deepEqual(interleaved, firstPass, `第 ${round + 1} 轮交错求值出现漂移`);
+  }
+  for (let i = 0; i < samples.length; i += 1) {
+    for (let repeat = 0; repeat < 5; repeat += 1)
+      assert.equal(headerTranslateFor(samples[i], H), firstPass[i]);
+  }
+  // 与 collapseProgress 同一映射：translate = -progress × height
+  for (const y of samples) assert.equal(headerTranslateFor(y, H), -collapseProgress(y, H) * H || 0);
+  // 端点与 clamp
+  assert.equal(headerTranslateFor(0, H), 0, "在顶部位移为 0");
+  assert.equal(headerTranslateFor(HEAD_TOP, H), 0);
+  assert.equal(headerTranslateFor(H, H), -H, "滚满一个顶栏高度 → 完全滑出（-height）");
+  assert.equal(headerTranslateFor(H * 5, H), -H, "继续滚也封顶在 -height");
 });
 
 test("手指微抖只产生微小位移，不会跳变（真机反馈的闪烁）", () => {
