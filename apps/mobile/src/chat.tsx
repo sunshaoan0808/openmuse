@@ -57,7 +57,15 @@ import {
 } from "./image-attachment";
 import { confirmedJevSelection, displayJevUserMessage, latestJevPanelId } from "./jev-actions";
 import { JevInteractionContext, JevToolCard } from "./jev-tool-card";
-import { actionDetail, actionKindLabel, agentActionLabel, proposalStatusLabel } from "./labels";
+import {
+  actionDetail,
+  actionEmoji,
+  actionKindLabel,
+  agentActionLabel,
+  agentPhase,
+  agentPhaseLabel,
+  proposalStatusLabel,
+} from "./labels";
 import { MailToolCard } from "./mail-tool-card";
 import { type HeroRect, usePressScale, usePulse } from "./motion";
 import type { ReactNode } from "react";
@@ -454,7 +462,7 @@ export function ChatScreen({
   const [runStart, setRunStart] = useState<number | undefined>(undefined);
   const [runEnd, setRunEnd] = useState<number | undefined>(undefined);
   const [error, setError] = useState("");
-  const { setChatTrouble } = useAgentWorkspace();
+  const { setChatTrouble, setRunPhase, data: agentData } = useAgentWorkspace();
   const [loaded, setLoaded] = useState(false);
   const [picking, setPicking] = useState(false);
   const [attachments, setAttachments] = useState<string[]>([]);
@@ -875,6 +883,39 @@ export function ChatScreen({
     hydratedMessages.current = true;
   }
   const replying = busy || agent.isRunning;
+  // 相位推导（THINKING / TYPING / USING_TOOL…）：顶栏与工作气泡共用同一份推导。
+  // 出字的判定取"最后一条消息是带正文的助手消息"——足够区分"在打字"和"还没动静"。
+  const activeBackgroundCount = (agentData?.tasks ?? []).filter((task) =>
+    ["queued", "running", "scheduled"].includes(task.status),
+  ).length;
+  const lastMessage = messages[messages.length - 1];
+  const phase = agentPhase({
+    inFlightTool: !!inFlight,
+    startedTyping:
+      replying &&
+      !inFlight &&
+      lastMessage?.role === "assistant" &&
+      typeof lastMessage.content === "string" &&
+      lastMessage.content.trim().length > 0,
+    runActive: replying,
+    backgroundTasks: !replying && activeBackgroundCount > 0,
+    pendingApprovals: threadApprovals.length > 0,
+  });
+  useEffect(() => {
+    // 只在本会话真的在跑时接管顶栏；空闲时置空，让位给服务端的实时活动
+    //（后台任务的动态只有服务端知道）。
+    if (!replying) {
+      setRunPhase("");
+      return;
+    }
+    if (phase === "USING_TOOL" && inFlight) {
+      setRunPhase(
+        `${actionEmoji(inFlight.name)} ${agentActionLabel(inFlight.name)}${inFlight.detail ? ` · ${inFlight.detail}` : ""}`,
+      );
+      return;
+    }
+    setRunPhase(agentPhaseLabel(phase, activeBackgroundCount));
+  }, [phase, inFlight, replying, activeBackgroundCount, setRunPhase]);
   // 照 Muse 的 HatchSuggestionBar：把最新两三条未处理的灵感当作输入框上方的可直接点建议
 
   // 顶栏是浮在内容上的玻璃层，内容必须**从屏幕最顶端开始**（含状态栏那块），
@@ -1183,17 +1224,21 @@ export function ChatScreen({
             ]}
           >
             <ThinkingDots />
-            {/* 说人话：正在搜索网页 · 金球奖 今年 得主（Muse 式实时状态） */}
-            {inFlight && (
-              <View style={{ gap: 2, flexShrink: 1 }}>
-                <Text style={s.text}>{agentActionLabel(inFlight.name)}</Text>
-                {!!inFlight.detail && (
-                  <Text style={s.small} numberOfLines={1}>
-                    {inFlight.detail}
-                  </Text>
-                )}
-              </View>
-            )}
+            {/* 相位说人话：思考期不再沉默（对标 Muse 的 THINKING/TYPING/USING_TOOL 三段） */}
+            <View style={{ gap: 2, flexShrink: 1 }}>
+              <Text style={s.text}>
+                {phase === "USING_TOOL" && inFlight
+                  ? `${actionEmoji(inFlight.name)} ${agentActionLabel(inFlight.name)}`
+                  : phase === "TYPING"
+                    ? `💬 ${agentPhaseLabel(phase)}`
+                    : `🤔 ${agentPhaseLabel(phase)}`}
+              </Text>
+              {phase === "USING_TOOL" && inFlight && !!inFlight.detail && (
+                <Text style={s.small} numberOfLines={1}>
+                  {inFlight.detail}
+                </Text>
+              )}
+            </View>
           </View>
         )}
         {/* 服务重启/出错导致上一轮没跑完：说清楚并给重试入口，而不是让人干等 */}

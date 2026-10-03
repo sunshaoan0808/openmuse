@@ -29,12 +29,20 @@ interface AgentContextValue {
    */
   chatTrouble: string;
   setChatTrouble: (text: string) => void;
+  /**
+   * 聊天层推导出的当前相位文案（空串 = 没在跑）。顶栏优先显示它：
+   * THINKING/TYPING 这两段只有客户端知道（服务端只在工具调用时才有话可说），
+   * 聊天页算好推上来，顶栏/头像面板直接用——三处共用同一份推导（labels.agentPhase）。
+   */
+  runPhase: string;
+  setRunPhase: (text: string) => void;
 }
 const AgentContext = createContext<AgentContextValue | null>(null);
 export function AgentWorkspaceProvider({ children }: { children: ReactNode }) {
   const { api } = useWorkspace();
   const [data, setData] = useState<AgentWorkspace>();
   const [chatTrouble, setChatTrouble] = useState("");
+  const [runPhase, setRunPhase] = useState("");
   const [error, setError] = useState("");
   const requestVersion = useRef(0);
   const refresh = useCallback(async () => {
@@ -113,7 +121,17 @@ export function AgentWorkspaceProvider({ children }: { children: ReactNode }) {
   );
   return (
     <AgentContext.Provider
-      value={{ data, error, refresh, mutate, delegate, chatTrouble, setChatTrouble }}
+      value={{
+        data,
+        error,
+        refresh,
+        mutate,
+        delegate,
+        chatTrouble,
+        setChatTrouble,
+        runPhase,
+        setRunPhase,
+      }}
     >
       {children}
     </AgentContext.Provider>
