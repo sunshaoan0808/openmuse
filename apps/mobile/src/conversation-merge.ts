@@ -1,10 +1,18 @@
 /**
  * 游标拉取后的合并：服务端是唯一事实来源，本地可能还有它还不知道的消息
  * （刚发出、还没被确认的那条），所以按 id 去重后以服务端顺序为准、本地多出来的接在后面。
+ *
+ * tombstones（撤回墓碑，2026-10-03）：服务端在每个拉取响应里全量带上已撤回的消息 id，
+ * 合并时把本地副本一并清掉——否则"另一端撤回后，这台设备重开又看到它复活"。
  */
 export type AnyMessage = { id?: string } & Record<string, unknown>;
 
-export function mergeConversation(local: readonly AnyMessage[], incoming: readonly AnyMessage[]) {
+export function mergeConversation(
+  local: readonly AnyMessage[],
+  incoming: readonly AnyMessage[],
+  tombstones: readonly string[] = [],
+) {
+  const dead = new Set(tombstones);
   // incoming 常常只是**游标之后的增量**（一两条），所以不能直接把它前置。
   // 两边都带服务端的单调 seq（本地历史也是从服务端来的），所以正确做法是**一起按 seq 排**；
   // 本地那条刚发出、还没被服务端确认的没有 seq，排在最后。
@@ -18,6 +26,7 @@ export function mergeConversation(local: readonly AnyMessage[], incoming: readon
       anonymous.push(message);
       return;
     }
+    if (dead.has(id)) return; // 已撤回：本地副本一并清掉
     if (!byId.has(id)) byId.set(id, message); // incoming 先收集 → 同 id 以服务端版本为准
   };
   for (const message of incoming) collect(message);

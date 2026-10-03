@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { acknowledgedIds, mergeConversation } from "../src/conversation-merge.ts";
 
-const msg = (id: string, role: string, seq?: number) => ({ id, role, content: id, ...(seq === undefined ? {} : { seq }) });
+const msg = (id: string, role: string, seq?: number) => ({
+  id,
+  role,
+  content: id,
+  ...(seq === undefined ? {} : { seq }),
+});
 
 test("增量拉取时不能把新消息前置（真机：新回复被顶到最上面、被悬浮顶栏压住，看起来像丢了）", () => {
   // 本地已有 1..47，服务端增量只回 48
@@ -36,4 +41,30 @@ test("没有 seq 时保持原顺序（不瞎排）", () => {
 test("acknowledgedIds 只认服务端回来的 id", () => {
   const ids = acknowledgedIds([msg("x", "user", 1), { role: "user" }]);
   assert.deepEqual([...ids], ["x"]);
+});
+
+test("墓碑：本地副本被清掉，增量里也不会复活（另一端撤回后这台设备不再看到它）", () => {
+  const local = [msg("m1", "user", 1), msg("m2", "assistant", 2)];
+  const merged = mergeConversation(local, [], ["m1"]);
+  assert.deepEqual(
+    merged.map((m) => m.id),
+    ["m2"],
+    "已撤回的消息要从合并结果里清掉",
+  );
+  // 服务端补发同一条（至少一次投递的重试）也不会复活
+  const resurrect = mergeConversation(local, [msg("m1", "user", 1)], ["m1"]);
+  assert.deepEqual(
+    resurrect.map((m) => m.id),
+    ["m2"],
+  );
+  // 不带墓碑时行为与旧契约完全一致
+  assert.equal(mergeConversation(local, []).length, 2);
+});
+
+test("墓碑之外还带 reactions 更新：同 id 以服务端版本为准（replace 不重复）", () => {
+  const local = [msg("m1", "assistant", 1)];
+  const incoming = [{ ...msg("m1", "assistant", 2), reactions: ["🔥"] }];
+  const merged = mergeConversation(local, incoming);
+  assert.equal(merged.length, 1);
+  assert.deepEqual(merged[0].reactions, ["🔥"]);
 });

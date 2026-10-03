@@ -11,7 +11,18 @@
 /** 会话消息：AG-UI 的 Message 加游标与时间。 */
 export type StoredMessage = { id: string; seq?: number; at?: string } & Record<string, unknown>;
 
-export type Conversation = { id: string; messages: StoredMessage[]; seq: number };
+/** 撤回墓碑：消息从会话移除后留下的记号——增量拉取时客户端据此清掉本地副本（不复活）。 */
+export interface Tombstone {
+  id: string;
+  at: string;
+}
+
+export type Conversation = {
+  id: string;
+  messages: StoredMessage[];
+  seq: number;
+  tombstones?: Tombstone[];
+};
 
 export function emptyConversation(id: string): Conversation {
   return { id, messages: [], seq: 0 };
@@ -34,7 +45,11 @@ export function appendMessages(
   now: string,
 ): { next: Conversation; added: StoredMessage[] } {
   const base = current ?? emptyConversation(id);
-  const known = new Set(base.messages.map((message) => message.id));
+  // 墓碑也在 known 里：原消息的重试补发（至少一次投递）不能把已撤回的消息复活
+  const known = new Set([
+    ...base.messages.map((message) => message.id),
+    ...(base.tombstones ?? []).map((tombstone) => tombstone.id),
+  ]);
   const messages = [...base.messages];
   const added: StoredMessage[] = [];
   let seq = base.seq;
@@ -47,21 +62,99 @@ export function appendMessages(
     messages.push(stored);
     added.push(stored);
   }
-  return { next: { id, messages, seq }, added };
+  return { next: { id, messages, seq, tombstones: base.tombstones }, added };
 }
 
-/** 游标拉取：只给 seq 大于 since 的消息（since 缺省=全量）。 */
+/** 游标拉取：只给 seq 大于 since 的消息（since 缺省=全量）；墓碑总是全量带上（客户端据此清本地）。 */
 export function messagesSince(
   current: Conversation | null,
   id: string,
   since?: number,
-): { messages: StoredMessage[]; seq: number } {
+): { messages: StoredMessage[]; seq: number; tombstones: string[] } {
   const conversation = current ?? emptyConversation(id);
   const floor = typeof since === "number" && Number.isFinite(since) ? since : -1;
   return {
     messages: conversation.messages.filter((message) => (message.seq ?? 0) > floor),
     seq: conversation.seq,
+    tombstones: (conversation.tombstones ?? []).map((tombstone) => tombstone.id),
   };
+}
+
+/**
+ * 撤回：从会话里移除消息并写一条墓碑。按消息 id 幂等——重复请求不会再记一条。
+ * 只改会话记录本身；增量拉取靠响应里永远带上的墓碑列表让其它端清掉本地副本。
+ */
+export function unsendMessage(
+  current: Conversation | null,
+  id: string,
+  messageId: string,
+  now: string,
+): { next: Conversation; removed: boolean } {
+  const base = current ?? emptyConversation(id);
+  const tombstones = base.tombstones ?? [];
+  if (tombstones.some((tombstone) => tombstone.id === messageId))
+    return { next: base, removed: false };
+  if (!base.messages.some((message) => message.id === messageId))
+    return { next: base, removed: false };
+  return {
+    next: {
+      ...base,
+      messages: base.messages.filter((message) => message.id !== messageId),
+      tombstones: [...tombstones, { id: messageId, at: now }],
+    },
+    removed: true,
+  };
+}
+
+/** 消息反应的固定表情集（对标 Muse 的反应面板；单用户体系下一条消息上每个表情至多一个）。 */
+export const REACTION_EMOJIS: readonly string[] = ["👍", "👎", "❤️", "😂", "😮", "😢", "🙏", "🔥"];
+
+/**
+ * 在消息上切换一个反应（有则删、无则加）。被改的消息 **seq 顶到最新**——
+ * 这样游标增量拉取会把它当成一条新事件重投递给其它端，合并按 id 以服务端版本为准。
+ */
+export function toggleReaction(
+  current: Conversation | null,
+  id: string,
+  messageId: string,
+  emoji: string,
+  now: string,
+): { next: Conversation; updated: StoredMessage | null } {
+  const base = current ?? emptyConversation(id);
+  const index = base.messages.findIndex((message) => message.id === messageId);
+  if (index === -1) return { next: base, updated: null };
+  const message = base.messages[index];
+  const currentReactions = Array.isArray(message.reactions)
+    ? (message.reactions as string[]).filter((item) => typeof item === "string")
+    : [];
+  const reactions = currentReactions.includes(emoji)
+    ? currentReactions.filter((item) => item !== emoji)
+    : [...currentReactions, emoji];
+  const updated: StoredMessage = { ...message, reactions, seq: base.seq + 1 };
+  const messages = [...base.messages];
+  messages[index] = updated;
+  return { next: { ...base, messages, seq: base.seq + 1 }, updated };
+}
+
+/** 反应的使用频率计数（对标 Muse 的 HatchReactionUsageStore：面板按用得多在前排序）。 */
+export function noteReactionUsage(
+  counts: Record<string, number> | undefined,
+  emoji: string,
+  used: boolean,
+): Record<string, number> {
+  const next = { ...(counts ?? {}) };
+  const value = typeof next[emoji] === "number" && next[emoji] > 0 ? next[emoji] : 0;
+  next[emoji] = used ? value + 1 : value;
+  return next;
+}
+
+/** 面板顺序：用得多的在前；没用过的保持默认顺序（不会把生面孔排到用过的前面）。 */
+export function orderReactionsByUsage(counts: Record<string, number> | undefined): string[] {
+  const frequency = (emoji: string) => {
+    const value = counts?.[emoji];
+    return typeof value === "number" && value > 0 ? value : 0;
+  };
+  return [...REACTION_EMOJIS].sort((left, right) => frequency(right) - frequency(left));
 }
 
 /** 一轮对话（客户端发一条消息 → 服务端跑完一条回复）。 */
