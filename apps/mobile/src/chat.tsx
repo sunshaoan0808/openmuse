@@ -56,7 +56,12 @@ import { loadCursor, outboxStorage, saveCursor } from "./conversation-store";
 import { guard } from "./crash-log";
 import { hapticPress, hapticSuccess, hapticTap, hapticWarn } from "./haptics";
 import { beginUserScroll, endUserScroll, userScrollActive } from "./header-collapse";
-import { getChromeHeight, headerScrollHandler, markUserScroll, trackHeaderCollapse } from "./header-scrim";
+import {
+  getChromeHeight,
+  headerScrollHandler,
+  markUserScroll,
+  trackHeaderCollapse,
+} from "./header-scrim";
 import {
   captureImage,
   documentUploadMessage,
