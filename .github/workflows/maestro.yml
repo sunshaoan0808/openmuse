@@ -10,6 +10,10 @@ on:
         description: "API base URL"
         required: true
         default: "https://openmuse.claw.ssan.me"
+      build_type:
+        description: "Gradle task"
+        required: true
+        default: "assembleRelease"
 
 env:
   EXPO_PUBLIC_API_URL: ${{ inputs.api_url }}
@@ -78,7 +82,18 @@ jobs:
           echo "EXPO_PUBLIC_API_URL=$EXPO_PUBLIC_API_URL"
           echo "ABIs=${{ inputs.abis }}"
           chmod +x gradlew
-          ./gradlew ${{ inputs.build_type }} --no-daemon --stacktrace
+          ./gradlew ${{ inputs.build_type }} --no-daemon --stacktrace || { echo '::error::gradle 失败'; exit 1; }
+
+      - name: 硬校验：APK 必须真的存在（不信步骤上的 ✓，只信产物）
+        run: |
+          set -e
+          APK=$(find apps/mobile/android/app/build/outputs/apk -name "*.apk" 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::没有产出任何 APK —— gradle 极可能空跑（检查 build_type 是否为空）"
+            ls -la apps/mobile/android/app/build/outputs/ 2>/dev/null || true
+            exit 1
+          fi
+          echo "产物: $APK ($(du -h "$APK" | cut -f1))"
 
       - name: Collect APK
         id: collect
