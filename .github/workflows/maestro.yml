@@ -13,8 +13,8 @@ on:
 
 env:
   EXPO_PUBLIC_API_URL: ${{ inputs.api_url }}
-  # 令牌只能走 secret：公开仓库的 workflow input 会明文出现在运行记录里（安全红线）
-  EXPO_PUBLIC_FAKE_TOKEN: ${{ secrets.OPENMUSE_TEST_TOKEN }}
+  # 会话令牌在跑之前用 access key 现换（access key 长期有效，会话只有 24h）——从不落日志
+  OPENMUSE_ACCESS_KEY: ${{ secrets.OPENMUSE_ACCESS_KEY }}
 
 jobs:
   maestro:
@@ -89,6 +89,17 @@ jobs:
           mkdir -p out
           cp "$APK" "out/openmuse-$(echo '${{ inputs.api_url }}' | tr -c 'A-Za-z0-9' '_').apk"
           ls -lh out
+
+      - name: 现有 access key 换取会话令牌（供 App 以已登录态启动）
+        if: env.OPENMUSE_ACCESS_KEY != ''
+        run: |
+          set -e
+          TOKEN=$(curl -sS -X POST "$EXPO_PUBLIC_API_URL/api/session" \
+            -H "authorization: Bearer $OPENMUSE_ACCESS_KEY" \
+            -H "content-type: application/json" -d '{}' \
+            | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('token') or d.get('sessionToken') or '')")
+          if [ -n "$TOKEN" ]; then echo "EXPO_PUBLIC_FAKE_TOKEN=$TOKEN" >> $GITHUB_ENV; echo "已换取会话令牌 ✓（长度 ${#TOKEN}，不打印内容）"; 
+          else echo "::warning::换取会话令牌失败，本次只跑登录态冒烟"; fi
 
       - name: Enable KVM（模拟器需要硬件加速，ubuntu runner 有）
         run: |
