@@ -111,7 +111,7 @@ jobs:
           set -e
           TOKEN=$(curl -sS -X POST "$EXPO_PUBLIC_API_URL/api/session" \
             -H "authorization: Bearer $OPENMUSE_ACCESS_KEY" \
-            -H "content-type: application/json" -d '{}' \
+            -H "content-type: application/json" -d "{\"accessKey\":\"$OPENMUSE_ACCESS_KEY\"}" \
             | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('token') or d.get('sessionToken') or '')")
           if [ -n "$TOKEN" ]; then echo "EXPO_PUBLIC_FAKE_TOKEN=$TOKEN" >> $GITHUB_ENV; echo "已换取会话令牌 ✓（长度 ${#TOKEN}，不打印内容）"; 
           else echo "::warning::换取会话令牌失败，本次只跑登录态冒烟"; fi
