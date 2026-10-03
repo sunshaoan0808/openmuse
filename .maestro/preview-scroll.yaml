@@ -1,0 +1,62 @@
+# 文件预览「内容能滑动浏览」——真机级判据
+#
+# 起因：用户报「文件点开后，整个页面在滑动，md 的内容不滑」。
+# 根因：预览里的文档被套在一层 maxHeight:460 的内层 ScrollView 里，与面板自己的
+# ScrollView 形成**嵌套滚动**；真机上外层抢走竖向手势 → 盒子以下的内容够不到。
+# Web 验收台复现不出来（RN-Web 走的是另一条渲染路径），所以这条判据只能在真机/模拟器上量。
+#
+# 判据：打开一份 markdown → 滑到底 → 断言文档**结尾**那句话可见。
+#       结尾可见 ⇔ 全文可达 ⇔ 内容能滑动浏览。
+#       （修好之前：正文被裁在 460 的盒子里，这行永远够不到。）
+#
+# 依赖：① App 已登录（CI 用 access key 换的会话令牌）；
+#       ② 目标实例里有这份文档 —— 公开实例 https://openmuse.claw.ssan.me 上有。
+# 运行：maestro test .maestro/preview-scroll.yaml
+appId: app.openmuse.mobile
+---
+- launchApp
+- waitForAnimationToEnd
+
+# ① 底部导航 → 应用（applicationLabel：「应用」）
+- tapOn:
+    text: "应用"
+
+# ② 应用页里的「文件」入口（可能在折叠线以下，先滚到可见）
+- scrollUntilVisible:
+    element:
+      text: "文件.*"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    text: "文件.*"
+
+# ③ 文件列表里挑一份 markdown（选名字唯一的那份，避免同名多份点错）
+- scrollUntilVisible:
+    element:
+      text: ".*咖啡聚会协调计划\\.md.*"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    text: ".*咖啡聚会协调计划\\.md.*"
+
+# ④ 面板确实打开了：这几个动作按钮只有文件详情面板才有
+- assertVisible:
+    text: "导出 PDF"
+
+# ⑤ 用户报的动作：滑动（慢滑 4 次足够到底）
+- swipe:
+    direction: UP
+    duration: 1500
+- swipe:
+    direction: UP
+    duration: 1500
+- swipe:
+    direction: UP
+    duration: 1500
+- swipe:
+    direction: UP
+    duration: 1500
+
+# ⑥ 文档结尾必须可见 —— 这条就是「内容能滑动浏览」的真机判据
+- assertVisible:
+    text: ".*计划制定时间.*"
