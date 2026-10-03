@@ -7,6 +7,7 @@ import {
   useRenderTool,
   useRenderToolCall,
 } from "@copilotkit/react-native/headless";
+import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
 import {
   ArrowDown,
@@ -25,12 +26,15 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   FlatList,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
+  Share,
   Text,
   TextInput,
   type TextStyle,
@@ -432,6 +436,134 @@ function ReceiptRow({ action, onPress }: { action: ActionProposal; onPress: () =
   );
 }
 
+/** 反应面板的固定表情集（与服务端 REACTION_EMOJIS 一致；拉取失败时的兜底顺序）。 */
+const REACTION_FALLBACK: readonly string[] = ["👍", "👎", "❤️", "😂", "😮", "😢", "🙏", "🔥"];
+
+/** 长按消息的操作菜单（复制 / 再次发送或分享为文本 / 回应 / 撤回）。 */
+function MessageActionsModal({
+  target,
+  onClose,
+  onCopy,
+  onResend,
+  onShare,
+  onReact,
+  onUnsend,
+}: {
+  target: { id: string; role: string; text: string };
+  onClose: () => void;
+  onCopy: (text: string) => Promise<void>;
+  onResend: (text: string) => void;
+  onShare: (text: string) => void;
+  onReact: (messageId: string) => void;
+  onUnsend: (messageId: string) => void;
+}) {
+  const items: { key: string; label: string; danger?: boolean; run: () => void }[] = [
+    {
+      key: "copy",
+      label: "复制",
+      run: () => {
+        onClose();
+        void onCopy(target.text);
+      },
+    },
+  ];
+  if (target.role === "user")
+    items.push({ key: "resend", label: "再次发送", run: () => onResend(target.text) });
+  else
+    items.push({
+      key: "share",
+      label: "分享为文本",
+      run: () => {
+        onClose();
+        onShare(target.text);
+      },
+    });
+  items.push({ key: "react", label: "回应…", run: () => onReact(target.id) });
+  if (target.role === "user")
+    items.push({ key: "unsend", label: "撤回", danger: true, run: () => onUnsend(target.id) });
+  return (
+    <Modal transparent visible animationType="fade" onRequestClose={onClose}>
+      <Pressable style={s.modalShade} onPress={onClose}>
+        <Pressable
+          style={{
+            backgroundColor: colors.card,
+            borderRadius: 22,
+            width: "100%",
+            maxWidth: 420,
+            overflow: "hidden",
+          }}
+        >
+          <Text numberOfLines={2} style={[s.small, { padding: 16, paddingBottom: 12 }]}>
+            {target.text}
+          </Text>
+          <View style={{ height: 1, backgroundColor: colors.line }} />
+          {items.map((item) => (
+            <Pressable
+              key={item.key}
+              accessibilityRole="button"
+              accessibilityLabel={item.label}
+              onPress={item.run}
+              style={({ pressed }) => [
+                { paddingHorizontal: 18, paddingVertical: 14 },
+                pressed && { backgroundColor: colors.canvas },
+              ]}
+            >
+              <Text style={[s.text, item.danger && { color: colors.danger }]}>{item.label}</Text>
+            </Pressable>
+          ))}
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+/** 反应面板：固定表情集按使用频率排序（服务端计数）。 */
+function ReactionPickerModal({
+  emojis,
+  onPick,
+  onClose,
+}: {
+  emojis: readonly string[];
+  onPick: (emoji: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal transparent visible animationType="fade" onRequestClose={onClose}>
+      <Pressable style={s.modalShade} onPress={onClose}>
+        <View
+          style={{
+            backgroundColor: colors.card,
+            borderRadius: 22,
+            padding: 14,
+            width: "100%",
+            maxWidth: 360,
+          }}
+        >
+          <Text style={[s.small, { marginBottom: 8, paddingHorizontal: 4 }]}>回应这条消息</Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+            {emojis.map((emoji) => (
+              <Pressable
+                key={emoji}
+                accessibilityRole="button"
+                accessibilityLabel={`回应 ${emoji}`}
+                onPress={() => onPick(emoji)}
+                style={({ pressed }) => ({
+                  paddingVertical: 8,
+                  paddingHorizontal: 12,
+                  borderRadius: 14,
+                  backgroundColor: pressed ? colors.sky : colors.canvas,
+                })}
+              >
+                <Text style={{ fontSize: 24 }}>{emoji}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      </Pressable>
+    </Modal>
+  );
+}
+
 export function ChatScreen({
   prompt,
   thread,
@@ -596,12 +728,16 @@ export function ChatScreen({
       messages: Message[];
       seq: number;
       turn?: { status: string } | null;
+      /** 已撤回的消息 id（服务端每次都全量带上）：合并时把本地副本清掉，不复活 */
+      tombstones?: string[];
     }>(
       `/api/conversation?threadId=${encodeURIComponent(threadId)}${since === undefined ? "" : `&since=${since}`}`,
     );
     const incoming = result.messages ?? [];
-    if (incoming.length)
-      agent.setMessages(mergeConversation(agent.messages, incoming) as Message[]);
+    if (incoming.length || result.tombstones?.length)
+      agent.setMessages(
+        mergeConversation(agent.messages, incoming, result.tombstones ?? []) as Message[],
+      );
     await saveCursor(threadId, result.seq ?? 0);
     for (const id of acknowledgedIds(incoming)) queue.remove(id);
     setLastTurn(result.turn ?? null);
@@ -972,6 +1108,81 @@ export function ChatScreen({
    * 但只要 renderItem 与 data 的身份稳定，FlatList 就不会重刷各行——这是虚拟化收益能兑现的前提。
    * 行内容与拆分前的 visible.map 完全一致，只是换了挂载方式。
    */
+  // ---- 消息操作（长按菜单）与消息反应（对标 Muse 的 unsend / reactions）----
+  const [actionsFor, setActionsFor] = useState<{ id: string; role: string; text: string } | null>(
+    null,
+  );
+  const [pickerFor, setPickerFor] = useState<string | null>(null);
+  const [reactionOrder, setReactionOrder] = useState<string[]>([]);
+  const openReactionPicker = useCallback((messageId: string) => {
+    setActionsFor(null);
+    setPickerFor(messageId);
+  }, []);
+  // 反应面板的顺序（用得多在前）在面板打开时取一次；拿不到就用固定顺序
+  useEffect(() => {
+    if (!pickerFor) return;
+    let active = true;
+    void api
+      .request<{ emojis: string[] }>("/api/conversation/reactions")
+      .then((result) => {
+        if (active) setReactionOrder(result.emojis ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [api, pickerFor]);
+  const toggleReaction = useCallback(
+    async (messageId: string, emoji: string) => {
+      // 乐观更新：本端先切；服务端确认后由游标拉取对齐（同 id 以服务端版本为准）。
+      const before = agent.messages;
+      agent.setMessages(
+        before.map((message) => {
+          if (message.id !== messageId) return message;
+          const current = Array.isArray((message as { reactions?: unknown }).reactions)
+            ? ((message as unknown as { reactions: string[] }).reactions ?? [])
+            : [];
+          const reactions = current.includes(emoji)
+            ? current.filter((item) => item !== emoji)
+            : [...current, emoji];
+          return { ...message, reactions };
+        }) as Message[],
+      );
+      try {
+        await api.request("/api/conversation/reactions", { threadId, messageId, emoji }, "POST");
+      } catch (e) {
+        agent.setMessages(before as Message[]);
+        setError(humanizeNetworkError(e));
+      }
+    },
+    [agent, api, threadId],
+  );
+  const unsendMessage = useCallback(
+    async (messageId: string) => {
+      // 本端立即移除；服务端写墓碑——其它端和重开拉取时也不会复活（见 conversation-merge）。
+      const before = agent.messages;
+      agent.setMessages(before.filter((message) => message.id !== messageId) as Message[]);
+      try {
+        await api.request(
+          `/api/conversation?threadId=${encodeURIComponent(threadId)}&messageId=${encodeURIComponent(messageId)}`,
+          undefined,
+          "DELETE",
+        );
+      } catch (e) {
+        // 服务端没删上：消息会在下次拉取时回来，如实报错并把真相拉回来
+        setError(humanizeNetworkError(e));
+        void syncConversation().catch(() => {});
+      }
+    },
+    [agent, api, threadId, syncConversation],
+  );
+  const copyMessageText = useCallback(async (text: string) => {
+    // 正文渲染会插入零宽空格折行；复制不能把不可见字符带给别人
+    await Clipboard.setStringAsync(text.replace(/\u200B/g, ""));
+  }, []);
+  const shareMessageText = useCallback((text: string) => {
+    void Share.share({ message: text.replace(/\u200B/g, "") }).catch(() => {});
+  }, []);
   const renderItem = useCallback(
     ({ item: message }: { item: Message }) => {
       const user = message.role === "user";
@@ -982,6 +1193,11 @@ export function ChatScreen({
             : message.content
           : "";
       const toolCalls = "toolCalls" in message ? message.toolCalls || [] : [];
+      const messageReactions = Array.isArray((message as { reactions?: unknown }).reactions)
+        ? ((message as unknown as { reactions: unknown[] }).reactions ?? []).filter(
+            (emoji): emoji is string => typeof emoji === "string",
+          )
+        : [];
       const fresh = !animatedMessages.current.has(message.id);
       animatedMessages.current.add(message.id);
       return (
@@ -996,7 +1212,11 @@ export function ChatScreen({
         >
           {!!text &&
             (user ? (
-              <View
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="消息操作：复制、再次发送或撤回"
+                onLongPress={() => setActionsFor({ id: message.id, role: "user", text })}
+                delayLongPress={350}
                 style={{
                   paddingHorizontal: 16,
                   paddingVertical: 13,
@@ -1008,10 +1228,16 @@ export function ChatScreen({
                 <Text selectable style={[s.text, { fontSize: 16, lineHeight: 24 }]}>
                   {text}
                 </Text>
-              </View>
+              </Pressable>
             ) : (
               // Muse 的助手回复是纯文本直接铺在底色上，不套气泡卡片
-              <View style={{ paddingVertical: 2 }}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="消息操作：复制、分享或回应"
+                onLongPress={() => setActionsFor({ id: message.id, role: "assistant", text })}
+                delayLongPress={350}
+                style={{ paddingVertical: 2 }}
+              >
                 <AssistantResponse
                   content={text}
                   // 正文里指向自己文件的链接：交回应用内的文件面板，
@@ -1023,8 +1249,35 @@ export function ChatScreen({
                     return true;
                   }}
                 />
-              </View>
+              </Pressable>
             ))}
+          {messageReactions.length > 0 && (
+            <View
+              style={[
+                s.row,
+                { gap: 6, flexWrap: "wrap", alignSelf: user ? "flex-end" : "flex-start" },
+              ]}
+            >
+              {messageReactions.map((emoji) => (
+                <Pressable
+                  key={emoji}
+                  accessibilityRole="button"
+                  accessibilityLabel={`取消反应 ${emoji}`}
+                  onPress={() => void toggleReaction(message.id, emoji)}
+                  style={{
+                    paddingHorizontal: 9,
+                    paddingVertical: 4,
+                    borderRadius: 14,
+                    backgroundColor: colors.sky,
+                    borderWidth: 1,
+                    borderColor: colors.line,
+                  }}
+                >
+                  <Text style={{ fontSize: 14 }}>{emoji}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
           <JevInteractionContext.Provider
             value={{
               threadId,
@@ -1087,6 +1340,8 @@ export function ChatScreen({
       open,
       renderToolCall,
       threadId,
+      setActionsFor,
+      toggleReaction,
     ],
   );
 
@@ -1374,6 +1629,40 @@ export function ChatScreen({
         >
           最新消息
         </Button>
+      )}
+      {actionsFor && (
+        <MessageActionsModal
+          target={actionsFor}
+          onClose={() => setActionsFor(null)}
+          onCopy={copyMessageText}
+          onResend={(text) => {
+            setActionsFor(null);
+            enqueue(text);
+          }}
+          onShare={(text) => {
+            setActionsFor(null);
+            shareMessageText(text);
+          }}
+          onReact={openReactionPicker}
+          onUnsend={(id) => {
+            setActionsFor(null);
+            Alert.alert("撤回这条消息？", "撤回后这条会话里就看不到它了。", [
+              { text: "取消", style: "cancel" },
+              { text: "撤回", style: "destructive", onPress: () => void unsendMessage(id) },
+            ]);
+          }}
+        />
+      )}
+      {pickerFor && (
+        <ReactionPickerModal
+          emojis={reactionOrder.length ? reactionOrder : REACTION_FALLBACK}
+          onPick={(emoji) => {
+            const id = pickerFor;
+            setPickerFor(null);
+            void toggleReaction(id, emoji);
+          }}
+          onClose={() => setPickerFor(null)}
+        />
       )}
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ErrorNotice error={saveError} />

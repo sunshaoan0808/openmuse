@@ -20,7 +20,12 @@ import {
   finishTurn,
   messagesSince,
   newTurn,
+  noteReactionUsage,
+  orderReactionsByUsage,
+  REACTION_EMOJIS,
+  toggleReaction,
   turnOutcome,
+  unsendMessage,
 } from "./chat-turns.ts";
 import { ComputerService, type DockerRunner } from "./computer.ts";
 import { computerRoutes } from "./computer-routes.ts";
@@ -375,13 +380,70 @@ export async function createApp(
       "conversations",
       conversationRecordId(threadId),
     );
-    const { messages, seq } = messagesSince(
+    const { messages, seq, tombstones } = messagesSince(
       stored,
       conversationRecordId(threadId),
       since === undefined ? undefined : Number(since),
     );
     const turn = threadId ? await latestTurn(owner, threadId) : null;
-    return c.json({ messages, seq, turn });
+    // tombstones 总是全量带上：增量里不含被撤回的消息，客户端靠它清掉本地副本（不复活）
+    return c.json({ messages, seq, turn, tombstones });
+  });
+  // 撤回（对应 Muse 的 unsend）：只允许撤回你自己发的消息；写墓碑 + 从会话移除，按消息 id 幂等
+  app.delete("/api/conversation", async (c) => {
+    const owner = c.get("owner");
+    const threadId = c.req.query("threadId");
+    const messageId = c.req.query("messageId");
+    if (!threadId || !messageId) throw new AppError("缺少会话或消息参数", 400);
+    const recordId = conversationRecordId(threadId);
+    const current = await db.get<Conversation>(owner, "conversations", recordId);
+    const target = current?.messages.find((message) => message.id === messageId);
+    if (!target) throw new AppError("这条消息不在会话里（可能已撤回）。", 404);
+    if (target.role !== "user") throw new AppError("只能撤回你自己发的消息。", 422);
+    const { next } = unsendMessage(current, recordId, messageId, new Date().toISOString());
+    await db.put(owner, "conversations", next);
+    return c.json({ ok: true });
+  });
+  // 消息反应（对应 Muse 的 reactions）：在固定表情集上切换；被改的消息 seq 顶到最新，
+  // 游标增量会把它重投递给其它端。使用频率单独计数，反应面板按"用得多在前"排序。
+  app.post("/api/conversation/reactions", async (c) => {
+    const owner = c.get("owner");
+    const body = z
+      .object({
+        threadId: z.string().min(1),
+        messageId: z.string().min(1),
+        emoji: z.string().min(1).max(8),
+      })
+      .parse(await c.req.json());
+    if (!REACTION_EMOJIS.includes(body.emoji)) throw new AppError("不支持这个表情。", 422);
+    const recordId = conversationRecordId(body.threadId);
+    const current = await db.get<Conversation>(owner, "conversations", recordId);
+    const { next, updated } = toggleReaction(
+      current,
+      recordId,
+      body.messageId,
+      body.emoji,
+      new Date().toISOString(),
+    );
+    if (!updated) throw new AppError("这条消息不在会话里（可能已撤回）。", 404);
+    await db.put(owner, "conversations", next);
+    const usage =
+      (await db.get<{ counts?: Record<string, number> }>(owner, "reaction-usage", "usage")) ?? {};
+    await db.put(owner, "reaction-usage", {
+      id: "usage",
+      counts: noteReactionUsage(
+        usage.counts,
+        body.emoji,
+        (updated.reactions as string[]).includes(body.emoji),
+      ),
+    });
+    return c.json({ ok: true, reactions: updated.reactions ?? [] });
+  });
+  app.get("/api/conversation/reactions", async (c) => {
+    const owner = c.get("owner");
+    const usage =
+      (await db.get<{ counts?: Record<string, number> }>(owner, "reaction-usage", "usage")) ?? {};
+    return c.json({ emojis: orderReactionsByUsage(usage.counts) });
   });
   // 追加语义 + 按 id 幂等：重复送同一条不会变两条（至少一次投递要求）
   const appendConversation = async (
