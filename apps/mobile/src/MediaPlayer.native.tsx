@@ -46,6 +46,8 @@ export default function MediaPlayer({
         originWhitelist={["*"]}
         allowsInlineMediaPlayback
         mediaPlaybackRequiresUserAction={false}
+        // 面板正文也会滚：开启嵌套滚动（Android）
+        nestedScrollEnabled
         // 让播放器行为更像"预览"：不缩放、不弹新窗口
         scalesPageToFit={false}
         setSupportMultipleWindows={false}

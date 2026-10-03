@@ -32,6 +32,8 @@ export default function HtmlReader({ html, name }: { html: string; name: string 
         originWhitelist={[]}
         javaScriptEnabled={false}
         domStorageEnabled={false}
+        // 面板正文也会滚：开启嵌套滚动，让 WebView 先吃手势，滚到底再交给面板（Android）
+        nestedScrollEnabled
         // 不允许导航出去（页面里的链接点了也只在本 WebView 内，不再往外跳）
         onShouldStartLoadWithRequest={(request) => request.url.startsWith("about:")}
         setSupportMultipleWindows={false}

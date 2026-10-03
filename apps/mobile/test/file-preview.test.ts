@@ -93,3 +93,36 @@ test("音视频有独立分支（排在 Office 之前），交给 MediaPlayer �
   // 副标题不该给音视频显示页数
   assert.match(body, /isText\(f\) \|\| isImage\(f\) \|\| isMedia\(f\) \? ""/, "音视频不该显示页数");
 });
+
+/**
+ * 用户报过「文件点开后，整个页面在滑，md 的内容不滑」：文档被套在一层
+ * `maxHeight: 460` 的内层 ScrollView 里，与外层面板的 ScrollView 形成**嵌套滚动**，
+ * 真机上外层抢走竖向手势 → 盒子被裁在 460，以下内容够不到。
+ * 这组测试钉住修法：正文不再自建滚动层（全面板只有一个滚动容器）。
+ */
+test("文本/文档预览不再自建内层滚动盒（避免嵌套滚动导致滑不动）", () => {
+  const body = strip(details);
+  assert.doesNotMatch(body, /maxHeight:\s*460/, "预览里不该再有 maxHeight:460 的内层盒子");
+  assert.doesNotMatch(body, /<ScrollView/, "预览正文不该再套 ScrollView（滚动交给面板自己）");
+  // 文档仍要走 markdown 渲染，别把内容丢了
+  assert.match(body, /isMarkdown\(f\) \? \(/, "markdown 分支必须还在");
+  assert.match(body, /<AssistantResponse/, "markdown 仍交给 AssistantResponse 渲染");
+});
+
+/**
+ * 面板正文自己就是滚动容器，而 PDF/HTML/Office/音视频是自滚动子视图
+ * （react-native-pdf / WebView）。必须开嵌套滚动协商，否则外层会抢手势。
+ */
+test("详情面板正文开启嵌套滚动，让自滚动子视图先吃手势", () => {
+  const sheet = strip(readFileSync(join(import.meta.dirname, "..", "src", "ui.tsx"), "utf8"));
+  assert.match(sheet, /nestedScrollEnabled/, "Sheet 正文的 ScrollView 应开启 nestedScrollEnabled");
+  for (const viewer of [
+    "HtmlReader.native.tsx",
+    "OfficeReader.native.tsx",
+    "MediaPlayer.native.tsx",
+    "BrowserConsole.native.tsx",
+  ]) {
+    const src = strip(readFileSync(join(import.meta.dirname, "..", "src", viewer), "utf8"));
+    assert.match(src, /<WebView[\s\S]*?nestedScrollEnabled/, `${viewer} 的 WebView 应开启 nestedScrollEnabled`);
+  }
+});

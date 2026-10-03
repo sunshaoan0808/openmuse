@@ -24,7 +24,6 @@ import {
   Image,
   Linking,
   Platform,
-  ScrollView,
   Share,
   Text,
   View,
@@ -910,46 +909,43 @@ function FileDetail({ file: f, hero }: { file: Artifact; hero?: HeroCard }) {
         content === undefined ? (
           <ActivityIndicator color={colors.blueDark} />
         ) : isMarkdown(f) ? (
-          <View style={{ maxHeight: 460 }}>
-            <ScrollView>
-              <AssistantResponse
-                content={content}
-                // 文本文件里若有指向其它文件的链接，同样交回应用内（不跳浏览器）
-                onOpenFile={(id) => {
-                  const file = w.files.find((item) => item.id === id);
-                  if (!file) return false;
-                  open({ type: "file", file });
-                  return true;
-                }}
-              />
-            </ScrollView>
-          </View>
+          // 不再套「maxHeight:460 的内层 ScrollView」：那是**嵌套滚动**——真机上外层（面板）
+          // 会抢走竖向手势，文档内容滑不动（用户报「整个页面滑动、md 不滑动」）。
+          // 现在文档直接铺进面板自己的 ScrollView：全面板只有一个滚动容器，全文可达。
+          <AssistantResponse
+            content={content}
+            // 文本文件里若有指向其它文件的链接，同样交回应用内（不跳浏览器）
+            onOpenFile={(id) => {
+              const file = w.files.find((item) => item.id === id);
+              if (!file) return false;
+              open({ type: "file", file });
+              return true;
+            }}
+          />
         ) : (
+          // 同上：去掉 maxHeight + 内层 ScrollView，避免与外层面板形成嵌套滚动。
           <View
             style={{
-              maxHeight: 460,
               backgroundColor: colors.canvas,
               borderRadius: 12,
               padding: 12,
             }}
           >
-            <ScrollView>
-              <Text
-                selectable
-                style={{
-                  fontFamily: Platform.select({
-                    ios: "Menlo",
-                    android: "monospace",
-                    default: "monospace",
-                  }),
-                  fontSize: 12.5,
-                  lineHeight: 18,
-                  color: colors.text,
-                }}
-              >
-                {content}
-              </Text>
-            </ScrollView>
+            <Text
+              selectable
+              style={{
+                fontFamily: Platform.select({
+                  ios: "Menlo",
+                  android: "monospace",
+                  default: "monospace",
+                }),
+                fontSize: 12.5,
+                lineHeight: 18,
+                color: colors.text,
+              }}
+            >
+              {content}
+            </Text>
           </View>
         )
       ) : isImage(f) ? (

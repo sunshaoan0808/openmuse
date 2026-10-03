@@ -569,8 +569,13 @@ export function Sheet({
                 <IconButton icon={X} label="关闭详情" onPress={requestClose} />
               </View>
             </View>
+            {/* nestedScrollEnabled（Android）：面板正文自己就是滚动容器，而文件预览里的
+                PDF / HTML / Office / 音视频是**自滚动子视图**（react-native-pdf、WebView）。
+                不开这个，外层会抢走竖向手势 → 文档滑不动（用户报「整个页面滑动、内容不滑动」）。
+                开了之后交给 Android 的嵌套滚动协商：子视图先滚，滚到底再交给面板。 */}
             <ScrollView
               keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
               contentContainerStyle={{ padding: compact ? 20 : 24 }}
             >
               {children}

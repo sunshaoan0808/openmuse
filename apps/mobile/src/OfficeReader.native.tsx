@@ -223,6 +223,8 @@ export default function OfficeReader({ url, token, name, size }: OfficeReaderPro
           source={{ html }}
           domStorageEnabled
           javaScriptEnabled
+          // 面板正文也会滚：开启嵌套滚动，让文档先吃手势（Android）
+          nestedScrollEnabled
           setSupportMultipleWindows={false}
           onMessage={(event: WebViewMessageEvent) => {
             try {
