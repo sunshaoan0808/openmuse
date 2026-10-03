@@ -1,0 +1,139 @@
+name: UI 验收（Maestro · Android 模拟器）
+
+# 目的：把"改完 → 打包 → 让用户真机试"换成"CI 里跑真机级 UI 验收"。
+# 依据：React Native 官方仓库自己的 CI 也是 Maestro + reactivecircus/android-emulator-runner。
+# 用法：Actions 里手动触发（可选传 fake_token，让 App 以已登录态启动，才能跑顶栏/水豚那几条 flow）。
+on:
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: "API base URL"
+        required: true
+        default: "https://openmuse.claw.ssan.me"
+
+env:
+  EXPO_PUBLIC_API_URL: ${{ inputs.api_url }}
+  # 令牌只能走 secret：公开仓库的 workflow input 会明文出现在运行记录里（安全红线）
+  EXPO_PUBLIC_FAKE_TOKEN: ${{ secrets.OPENMUSE_TEST_TOKEN }}
+
+jobs:
+  maestro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # ubuntu-latest 自带 Android SDK + cmdline-tools；不再用 android-actions/setup-android
+      # （v3 会去装已废弃的 "tools" 包并当场失败）
+      - name: Android SDK — 安装平台/构建工具/NDK
+        run: |
+          set -e
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          SDKM="$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin 2>/dev/null | head -1)"
+          export PATH="$SDKM:$ANDROID_HOME/platform-tools:$PATH"
+          which sdkmanager
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" \
+            "ndk;27.1.12297006" "cmake;3.22.1" 2>&1 | tail -3
+          echo "sdk dirs:"; ls "$ANDROID_HOME"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # 打包之前先类型检查：Metro 不做类型检查，所以"能打出包"完全不代表能跑起来。
+      # 真人真事：漏了一个 import（使用了一个不存在的导出）照样打包成功，用户装上启动即崩。
+      # 根 tsconfig 不包含 apps/mobile，所以两端都要跑。
+      - name: Typecheck (root + mobile)
+        run: |
+          pnpm exec tsc -p tsconfig.json --noEmit
+          pnpm exec tsc -p apps/mobile/tsconfig.json --noEmit
+
+      - name: Expo prebuild (android)
+        working-directory: apps/mobile
+        run: pnpm exec expo prebuild --platform android --clean --no-install
+
+      - name: Gradle 构建
+        working-directory: apps/mobile/android
+        run: |
+          set -e
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" >> gradle.properties
+          echo "reactNativeArchitectures=${{ inputs.abis }}" >> gradle.properties
+          echo "EXPO_PUBLIC_API_URL=$EXPO_PUBLIC_API_URL"
+          echo "ABIs=${{ inputs.abis }}"
+          chmod +x gradlew
+          ./gradlew ${{ inputs.build_type }} --no-daemon --stacktrace
+
+      - name: Collect APK
+        id: collect
+        run: |
+          set -e
+          find apps/mobile/android/app/build/outputs/apk -name "*.apk" -print
+          APK=$(find apps/mobile/android/app/build/outputs/apk -name "*.apk" | head -1)
+          mkdir -p out
+          cp "$APK" "out/openmuse-$(echo '${{ inputs.api_url }}' | tr -c 'A-Za-z0-9' '_').apk"
+          ls -lh out
+
+      - name: Enable KVM（模拟器需要硬件加速，ubuntu runner 有）
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: 安装 Maestro
+        run: |
+          curl -Ls "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> $GITHUB_PATH
+
+      - name: 起模拟器并跑 Maestro
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          ram-size: 4096M
+          cores: 4
+          disable-animations: false
+          script: |
+            set -e
+            APK=$(find . -name "*.apk" | head -1)
+            echo "安装 $APK"
+            adb install -r "$APK"
+            adb shell settings put global window_animation_scale 1.0 || true
+            maestro test .maestro/ --format junit --output maestro-report.xml || echo "MAESTRO_FAILED=1" >> $GITHUB_ENV
+
+      - name: 归档验收证据（报告 + 截图 + 录屏）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maestro-evidence
+          if-no-files-found: ignore
+          path: |
+            maestro-report.xml
+            ~/.maestro/tests/**/*
+            report.xml
+            screen.mp4
+
+      - name: 有 flow 失败则让 job 失败（不打包）
+        if: always()
+        run: |
+          if [ -f maestro-report.xml ] && grep -q 'failures="[1-9]' maestro-report.xml; then
+            echo "::error::Maestro 有失败用例，按约定不得打包"
+            exit 1
+          fi
+          test -z "$MAESTRO_FAILED" || exit 1

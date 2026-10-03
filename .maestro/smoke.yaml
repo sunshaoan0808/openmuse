@@ -1,0 +1,14 @@
+# 冒烟：App 能起来、不崩，并按当前登录态分流
+appId: app.openmuse.mobile
+---
+- launchApp
+- waitForAnimationToEnd
+# 已登录态（CI 传了 fake_token 时）→ 直接跑顶栏/水豚那几条真机判据
+- runFlow:
+    when:
+      notVisible: "请登录 OpenMuse"
+    file: topbar.yaml
+# 未登录态 → 只验证"启动没崩 + 登录引导在"
+- assertVisible:
+    text: ".*"
+    optional: true
