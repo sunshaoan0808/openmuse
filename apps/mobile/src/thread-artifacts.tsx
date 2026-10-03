@@ -1,6 +1,7 @@
 import { ChevronRight, FileText } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
+import { z } from "zod";
 import type { Artifact, BrowserSession } from "../../../packages/domain/src";
 import type { AgentArtifact, AgentTask } from "../../../packages/domain/src/agent";
 import { ArtifactCard, TaskCard } from "./agent-ui";
@@ -9,11 +10,25 @@ import { fieldLabel } from "./labels";
 import { Button, Card, colors, ErrorNotice, MeasureCard, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
+/** 文件类型的一句人话（卡片上的类型行；此前一律写死 "PDF"，智能体写出的 markdown 也会被标成 PDF）。 */
+export function fileKindLabel(file: Artifact): string {
+  const mime = (file.mimeType || "").toLowerCase();
+  if (mime === "application/pdf" || /\.pdf$/i.test(file.name)) return "PDF";
+  if (mime === "text/markdown" || /\.(md|mdown|markdown)$/i.test(file.name)) return "Markdown";
+  if (mime.startsWith("text/html") || /\.html?$/i.test(file.name)) return "HTML";
+  if (mime.startsWith("text/")) return "文本";
+  if (mime.startsWith("image/")) return "图片";
+  if (mime.startsWith("audio/")) return "音频";
+  if (mime.startsWith("video/")) return "视频";
+  return "文件";
+}
+
 export function FileThreadCard({ file }: { file: Artifact }) {
   const { open } = useWorkspace();
+  const kind = fileKindLabel(file);
   return (
     <MeasureCard
-      label={`Open PDF: ${file.name}`}
+      label={`打开文件：${file.name}`}
       style={{ width: "100%", maxWidth: 440 }}
       onPress={(rect) =>
         open({
@@ -22,7 +37,7 @@ export function FileThreadCard({ file }: { file: Artifact }) {
           hero: {
             rect,
             title: file.name,
-            subtitle: `${file.pageCount} ${file.pageCount === 1 ? "page" : "pages"}`,
+            subtitle: file.pageCount > 0 ? `${file.pageCount} 页` : kind,
             icon: FileText,
             tint: colors.sky,
           },
@@ -48,7 +63,9 @@ export function FileThreadCard({ file }: { file: Artifact }) {
               </View>
             ))
           ) : (
-            <Text style={s.muted}>{file.pageCount} 页 · 点开阅读</Text>
+            <Text style={s.muted}>
+              {file.pageCount > 0 ? `${file.pageCount} 页 · 点开阅读` : "点开阅读"}
+            </Text>
           )}
         </View>
         <View style={[s.row, { gap: 13 }]}>
@@ -59,7 +76,7 @@ export function FileThreadCard({ file }: { file: Artifact }) {
             <Text numberOfLines={2} style={s.heading}>
               {file.name}
             </Text>
-            <Text style={s.muted}>PDF</Text>
+            <Text style={s.muted}>{kind}</Text>
           </View>
           <ChevronRight size={18} color={colors.muted} />
         </View>
@@ -67,6 +84,60 @@ export function FileThreadCard({ file }: { file: Artifact }) {
     </MeasureCard>
   );
 }
+/**
+ * 智能体写出的文件（save_document 工具的结果）→ 对话里的文件卡。
+ * 对应 Muse 的 HatchInlineFileChipKt：她到底给没给你文件，聊天里要一眼可见。
+ * 放在这个文件而不是 chat.tsx：文件卡的归属地在这里，chat.tsx 只负责接线。
+ */
+export function SavedDocumentCard({
+  result,
+  loading,
+}: {
+  result?: unknown;
+  loading: boolean;
+}) {
+  const parsed = z
+    .object({
+      id: z.string(),
+      name: z.string(),
+      mimeType: z.string().optional(),
+      size: z.number().optional(),
+    })
+    .safeParse(
+      typeof result === "string"
+        ? (() => {
+            try {
+              return JSON.parse(result);
+            } catch {
+              return undefined;
+            }
+          })()
+        : result,
+    );
+  if (!parsed.success) {
+    // 工具还没返回：一行轻提示，别让"写文件"这件事在流里隐身
+    return loading ? (
+      <View style={[s.row, { gap: 8, paddingVertical: 8, alignSelf: "flex-start" }]}>
+        <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: colors.blueDark }} />
+        <Text style={s.small}>正在保存文件…</Text>
+      </View>
+    ) : null;
+  }
+  // 文本文件没有页数与表单字段，给空值即可；详情页会按 mimeType 自己取内容
+  const file: Artifact = {
+    id: parsed.data.id,
+    name: parsed.data.name,
+    mimeType: parsed.data.mimeType || "text/markdown",
+    size: parsed.data.size || 0,
+    pageCount: 0,
+    fields: [],
+    url: "",
+    createdAt: new Date().toISOString(),
+    source: "Written by your agent",
+  };
+  return <FileThreadCard file={file} />;
+}
+
 /** Hydrates task-linked artifacts by ID on replay; signed URLs are never stored in messages. */
 export function TaskThreadCard({ task }: { task: AgentTask }) {
   const { api } = useWorkspace();
