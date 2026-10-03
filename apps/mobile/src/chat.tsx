@@ -24,6 +24,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import {
   ActivityIndicator,
   Animated,
+  FlatList,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -477,7 +478,7 @@ export function ChatScreen({
   const [imageMenu, setImageMenu] = useState(false);
   const [imageBusy, setImageBusy] = useState<ImageSource | "file" | "">("");
   const [attachError, setAttachError] = useState("");
-  const list = useRef<ScrollView>(null);
+  const list = useRef<FlatList<Message>>(null);
   // 用户不在底部时，用来把视口钉回原处（见 onContentSizeChange）
   const lastOffset = useRef(0);
   const touchLayer = useRef<View>(null);
@@ -906,7 +907,11 @@ export function ChatScreen({
     latestUserIndex >= 0 && typeof messages[latestUserIndex]?.content === "string"
       ? messages[latestUserIndex].content
       : null;
-  const visible = messages.filter((m) => m.role === "user" || m.role === "assistant");
+  // 记忆化：messages 不变时不重建数组 —— FlatList 靠 data 的身份判断要不要重刷各行
+  const visible = useMemo(
+    () => messages.filter((m) => m.role === "user" || m.role === "assistant"),
+    [messages],
+  );
   // 第一次拿到消息时只登记、不播动画（历史记录一次刷出几十条气泡并不好看）
   if (visible.length && !hydratedMessages.current) {
     for (const message of visible) animatedMessages.current.add(message.id);
@@ -946,7 +951,303 @@ export function ChatScreen({
     }
     setRunPhase(agentPhaseLabel(phase, activeBackgroundCount));
   }, [phase, inFlight, replying, activeBackgroundCount, setRunPhase]);
-  // 照 Muse 的 HatchSuggestionBar：把最新两三条未处理的灵感当作输入框上方的可直接点建议
+  /**
+   * 虚拟化列表的行渲染（FlatList 的 renderItem）。draft 每敲一个字都会重渲染本组件，
+   * 但只要 renderItem 与 data 的身份稳定，FlatList 就不会重刷各行——这是虚拟化收益能兑现的前提。
+   * 行内容与拆分前的 visible.map 完全一致，只是换了挂载方式。
+   */
+  const renderItem = useCallback(
+    ({ item: message }: { item: Message }) => {
+      const user = message.role === "user";
+      const text =
+        typeof message.content === "string"
+          ? user
+            ? displayJevUserMessage(
+                message.content,
+                messages.slice(0, messages.indexOf(message)),
+              )
+            : message.content
+          : "";
+      const toolCalls = "toolCalls" in message ? message.toolCalls || [] : [];
+      const fresh = !animatedMessages.current.has(message.id);
+      animatedMessages.current.add(message.id);
+      return (
+        <RiseIn
+          enabled={fresh}
+          style={{
+            alignSelf: user ? "flex-end" : "flex-start",
+            maxWidth: user ? "85%" : "95%",
+            width: toolCalls.length ? "95%" : undefined,
+            gap: 8,
+          }}
+        >
+          {!!text &&
+            (user ? (
+              <View
+                style={{
+                  paddingHorizontal: 16,
+                  paddingVertical: 13,
+                  borderRadius: 22,
+                  borderBottomRightRadius: 7,
+                  backgroundColor: colors.blue,
+                }}
+              >
+                <Text selectable style={[s.text, { fontSize: 16, lineHeight: 24 }]}>
+                  {text}
+                </Text>
+              </View>
+            ) : (
+              // Muse 的助手回复是纯文本直接铺在底色上，不套气泡卡片
+              <View style={{ paddingVertical: 2 }}>
+                <AssistantResponse
+                  content={text}
+                  // 正文里指向自己文件的链接：交回应用内的文件面板，
+                  // 别再跳外部浏览器（那是内网地址、且浏览器没有令牌，打不开）
+                  onOpenFile={(id) => {
+                    const file = w.files.find((item) => item.id === id);
+                    if (!file) return false;
+                    open({ type: "file", file });
+                    return true;
+                  }}
+                />
+              </View>
+            ))}
+          <JevInteractionContext.Provider
+            value={{
+              threadId,
+              busy:
+                busy ||
+                agent.isRunning ||
+                !loaded ||
+                !isReady ||
+                !!outbox.pending.length ||
+                outbox.paused ||
+                !!saveError,
+              latestPanelId,
+              latestUserText,
+              send: sendChoice,
+              retry: (text) => sendChoice(text, true),
+              canRetry:
+                loaded &&
+                isReady &&
+                !busy &&
+                !agent.isRunning &&
+                !outbox.running &&
+                !outbox.pending.length &&
+                !saveError,
+              confirmedSelection: (panelId) => confirmedJevSelection(messages, panelId),
+            }}
+          >
+            <BrowserRunContext
+              value={{
+                running: busy || agent.isRunning,
+                active:
+                  (busy || agent.isRunning) && messages.indexOf(message) > latestUserIndex,
+              }}
+            >
+              {toolCalls.map((toolCall) => {
+                const toolMessage = messages.find(
+                  (candidate): candidate is ToolMessage =>
+                    candidate.role === "tool" && candidate.toolCallId === toolCall.id,
+                );
+                return (
+                  <View key={toolCall.id}>{renderToolCall({ toolCall, toolMessage })}</View>
+                );
+              })}
+            </BrowserRunContext>
+          </JevInteractionContext.Provider>
+        </RiseIn>
+      );
+    },
+    [
+      messages,
+      busy,
+      agent.isRunning,
+      loaded,
+      isReady,
+      outbox.pending,
+      outbox.paused,
+      outbox.running,
+      saveError,
+      latestPanelId,
+      latestUserText,
+      latestUserIndex,
+      sendChoice,
+      w.files,
+      open,
+      renderToolCall,
+      threadId,
+    ],
+  );
+
+  // 空会话的开场：一句话 + 三个可点的例子（ListEmptyComponent）
+  const emptyState = (
+    <View
+      style={{
+        flexGrow: 1,
+        flexShrink: 0,
+        justifyContent: "center",
+        alignItems: "center",
+        paddingVertical: 34,
+        gap: 15,
+      }}
+    >
+      <Text
+        style={{
+          fontSize: 28,
+          letterSpacing: -1,
+          color: colors.text,
+          textAlign: "center",
+          maxWidth: 350,
+        }}
+      >
+        有人搭把手，生活多出很多空间。
+      </Text>
+      <Text style={[s.muted, { maxWidth: 320, textAlign: "center", lineHeight: 23 }]}>
+        说说你在想什么。我可以做计划、操作你的应用，也能用我的电脑帮忙。
+      </Text>
+      <View style={{ width: "100%", maxWidth: 360, marginTop: 14, gap: 8 }}>
+        {[
+          {
+            text: "在 Hacker News 上找点好东西",
+            action: () => enqueue("逛逛 Hacker News 找点好东西"),
+          },
+          {
+            text: "Summarize copilotkit.ai",
+            action: () => enqueue("Summarize copilotkit.ai"),
+          },
+          { text: "盯着某个网站", action: () => navigate("goals") },
+        ].map((item) => (
+          <Button key={item.text} onPress={item.action}>
+            {item.text}
+          </Button>
+        ))}
+      </View>
+    </View>
+  );
+
+  // 列表尾部：待复核与回执、本次跑动、并行任务、后台更新、工作状态条与报错
+  const renderFooter = (
+    <>
+      {!!(threadApprovals.length || receipts.length) && (
+        <View style={{ gap: 12 }}>
+          {(allApprovals ? threadApprovals : threadApprovals.slice(0, 2)).map((action) => (
+            <RiseIn key={action.id}>
+              <ApprovalCard
+                action={action}
+                onOpen={(rect) =>
+                  open({
+                    type: "review",
+                    action,
+                    ...(rect
+                      ? {
+                          hero: {
+                            rect,
+                            title: action.title,
+                            subtitle: actionKindLabel(action.kind),
+                            icon: ShieldCheck,
+                            tint: colors.lavender,
+                          },
+                        }
+                      : {}),
+                  })
+                }
+              />
+            </RiseIn>
+          ))}
+          {threadApprovals.length > 2 && (
+            <Button
+              small
+              style={{ alignSelf: "flex-start" }}
+              onPress={() => setAllApprovals(!allApprovals)}
+            >
+              {allApprovals ? "收起" : `展开全部 ${threadApprovals.length} 件`}
+            </Button>
+          )}
+          {receipts.map((action) => (
+            <ReceiptRow
+              key={action.id}
+              action={action}
+              onPress={() => open({ type: "review", action })}
+            />
+          ))}
+        </View>
+      )}
+      {/* 本次跑动的任务流（对齐 Muse 的 activity 卡：行是任务，不是工具调用） */}
+      <RunActivityCard
+        steps={stepsOfCurrentRun(messages)}
+        running={busy || agent.isRunning}
+        startedAtMs={runStart}
+        endedAtMs={runEnd}
+      />
+      {/* 并行子任务：Muse 会在聊天里按行列出现在跑的子代理，我们的派活任务也回到这里 */}
+      <RunningTasks />
+      {(!savedThreads || selection.id === mainId) && <BackgroundUpdates />}
+      {(busy || agent.isRunning) && (
+        <View
+          accessibilityLabel="智能体正在工作"
+          style={[
+            s.row,
+            {
+              alignSelf: "flex-start",
+              gap: 10,
+              alignItems: "center",
+              paddingVertical: 6,
+              maxWidth: "92%",
+            },
+          ]}
+        >
+          <ThinkingDots />
+          {/* 相位说人话：思考期不再沉默（对标 Muse 的 THINKING/TYPING/USING_TOOL 三段） */}
+          <View style={{ gap: 2, flexShrink: 1 }}>
+            <Text style={s.text}>
+              {phase === "USING_TOOL" && inFlight
+                ? `${actionEmoji(inFlight.name)} ${agentActionLabel(inFlight.name)}`
+                : phase === "TYPING"
+                  ? `💬 ${agentPhaseLabel(phase)}`
+                  : `🤔 ${agentPhaseLabel(phase)}`}
+            </Text>
+            {phase === "USING_TOOL" && inFlight && !!inFlight.detail && (
+              <Text style={s.small} numberOfLines={1}>
+                {inFlight.detail}
+              </Text>
+            )}
+          </View>
+        </View>
+      )}
+      {/* 服务重启/出错导致上一轮没跑完：说清楚并给重试入口，而不是让人干等 */}
+      {!busy &&
+        !agent.isRunning &&
+        !!lastTurn &&
+        ["failed", "interrupted"].includes(lastTurn.status) &&
+        agent.messages.at(-1)?.role === "user" && (
+          <ErrorNotice
+            error={
+              lastTurn.status === "interrupted"
+                ? "上一轮没有跑完（服务重启或连接中断）。点「重试回复」重新问一次。"
+                : "上一轮出错了。点「重试回复」重新问一次。"
+            }
+          />
+        )}
+      <ErrorNotice error={error} />
+      {!!error && (
+        <Button
+          style={{ alignSelf: "flex-start" }}
+          icon={RotateCcw}
+          disabled={busy || agent.isRunning || !loaded || !isReady}
+          onPress={() => {
+            void run()
+              .then(() => {
+                if (!queue.getSnapshot().paused) flush();
+              })
+              .catch((e) => setError(humanizeNetworkError(e)));
+          }}
+        >
+          重试回复
+        </Button>
+      )}
+    </>
+  );
 
   // 顶栏是浮在内容上的玻璃层，内容必须**从屏幕最顶端开始**（含状态栏那块），
   // 否则顶栏背后就是一片空底色 = 真机上那条"白带"。两次实测（截图逐行取色）：
@@ -969,8 +1270,23 @@ export function ChatScreen({
         onTouchStart={beginUserScroll}
         onTouchEnd={endUserScroll}
       >
-      <ScrollView
+      <FlatList
         ref={list}
+        data={visible}
+        keyExtractor={(message, index) => message.id || String(index)}
+        renderItem={renderItem}
+        ListHeaderComponent={
+          !!historyError ? (
+            <>
+              <ErrorNotice error={historyError} />
+              <Button onPress={() => setHistoryAttempt((attempt) => attempt + 1)}>
+                重试加载对话
+              </Button>
+            </>
+          ) : null
+        }
+        ListEmptyComponent={emptyState}
+        ListFooterComponent={renderFooter}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{
           gap: 13,
@@ -1014,295 +1330,26 @@ export function ChatScreen({
             return;
           }
           lastViewportHeight.current = height;
-          list.current?.scrollTo({ y: lastOffset.current, animated: false });
+          list.current?.scrollToOffset({ offset: lastOffset.current, animated: false });
         }}
-        onContentSizeChange={(_w, height) => {
+        onContentSizeChange={(_width, height) => {
           if (active && visible.length > 0 && followLatest.current) {
             list.current?.scrollToEnd({ animated: false });
           } else if (lastContentHeight.current !== null && height > lastContentHeight.current) {
             // 用户正在往回看，而流式回复让内容在下方变长 —— 浏览器/RN-Web 会把视口甩到底部，
             // 于是"你往上推、它往下拉"，慢速滑动时看起来就是界面在闪（快滑能一下逃出去）。
             // 这里把视口钉回用户原来的位置（相当于手动实现 maintainVisibleContentPosition）。
-            list.current?.scrollTo({ y: lastOffset.current, animated: false });
+            list.current?.scrollToOffset({ offset: lastOffset.current, animated: false });
           }
           lastContentHeight.current = height;
         }}
         keyboardShouldPersistTaps="handled"
-      >
-        {!!historyError && (
-          <>
-            <ErrorNotice error={historyError} />
-            <Button onPress={() => setHistoryAttempt((attempt) => attempt + 1)}>
-              重试加载对话
-            </Button>
-          </>
-        )}
-        {!visible.length ? (
-          <View
-            style={{
-              flexGrow: 1,
-              flexShrink: 0,
-              justifyContent: "center",
-              alignItems: "center",
-              paddingVertical: 34,
-              gap: 15,
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 28,
-                letterSpacing: -1,
-                color: colors.text,
-                textAlign: "center",
-                maxWidth: 350,
-              }}
-            >
-              有人搭把手，生活多出很多空间。
-            </Text>
-            <Text style={[s.muted, { maxWidth: 320, textAlign: "center", lineHeight: 23 }]}>
-              说说你在想什么。我可以做计划、操作你的应用，也能用我的电脑帮忙。
-            </Text>
-            <View style={{ width: "100%", maxWidth: 360, marginTop: 14, gap: 8 }}>
-              {[
-                {
-                  text: "在 Hacker News 上找点好东西",
-                  action: () => enqueue("逛逛 Hacker News 找点好东西"),
-                },
-                {
-                  text: "Summarize copilotkit.ai",
-                  action: () => enqueue("Summarize copilotkit.ai"),
-                },
-                { text: "盯着某个网站", action: () => navigate("goals") },
-              ].map((item) => (
-                <Button key={item.text} onPress={item.action}>
-                  {item.text}
-                </Button>
-              ))}
-            </View>
-          </View>
-        ) : (
-          visible.map((message) => {
-            const user = message.role === "user";
-            const text =
-              typeof message.content === "string"
-                ? user
-                  ? displayJevUserMessage(
-                      message.content,
-                      messages.slice(0, messages.indexOf(message)),
-                    )
-                  : message.content
-                : "";
-            const toolCalls = "toolCalls" in message ? message.toolCalls || [] : [];
-            const fresh = !animatedMessages.current.has(message.id);
-            animatedMessages.current.add(message.id);
-            return (
-              <RiseIn
-                key={message.id}
-                enabled={fresh}
-                style={{
-                  alignSelf: user ? "flex-end" : "flex-start",
-                  maxWidth: user ? "85%" : "95%",
-                  width: toolCalls.length ? "95%" : undefined,
-                  gap: 8,
-                }}
-              >
-                {!!text &&
-                  (user ? (
-                    <View
-                      style={{
-                        paddingHorizontal: 16,
-                        paddingVertical: 13,
-                        borderRadius: 22,
-                        borderBottomRightRadius: 7,
-                        backgroundColor: colors.blue,
-                      }}
-                    >
-                      <Text selectable style={[s.text, { fontSize: 16, lineHeight: 24 }]}>
-                        {text}
-                      </Text>
-                    </View>
-                  ) : (
-                    // Muse 的助手回复是纯文本直接铺在底色上，不套气泡卡片
-                    <View style={{ paddingVertical: 2 }}>
-                      <AssistantResponse
-                        content={text}
-                        // 正文里指向自己文件的链接：交回应用内的文件面板，
-                        // 别再跳外部浏览器（那是内网地址、且浏览器没有令牌，打不开）
-                        onOpenFile={(id) => {
-                          const file = w.files.find((item) => item.id === id);
-                          if (!file) return false;
-                          open({ type: "file", file });
-                          return true;
-                        }}
-                      />
-                    </View>
-                  ))}
-                <JevInteractionContext.Provider
-                  value={{
-                    threadId,
-                    busy:
-                      busy ||
-                      agent.isRunning ||
-                      !loaded ||
-                      !isReady ||
-                      !!outbox.pending.length ||
-                      outbox.paused ||
-                      !!saveError,
-                    latestPanelId,
-                    latestUserText,
-                    send: sendChoice,
-                    retry: (text) => sendChoice(text, true),
-                    canRetry:
-                      loaded &&
-                      isReady &&
-                      !busy &&
-                      !agent.isRunning &&
-                      !outbox.running &&
-                      !outbox.pending.length &&
-                      !saveError,
-                    confirmedSelection: (panelId) => confirmedJevSelection(messages, panelId),
-                  }}
-                >
-                  <BrowserRunContext
-                    value={{
-                      running: busy || agent.isRunning,
-                      active:
-                        (busy || agent.isRunning) && messages.indexOf(message) > latestUserIndex,
-                    }}
-                  >
-                    {toolCalls.map((toolCall) => {
-                      const toolMessage = messages.find(
-                        (candidate): candidate is ToolMessage =>
-                          candidate.role === "tool" && candidate.toolCallId === toolCall.id,
-                      );
-                      return (
-                        <View key={toolCall.id}>{renderToolCall({ toolCall, toolMessage })}</View>
-                      );
-                    })}
-                  </BrowserRunContext>
-                </JevInteractionContext.Provider>
-              </RiseIn>
-            );
-          })
-        )}
-        {!!(threadApprovals.length || receipts.length) && (
-          <View style={{ gap: 12 }}>
-            {(allApprovals ? threadApprovals : threadApprovals.slice(0, 2)).map((action) => (
-              <RiseIn key={action.id}>
-                <ApprovalCard
-                  action={action}
-                  onOpen={(rect) =>
-                    open({
-                      type: "review",
-                      action,
-                      ...(rect
-                        ? {
-                            hero: {
-                              rect,
-                              title: action.title,
-                              subtitle: actionKindLabel(action.kind),
-                              icon: ShieldCheck,
-                              tint: colors.lavender,
-                            },
-                          }
-                        : {}),
-                    })
-                  }
-                />
-              </RiseIn>
-            ))}
-            {threadApprovals.length > 2 && (
-              <Button
-                small
-                style={{ alignSelf: "flex-start" }}
-                onPress={() => setAllApprovals(!allApprovals)}
-              >
-                {allApprovals ? "收起" : `展开全部 ${threadApprovals.length} 件`}
-              </Button>
-            )}
-            {receipts.map((action) => (
-              <ReceiptRow
-                key={action.id}
-                action={action}
-                onPress={() => open({ type: "review", action })}
-              />
-            ))}
-          </View>
-        )}
-        {/* 本次跑动的任务流（对齐 Muse 的 activity 卡：行是任务，不是工具调用） */}
-        <RunActivityCard
-          steps={stepsOfCurrentRun(messages)}
-          running={busy || agent.isRunning}
-          startedAtMs={runStart}
-          endedAtMs={runEnd}
-        />
-        {/* 并行子任务：Muse 会在聊天里按行列出现在跑的子代理，我们的派活任务也回到这里 */}
-        <RunningTasks />
-        {(!savedThreads || selection.id === mainId) && <BackgroundUpdates />}
-        {(busy || agent.isRunning) && (
-          <View
-            accessibilityLabel="智能体正在工作"
-            style={[
-              s.row,
-              {
-                alignSelf: "flex-start",
-                gap: 10,
-                alignItems: "center",
-                paddingVertical: 6,
-                maxWidth: "92%",
-              },
-            ]}
-          >
-            <ThinkingDots />
-            {/* 相位说人话：思考期不再沉默（对标 Muse 的 THINKING/TYPING/USING_TOOL 三段） */}
-            <View style={{ gap: 2, flexShrink: 1 }}>
-              <Text style={s.text}>
-                {phase === "USING_TOOL" && inFlight
-                  ? `${actionEmoji(inFlight.name)} ${agentActionLabel(inFlight.name)}`
-                  : phase === "TYPING"
-                    ? `💬 ${agentPhaseLabel(phase)}`
-                    : `🤔 ${agentPhaseLabel(phase)}`}
-              </Text>
-              {phase === "USING_TOOL" && inFlight && !!inFlight.detail && (
-                <Text style={s.small} numberOfLines={1}>
-                  {inFlight.detail}
-                </Text>
-              )}
-            </View>
-          </View>
-        )}
-        {/* 服务重启/出错导致上一轮没跑完：说清楚并给重试入口，而不是让人干等 */}
-        {!busy &&
-          !agent.isRunning &&
-          !!lastTurn &&
-          ["failed", "interrupted"].includes(lastTurn.status) &&
-          agent.messages.at(-1)?.role === "user" && (
-            <ErrorNotice
-              error={
-                lastTurn.status === "interrupted"
-                  ? "上一轮没有跑完（服务重启或连接中断）。点「重试回复」重新问一次。"
-                  : "上一轮出错了。点「重试回复」重新问一次。"
-              }
-            />
-          )}
-        <ErrorNotice error={error} />
-        {!!error && (
-          <Button
-            style={{ alignSelf: "flex-start" }}
-            icon={RotateCcw}
-            disabled={busy || agent.isRunning || !loaded || !isReady}
-            onPress={() => {
-              void run()
-                .then(() => {
-                  if (!queue.getSnapshot().paused) flush();
-                })
-                .catch((e) => setError(humanizeNetworkError(e)));
-            }}
-          >
-            重试回复
-          </Button>
-        )}
-      </ScrollView>
+        // 虚拟化：只渲染窗口内的行，长会话的首帧与滚动不再随消息数线性变差。
+        // 不用 inverted：它会反转顶栏收起方向、改变既有滚动交互（本轮不动既有交互）。
+        initialNumToRender={12}
+        maxToRenderPerBatch={12}
+        windowSize={9}
+      />
       </View>
       {awayFromLatest && (
         <Button
