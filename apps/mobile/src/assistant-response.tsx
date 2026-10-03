@@ -3,8 +3,10 @@ import {
   type ImageStyle,
   Image,
   Linking,
+  ScrollView,
   Text,
   type TextStyle,
+  View,
   type ViewStyle,
 } from "react-native";
 import Markdown, { type RenderRules } from "react-native-markdown-display";
@@ -15,6 +17,7 @@ import {
   isSafeAssistantUrl,
   tidyAssistantText,
 } from "./assistant-markdown";
+import { codeLanguageOf, highlightCode, type CodeTokenKind } from "./code-highlight";
 import { colors, ErrorNotice } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -59,12 +62,64 @@ const style: Record<string, ViewStyle | TextStyle | ImageStyle> = {
   td: { flex: 1, flexShrink: 1, minWidth: 0, paddingVertical: 6, paddingHorizontal: 8 },
 };
 
-// 代码块保持原样输出（不插零宽空格，避免复制代码时混入不可见字符）
-const renderCodeBlock: RenderRules["fence"] = (node, _children, _parent, styles) => (
-  <Text key={node.key} selectable style={styles.fence as TextStyle}>
-    {String(node.content ?? "").replace(/\n$/, "")}
-  </Text>
-);
+// 四色足够读（关键字/字符串/注释/数字），配系统浅色底；识别不到的一律 plain
+const syntaxColors: Record<Exclude<CodeTokenKind, "plain">, string> = {
+  keyword: "#7C4AAB",
+  string: "#1A7F37",
+  comment: "#8A9297",
+  number: "#B35900",
+};
+
+/**
+ * 代码块：语言标签 + 轻量高亮 + 横向滚动（对标 Muse 的 HatchCodeBlockKt）。
+ * 横向滚动是关键——代码不折行也不撑破容器；内容保持 selectable 且不含零宽字符。
+ */
+function CodeBlock({ code, info }: { code: string; info: string }) {
+  const language = codeLanguageOf(info);
+  const tokens = useMemo(() => highlightCode(code, language), [code, language]);
+  return (
+    <View
+      style={{
+        backgroundColor: "#E2E4E7",
+        borderRadius: 8,
+        marginVertical: 6,
+        overflow: "hidden",
+      }}
+    >
+      {!!language && (
+        <Text
+          style={{
+            fontSize: 10,
+            color: "#697176",
+            letterSpacing: 0.5,
+            paddingHorizontal: 10,
+            paddingTop: 7,
+          }}
+        >
+          {language}
+        </Text>
+      )}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 10, paddingVertical: 8 }}
+        style={{ flexGrow: 0 }}
+      >
+        <Text selectable style={{ color: colors.text, fontSize: 13, lineHeight: 20 }}>
+          {tokens.map((token, index) =>
+            token.kind === "plain" ? (
+              token.text
+            ) : (
+              <Text key={index} style={{ color: syntaxColors[token.kind] }}>
+                {token.text}
+              </Text>
+            ),
+          )}
+        </Text>
+      </ScrollView>
+    </View>
+  );
+}
 
 /** 图片的固定高度占位：真尺寸未知，contain + 固定高防版面跳动。 */
 const imageStyle: ImageStyle = {
@@ -150,8 +205,20 @@ export function AssistantResponse({
           </Text>
         );
       },
-      code_block: renderCodeBlock,
-      fence: renderCodeBlock,
+      code_block: (node) => (
+        <CodeBlock
+          key={node.key}
+          code={String(node.content ?? "").replace(/\n$/, "")}
+          info={String(node.attributes?.info ?? "")}
+        />
+      ),
+      fence: (node) => (
+        <CodeBlock
+          key={node.key}
+          code={String(node.content ?? "").replace(/\n$/, "")}
+          info={String(node.attributes?.info ?? "")}
+        />
+      ),
     }),
     [api],
   );
