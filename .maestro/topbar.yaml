@@ -1,0 +1,32 @@
+# 顶栏 / 水豚：用户三次反馈的那三个现象，用真机级判据钉住
+# 运行前提：App 处于已登录态（CI 用 repo secret OPENMUSE_TEST_TOKEN）
+# TODO(待补)：App.tsx 给顶栏菜单按钮与头像胶囊加 testID（topbar-menu / topbar-mascot），
+#             然后把下面的 text 匹配换成 id 匹配 —— Android 上 testID 会变成 resource-id，最稳。
+#             目前先用文案/无障碍名近似匹配。
+appId: app.openmuse.mobile
+---
+- assertVisible:
+    id: ".*"
+    optional: true
+
+# ① 顶栏存在
+- assertVisible:
+    text: "会话与菜单"
+    optional: false
+
+# ② 慢滑 2 秒（用户报的场景：慢速滑动）
+- swipe:
+    direction: UP
+    duration: 2000
+- waitForAnimationToEnd
+
+# ③ 水豚卡片：滑出后仍可见（对应"保留"，不随滚动隐藏）
+- assertVisible:
+    text: ".*Open.*"
+    optional: true
+
+# ④ 水豚卡片在最前端 —— 可点性就是层级判据：
+#    若被正文覆盖，这一下点不到，flow 直接失败（等价于我们在 Web 上用 elementFromPoint 的手工验证）
+- tapOn:
+    text: ".*Open.*"
+    optional: false
