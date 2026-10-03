@@ -9,7 +9,7 @@ import {
 import { Pressable, Text, View } from "react-native";
 import { useAgentWorkspace } from "./agent-workspace";
 import { ComputerEntry } from "./computer";
-import { agentActionLabel, relativeTime, statusLabel } from "./labels";
+import { actionEmoji, agentActionLabel, relativeTime, statusLabel } from "./labels";
 import { Button, colors, Mascot, Sheet, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -37,7 +37,7 @@ export function AvatarPanel({ onClose }: { onClose: () => void }) {
         <Text style={[s.heading, { fontSize: 18 }]}>{name}</Text>
         <Text style={[s.small, { textAlign: "center" }]} numberOfLines={2}>
           {live
-            ? `${live.text}${live.detail ? ` · ${live.detail}` : ""} · ${relativeTime(live.at)}`
+            ? `${actionEmoji(live.tool)} ${live.text}${live.detail ? ` · ${live.detail}` : ""} · ${relativeTime(live.at)}`
             : "待命中，接到活之后这里会显示它在做什么。"}
         </Text>
       </View>
@@ -105,7 +105,7 @@ export function AvatarPanel({ onClose }: { onClose: () => void }) {
         ))}
         {live && (
           <Text style={s.small}>
-            正在用：{agentActionLabel(live.tool)}
+            正在用：{actionEmoji(live.tool)} {agentActionLabel(live.tool)}
             {live.detail ? ` · ${live.detail}` : ""}
           </Text>
         )}

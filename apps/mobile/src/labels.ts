@@ -197,6 +197,106 @@ export function agentActionLabel(tool: string) {
   return AGENT_ACTIONS[tool] ?? `正在使用 ${tool}`;
 }
 
+/**
+ * 智能体相位（对标 Muse `HatchPillState` 的 13 态，取我们用得上的 6 态）。
+ * 关键是把「模型在想（THINKING）」「正在出字（TYPING）」从工具状态里拆出来——
+ * 思考那 5～60 秒界面完全沉默，是"它看起来死了"的最大来源。
+ */
+export type AgentPhase =
+  | "USING_TOOL"
+  | "TYPING"
+  | "THINKING"
+  | "WAITING_FOR_SUBAGENTS"
+  | "NEEDS_APPROVAL"
+  | "IDLE";
+
+export interface AgentPhaseInput {
+  /** 有在飞的工具调用 */
+  inFlightTool: boolean;
+  /** 本轮已经开始出字（最后一条助手消息有正文） */
+  startedTyping: boolean;
+  /** 有一轮对话在跑（还没调工具、也还没出字） */
+  runActive: boolean;
+  /** 本轮没在跑，但有后台任务在动 */
+  backgroundTasks: boolean;
+  /** 有等你确认的操作 */
+  pendingApprovals: boolean;
+}
+
+/**
+ * 相位推导（纯函数）。优先级照 Muse 的读法：
+ * 在用工具 > 正在出字 > 思考 > 等后台任务 > 等审批 > 空闲。
+ */
+export function agentPhase(input: AgentPhaseInput): AgentPhase {
+  if (input.inFlightTool) return "USING_TOOL";
+  if (input.startedTyping) return "TYPING";
+  if (input.runActive) return "THINKING";
+  if (input.backgroundTasks) return "WAITING_FOR_SUBAGENTS";
+  if (input.pendingApprovals) return "NEEDS_APPROVAL";
+  return "IDLE";
+}
+
+const PHASE_LABELS: Record<AgentPhase, string> = {
+  USING_TOOL: "正在动手",
+  TYPING: "正在回复",
+  THINKING: "思考中…",
+  WAITING_FOR_SUBAGENTS: "后台任务在跑",
+  NEEDS_APPROVAL: "等你确认",
+  IDLE: "需要我就叫我",
+};
+
+/** 相位 → 一句话（WAITING_FOR_SUBAGENTS 带上数量更有心跳感）。 */
+export function agentPhaseLabel(phase: AgentPhase, subagentCount = 0): string {
+  if (phase === "WAITING_FOR_SUBAGENTS" && subagentCount > 0)
+    return `${subagentCount} 个任务在跑`;
+  return PHASE_LABELS[phase];
+}
+
+/** 工具 → emoji（对标 Muse 的 `activityEmoji`）：余光扫一眼就知道在干哪类活。 */
+const ACTION_EMOJI: Record<string, string> = {
+  search_web: "🔍",
+  read_pages: "📄",
+  browse_web: "🌐",
+  page_elements: "🧩",
+  page_act: "👆",
+  look_page: "📸",
+  read_image: "🖼️",
+  read_mail_thread: "📬",
+  search_mail: "📧",
+  delegate_task: "📤",
+  watch_page: "👀",
+  create_goal: "🎯",
+  remember_fact: "🧠",
+  agent_status: "📊",
+  present_choices: "🤔",
+  save_document: "📝",
+  import_pdf: "📥",
+  inspect_pdf: "🔍",
+  fill_pdf: "🖊️",
+  save_artifact: "📦",
+  prepare_email: "✉️",
+  prepare_event: "📅",
+  ask_user: "❓",
+  finish_task: "🏁",
+  set_plan: "🗂️",
+  read_workspace: "🗂️",
+  workspace_read_file: "📄",
+  workspace_write_file: "✏️",
+  workspace_edit_file: "✂️",
+  workspace_list_files: "📂",
+  git_commit: "🔨",
+  git_push: "🚀",
+  computer_status: "💻",
+  write_computer_file: "💾",
+  read_computer_file: "📖",
+  list_computer_files: "📂",
+  run_computer_command: "⌨️",
+};
+
+export function actionEmoji(tool: string): string {
+  return ACTION_EMOJI[tool] ?? "🛠️";
+}
+
 /** 从工具参数里挑最能说明"在干什么"的那个值（查询词/网址/动作），压平并截断。 */
 export function actionDetail(args: unknown, limit = 60) {
   if (!args || typeof args !== "object") return "";
