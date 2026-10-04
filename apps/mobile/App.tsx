@@ -143,6 +143,11 @@ export default function App() {
       // 出来量尺寸（数据请求会失败，不影响布局）。真机与正式包都不受影响。
       else if (__DEV__ && Platform.OS === "web" && process.env.EXPO_PUBLIC_FAKE_TOKEN)
         setToken(process.env.EXPO_PUBLIC_FAKE_TOKEN);
+      // 真机 E2E 专用（CI 的 Maestro 验收走这条）：release 包里 __DEV__ 为 false、平台也不是 web，
+      // 上面那条永远不成立 → 之前 CI 装出来的包**必然是未登录态**，顶栏/文件预览那些真机判据被静默跳过。
+      // 这里用一个**独立且显式命名**的变量：只有 CI 会注入它；普通构建里它不存在，行为与以前完全一致。
+      else if (process.env.EXPO_PUBLIC_E2E_FAKE_TOKEN)
+        setToken(process.env.EXPO_PUBLIC_E2E_FAKE_TOKEN);
       else if (savedKey) await connect(savedKey);
     })();
   }, [connect]);
