@@ -58,7 +58,7 @@ import { runConversationTurn } from "./conversation-run";
 import { loadCursor, outboxStorage, saveCursor } from "./conversation-store";
 import { guard } from "./crash-log";
 import { shouldCancelDictation } from "./dictation";
-import { hapticPress, hapticSuccess, hapticTap, hapticWarn } from "./haptics";
+import { hapticLongPress, hapticPress, hapticSuccess, hapticTap, hapticWarn } from "./haptics";
 import { beginUserScroll, endUserScroll, userScrollActive } from "./header-collapse";
 import {
   getChromeHeight,
@@ -1425,7 +1425,10 @@ export function ChatScreen({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="消息操作：复制、再次发送或撤回"
-                onLongPress={() => setActionsFor({ id: message.id, role: "user", text })}
+                onLongPress={() => {
+                  hapticLongPress();
+                  setActionsFor({ id: message.id, role: "user", text });
+                }}
                 delayLongPress={350}
                 style={{
                   paddingHorizontal: 16,
@@ -1444,7 +1447,10 @@ export function ChatScreen({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="消息操作：复制、分享或回应"
-                onLongPress={() => setActionsFor({ id: message.id, role: "assistant", text })}
+                onLongPress={() => {
+                  hapticLongPress();
+                  setActionsFor({ id: message.id, role: "assistant", text });
+                }}
                 delayLongPress={350}
                 style={{ paddingVertical: 2 }}
               >

@@ -141,7 +141,12 @@ export function AgentStatus() {
           重新连接智能体
         </Button>
       )}
-      {!data && !error && <ActivityIndicator color={colors.blueDark} />}
+      {!data && !error && (
+        <View style={[s.row, { gap: 10, padding: 4 }]}>
+          <ActivityIndicator color={colors.blueDark} />
+          <Text style={s.muted}>正在连接智能体…</Text>
+        </View>
+      )}
       {!!data && !!text && (
         <Card style={{ padding: 16, gap: 8, borderRadius: 22 }}>
           <View style={[s.row, { gap: 9, alignItems: "center" }]}>
@@ -489,7 +494,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
   async function review() {
     const actionId = task?.actionId;
     if (!actionId) {
-      setError("这次复核还不可用，刷新后重试。");
+      setError("这次复核还不可用（任务刚建好，复核信息还没同步过来）。等几秒刷新后重试。");
       return;
     }
     setBusy(true);
@@ -501,7 +506,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
         const snapshot = await api.request<typeof workspace>("/api/workspace");
         action = snapshot.actions.find((item) => item.id === actionId);
       }
-      if (!action) throw new Error("这次复核还不可用，刷新后重试。");
+      if (!action) throw new Error("这次复核还不可用（服务端暂时没返回这条复核）。等几秒刷新后重试。");
       open({ type: "review", action });
       // 后台补新鲜度：复核面板若拿到更新的 hash 会自己换新，批准照旧能用
       void refreshWorkspace();
@@ -535,7 +540,10 @@ export function TaskDetail({ taskId }: { taskId: string }) {
     >
       <ErrorNotice error={error} />
       {!task ? (
-        <ActivityIndicator color={colors.blueDark} />
+        <View style={[s.row, { gap: 10, padding: 4 }]}>
+          <ActivityIndicator color={colors.blueDark} />
+          <Text style={s.muted}>正在加载已保存的进展…</Text>
+        </View>
       ) : (
         <View style={{ gap: 20 }}>
           <Text selectable style={s.text}>

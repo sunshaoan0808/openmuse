@@ -19,7 +19,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { hapticTap } from "./haptics";
+import { hapticSettle, hapticTap } from "./haptics";
 import { type HeroCard, type HeroRect, usePressScale, useRiseIn, useSheetEntrance } from "./motion";
 import { useAndroidKeyboardInset } from "./use-android-keyboard-inset";
 
@@ -503,6 +503,8 @@ export function Sheet({
           closeRef.current();
           return;
         }
+        // 没拉够就弹回去：给一个"落位"震动，否则用户要靠眼睛确认"到底关没关上"
+        hapticSettle();
         springBack();
       },
       onPanResponderTerminate: springBack,

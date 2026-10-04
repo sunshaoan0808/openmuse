@@ -89,7 +89,7 @@ export function BrowserToolCard({
   const failure = toolError.success
     ? toolError.data.error
     : !loading && !visited
-      ? "浏览器没有返回页面，请重试。"
+      ? "浏览器没有返回页面（页面可能需要登录，或被目标网站拦截）。换个链接试试，或稍后重试。"
       : "";
   return (
     <Card
