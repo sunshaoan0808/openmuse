@@ -1,0 +1,64 @@
+# 文件预览「内容能滑动浏览」——真机级判据
+#
+# 起因：用户报「文件点开后，整个页面在滑动，md 的内容不滑」。
+# 根因：预览里的文档被套在一层 maxHeight:460 的内层 ScrollView 里，与面板自己的
+# ScrollView 形成**嵌套滚动**；真机上外层抢走竖向手势 → 盒子以下的内容够不到。
+# Web 验收台复现不出来（RN-Web 走的是另一条渲染路径），所以这条判据只能在真机/模拟器上量。
+#
+# 判据：打开一份 markdown → 滑到底 → 断言文档**结尾**那句话可见。
+#       结尾可见 ⇔ 全文可达 ⇔ 内容能滑动浏览。
+#       （修好之前：正文被裁在 460 的盒子里，这行永远够不到。）
+#
+# 真机层级已核对（2026-10-03 的 maestro-evidence artifact）：
+#   · 文件列表行渲染成「文档 / MD / <文件名> / 0 pages · N KB / …」→ 按文件名正则点得到；
+#   · 选列表**靠上**的那份，避免依赖长距离滚动；
+#   · Maestro 的 scrollUntilVisible 里 direction 指**手指滑动的方向**：要找列表**下面**的东西用 UP。
+#     第一次写成 DOWN → 一路滑回顶部，永远找不到目标（真机上就是这么失败的）。
+#
+# 依赖：App 已登录（CI 在打包前注入 EXPO_PUBLIC_E2E_FAKE_TOKEN），且实例里有这份文档。
+#       公开实例 https://openmuse.claw.ssan.me 上有。
+appId: app.openmuse.mobile
+---
+- launchApp
+- waitForAnimationToEnd
+
+# ① 底部导航 → 应用（无障碍名就是「应用」）
+- tapOn:
+    text: "应用"
+
+# ② 应用页里的「文件」入口：它在折叠线以下，必须先滚到可见（真机上直接 tapOn 会报找不到）
+- scrollUntilVisible:
+    element:
+      text: "文件.*"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    text: "文件.*"
+
+# ③ 文件列表：打开一份 markdown —— 选真机上出现在列表**靠上**处的那份，避免依赖长距离滚动
+- scrollUntilVisible:
+    element:
+      text: ".*金球奖新闻三篇摘要\\.md.*"
+    direction: DOWN
+    timeout: 20000
+- tapOn:
+    text: ".*金球奖新闻三篇摘要\\.md.*"
+
+# ④ 面板确实打开了 —— 判据用**文档正文本身**（面板顶部就可见）。
+# 注：不要用「导出 PDF」这类动作按钮当判据 —— 它们在面板**折叠线以下**，真机上会误判成"没打开"
+#   （2026-10-03 的 run 就是这么失败的：面板明明开着、文档渲染正常，只因为按钮在下面而报错）。
+- assertVisible:
+    text: ".*姆巴佩晒世界杯金靴.*"
+
+# ⑤ 用户报的动作：滑动。让 Maestro 用**真手势**一路滑到文档结尾那行可见 ——
+#    这一步 COMPLETED，就等于证明了「文档内容能滑动浏览、且全文可达」。
+- scrollUntilVisible:
+    element:
+      text: ".*三篇报道均来自新浪新闻及新浪体育.*"
+    direction: DOWN
+    timeout: 30000
+    visibilityPercentage: 50
+
+# ⑥ 结尾那行确实可见
+- assertVisible:
+    text: ".*三篇报道均来自新浪新闻及新浪体育.*"
