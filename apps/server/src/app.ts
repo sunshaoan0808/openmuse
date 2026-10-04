@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readFile, stat } from "node:fs/promises";
+import path from "node:path";
 import { MessageSchema } from "@ag-ui/core";
 import { CopilotKitIntelligence } from "@copilotkit/runtime/v2";
 import type { Handler } from "hono";
@@ -180,6 +182,31 @@ export async function createApp(
       browserConfigured: Boolean(config.workerUrl && config.workerToken),
     }),
   );
+  // APK 分发：把 APK_DIST 目录下的构建产物经本服务发出去（公网反代会全路径转到这里）
+  app.get("/download/:file", async (c) => {
+    const dir = config.apkDistDir;
+    if (!dir) return c.text("未配置 APK 分发目录", 404);
+    const name = path.basename(c.req.param("file"));
+    const full = path.join(dir, name);
+    // 只允许 apk/zip 这类构建产物，且必须真实落在 dist 目录内
+    if (!/\.(apk|aab)$/i.test(name) || !full.startsWith(path.resolve(dir) + path.sep)) {
+      return c.text("不支持的文件", 404);
+    }
+    let info;
+    try {
+      info = await stat(full);
+    } catch {
+      return c.text("文件不存在", 404);
+    }
+    if (!info.isFile()) return c.text("文件不存在", 404);
+    c.header("Content-Type", "application/vnd.android.package-archive");
+    c.header("Content-Length", String(info.size));
+    c.header(
+      "Content-Disposition",
+      `attachment; filename="${name}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+    );
+    return c.body(await readFile(full));
+  });
   let loginWindow = 0,
     loginAttempts = 0;
   app.post("/api/session", async (c) => {

@@ -52,6 +52,8 @@ export interface Config {
   googleRedirectUri: string;
   workerUrl?: string;
   workerToken?: string;
+  /** APK 下载目录：设了才开放 /download/:file（用于把构建产物经公网反代发出去）。 */
+  apkDistDir?: string;
   /** 自建 SearXNG 基地址（启用 JSON 输出后可直接当搜索后端）。 */
   searchUrl?: string;
   /** 官方搜索 API key 池（brave / tavily / serper / firecrawl），逐个失败轮换；空 = 只有抓取。 */
@@ -147,6 +149,7 @@ export function readConfig(): Config {
     googleRedirectUri: `${publicUrl}/api/google/callback`,
     workerUrl: browserWorkerUrl(process.env.BROWSER_WORKER_URL),
     workerToken: process.env.WORKER_TOKEN,
+    apkDistDir: process.env.APK_DIST_DIR?.trim() || undefined,
     searchUrl: process.env.SEARCH_URL?.trim() || undefined,
     searchApiKeys: [
       ...(process.env.SEARCH_API_KEYS ?? "").split(","),
