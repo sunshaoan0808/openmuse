@@ -25,14 +25,29 @@ export function taskProgress(task: AgentTask) {
   return { done, total: steps.length };
 }
 
+/** 算「在跑」的状态集合：头部文案与「已 X 秒」的起点判定共用同一份，避免两处漂移。 */
+const RUNNING_STATUSES: readonly string[] = ["running", "queued", "scheduled"];
+
 /** 头部文案：几个在跑、几个在等、几个已完成（Muse 用 activeSubAgentCount/completedSubAgents 表达同一件事）。 */
 export function taskSummary(tasks: readonly AgentTask[]) {
-  const running = tasks.filter((task) =>
-    ["running", "queued", "scheduled"].includes(task.status),
-  ).length;
+  const running = tasks.filter((task) => RUNNING_STATUSES.includes(task.status)).length;
   const waiting = tasks.filter((task) =>
     ["waiting_input", "waiting_approval"].includes(task.status),
   ).length;
   const done = tasks.filter((task) => task.status === "succeeded").length;
   return { running, waiting, done, total: tasks.length };
+}
+
+/**
+ * 跑动中的任务里**最早**的那个开始时间（毫秒）。
+ *
+ * 给「已 X 秒」的活数字当起点：有多个在跑时，取最早的那个才对应"我从什么时候开始等的"。
+ * `createdAt` 是 ISO 串；解析不出来就返回 undefined —— 宁可不显示秒数，也不假装有个数字。
+ */
+export function runningStartMs(tasks: readonly AgentTask[]): number | undefined {
+  const times = tasks
+    .filter((task) => RUNNING_STATUSES.includes(task.status))
+    .map((task) => Date.parse(task.createdAt))
+    .filter((ms) => Number.isFinite(ms));
+  return times.length ? Math.min(...times) : undefined;
 }

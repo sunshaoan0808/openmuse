@@ -37,7 +37,20 @@ export async function captureImage(
   return result.assets[0];
 }
 
-function imageExtension(asset: ImagePicker.ImagePickerAsset) {
+/**
+ * 可上传的图片。三种来源都能喂进来：ImagePicker 的 asset、应用内相机拍的照片、
+ * 网页版 File 对象 —— 所以这里只要求最小公共字段。
+ */
+export type UploadableImage = {
+  uri?: string;
+  fileName?: string | null;
+  mimeType?: string | null;
+  /** 拿不到字节数（例如应用内相机）就不做体积预检，别误伤 */
+  fileSize?: number;
+  file?: File | null;
+};
+
+function imageExtension(asset: UploadableImage) {
   const fromName = /\.([a-z0-9]+)$/i.exec(asset.fileName ?? "")?.[1];
   if (fromName) return fromName.toLowerCase();
   const fromMime = /^image\/([a-z0-9+.-]+)$/i.exec(asset.mimeType ?? "")?.[1]?.toLowerCase();
@@ -50,10 +63,7 @@ function imageExtension(asset: ImagePicker.ImagePickerAsset) {
  * 把选中的图片传到已有的文件上传接口（字段名 file，带 Authorization 头），
  * 返回服务端生成的 artifact（其中的 name 就是后续 read_image 要用的文件名）。
  */
-export async function uploadImage(
-  api: MuseApi,
-  asset: ImagePicker.ImagePickerAsset,
-): Promise<Artifact> {
+export async function uploadImage(api: MuseApi, asset: UploadableImage): Promise<Artifact> {
   const name = asset.fileName || `photo-${Date.now()}.${imageExtension(asset)}`;
   const mimeType =
     asset.mimeType || `image/${imageExtension(asset) === "jpg" ? "jpeg" : imageExtension(asset)}`;
@@ -61,12 +71,14 @@ export async function uploadImage(
     const form = new FormData();
     if (asset.file) form.append("file", asset.file, name);
     else {
+      if (!asset.uri) throw new Error("无法读取所选图片，请重新选择。");
       const response = await fetch(asset.uri);
       if (!response.ok) throw new Error("无法读取所选图片，请重新选择。");
       form.append("file", new File([await response.blob()], name, { type: mimeType }), name);
     }
     return api.request<Artifact>("/api/files", form);
   }
+  if (!asset.uri) throw new Error("无法读取所选图片，请重新选择。");
   const upload = await FileSystem.uploadAsync(`${apiUrl()}/api/files`, asset.uri, {
     httpMethod: "POST",
     uploadType: FileSystem.FileSystemUploadType.MULTIPART,

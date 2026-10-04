@@ -1,8 +1,10 @@
-import { useCallback, useMemo, useState } from "react";
+import * as Clipboard from "expo-clipboard";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Image,
   type ImageStyle,
   Linking,
+  Pressable,
   ScrollView,
   Text,
   type TextStyle,
@@ -18,6 +20,7 @@ import {
   tidyAssistantText,
 } from "./assistant-markdown";
 import { type CodeTokenKind, codeLanguageOf, highlightCode } from "./code-highlight";
+import { MessageLinkPreview } from "./link-preview";
 import { colors, ErrorNotice } from "./ui";
 import { useWorkspace } from "./workspace";
 
@@ -77,6 +80,21 @@ const syntaxColors: Record<Exclude<CodeTokenKind, "plain">, string> = {
 function CodeBlock({ code, info }: { code: string; info: string }) {
   const language = codeLanguageOf(info);
   const tokens = useMemo(() => highlightCode(code, language), [code, language]);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1800);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  /**
+   * 一键复制（对标 Muse 的「复制代码」）—— 长代码手选几乎不可能。
+   * 复制前剥掉零宽字符：正文渲染会插它来折行，否则对方粘到的是看不见的脏字符
+   * （与 chat.tsx 的 copyMessageText 同一口径）。
+   */
+  async function copyCode() {
+    await Clipboard.setStringAsync(code.replace(/\u200B/g, ""));
+    setCopied(true);
+  }
   return (
     <View
       style={{
@@ -86,19 +104,30 @@ function CodeBlock({ code, info }: { code: string; info: string }) {
         overflow: "hidden",
       }}
     >
-      {!!language && (
-        <Text
-          style={{
-            fontSize: 10,
-            color: "#697176",
-            letterSpacing: 0.5,
-            paddingHorizontal: 10,
-            paddingTop: 7,
-          }}
-        >
-          {language}
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingHorizontal: 10,
+          paddingTop: 7,
+        }}
+      >
+        {/* 没识别出语言也保留这一行：复制按钮需要一个家 */}
+        <Text style={{ fontSize: 10, color: "#697176", letterSpacing: 0.5 }}>
+          {language || "代码"}
         </Text>
-      )}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={copied ? "已复制代码" : "复制代码"}
+          onPress={() => void copyCode()}
+          hitSlop={8}
+        >
+          <Text style={{ fontSize: 11, color: copied ? "#1A7F37" : "#4A5157" }}>
+            {copied ? "已复制" : "复制代码"}
+          </Text>
+        </Pressable>
+      </View>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -254,6 +283,8 @@ export function AssistantResponse({
         {shown}
       </Markdown>
       <ErrorNotice error={linkError} />
+      {/* 正文里有链接就在下面补一张卡（Muse 的 HatchMessageLinkPreviewKt） */}
+      <MessageLinkPreview text={shown} />
     </>
   );
 }

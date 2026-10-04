@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { MessageSchema } from "@ag-ui/core";
 import { CopilotKitIntelligence } from "@copilotkit/runtime/v2";
-import { Hono } from "hono";
 import type { Handler } from "hono";
+import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { z } from "zod";
-import { emailDraftSchema, proposalSchema } from "../../../packages/domain/src/index.ts";
+import {
+  emailDraftSchema,
+  isPrivateHost,
+  metaFromHtml,
+  proposalSchema,
+} from "../../../packages/domain/src/index.ts";
 import { ActionService } from "./actions.ts";
 import { agentConfigured, makeRuntime } from "./agent.ts";
 import { createAuth } from "./auth.ts";
@@ -203,6 +208,46 @@ export async function createApp(
         : await auth.owner(c.req.header("authorization"));
     c.set("owner", owner);
     await next();
+  });
+  /**
+   * 链接预览（对标 Muse 的 `HatchLinkPreviewKt`）：只取标题/描述，不抓缩略图。
+   *
+   * 这个端点会**替用户去访问任意 URL** —— 所以内网/本机地址一律拒绝：不拦就等于
+   * 把自己的服务端白送成一个 SSRF 跳板（云元数据、内网面板）。
+   */
+  app.get("/api/link-preview", async (c) => {
+    const raw = c.req.query("url") ?? "";
+    let target: URL;
+    try {
+      target = new URL(raw);
+    } catch {
+      throw new AppError("链接无效。", 422);
+    }
+    if (target.protocol !== "http:" && target.protocol !== "https:")
+      throw new AppError("只支持 http/https 链接。", 422);
+    if (isPrivateHost(target.hostname)) throw new AppError("不支持内网地址。", 422);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    try {
+      const response = await fetch(target, {
+        signal: controller.signal,
+        redirect: "follow",
+        headers: { "user-agent": "OpenMuse-LinkPreview/1.0" },
+      });
+      if (!response.ok) throw new AppError(`打不开这个链接（HTTP ${response.status}）。`, 422);
+      const type = response.headers.get("content-type") ?? "";
+      if (!type.includes("text/html")) throw new AppError("这个链接不是网页，没法预览。", 422);
+      return c.json({
+        url: target.toString(),
+        host: target.hostname.replace(/^www\./, ""),
+        ...metaFromHtml(await response.text()),
+      });
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError("打不开这个链接（超时或不可达）。", 422);
+    } finally {
+      clearTimeout(timer);
+    }
   });
   app.get("/api/workspace", async (c) => {
     const [snapshot, reachable] = await Promise.all([
