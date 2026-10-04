@@ -1,10 +1,11 @@
 import { ListChecks } from "lucide-react-native";
 import { useEffect, useRef } from "react";
 import { Animated, Pressable, Text, View } from "react-native";
-import { activitySummaryLine } from "../../../packages/domain/src/activity";
+import { activitySummaryLine, formatDurationMs } from "../../../packages/domain/src/activity";
 import { useAgentWorkspace } from "./agent-workspace";
+import { useElapsedMs } from "./elapsed";
 import { statusLabel } from "./labels";
-import { taskProgress, taskSummary, visibleTasks } from "./thread-tasks";
+import { runningStartMs, taskProgress, taskSummary, visibleTasks } from "./thread-tasks";
 import { useMuseThread } from "./threads";
 import { colors, s } from "./ui";
 import { useWorkspace } from "./workspace";
@@ -44,8 +45,11 @@ export function RunningTasks() {
     mainId,
     threadsEnabled: enabled,
   });
-  if (!tasks.length) return null;
   const summary = taskSummary(tasks);
+  // 「已 X 秒」是活数字（Muse 的子任务行就是每秒刷新）——静态数字答不了"它到底在动没有"。
+  // 钩子要在提前 return 之前调用，所以先算再判空。
+  const elapsedMs = useElapsedMs(runningStartMs(tasks));
+  if (!tasks.length) return null;
   return (
     <View style={{ gap: 8, marginBottom: 4 }}>
       <View style={[s.row, { gap: 7, alignItems: "center" }]}>
@@ -53,6 +57,9 @@ export function RunningTasks() {
         <Text style={s.small}>
           {summary.running > 0 ? `${summary.running} 个任务在跑` : `${summary.total} 个任务`}
           {summary.waiting > 0 ? ` · ${summary.waiting} 个等你` : ""}
+          {summary.running > 0 && elapsedMs !== undefined
+            ? ` · 已 ${formatDurationMs(elapsedMs)}`
+            : ""}
         </Text>
       </View>
       {tasks.slice(0, 3).map((task) => {

@@ -17,6 +17,7 @@ import {
   FileText,
   ImagePlus,
   Mic,
+  Pause,
   RotateCcw,
   ShieldCheck,
   Square,
@@ -29,6 +30,7 @@ import {
   Alert,
   Animated,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -49,11 +51,13 @@ import { AssistantResponse } from "./assistant-response";
 import { BackgroundUpdates } from "./background-updates";
 import { BrowserActionCard } from "./browser-action-card";
 import { BrowserRunContext, BrowserToolCard } from "./browser-tool-card";
+import { hasInAppCamera, InAppCamera } from "./camera-view";
 import { acknowledgedIds, mergeConversation } from "./conversation-merge";
 import { ConversationQueue, type QueuedMessage } from "./conversation-queue";
 import { runConversationTurn } from "./conversation-run";
 import { loadCursor, outboxStorage, saveCursor } from "./conversation-store";
 import { guard } from "./crash-log";
+import { shouldCancelDictation } from "./dictation";
 import { hapticPress, hapticSuccess, hapticTap, hapticWarn } from "./haptics";
 import { beginUserScroll, endUserScroll, userScrollActive } from "./header-collapse";
 import {
@@ -67,6 +71,8 @@ import {
   documentUploadMessage,
   type ImageSource,
   imageUploadMessage,
+  type PickedDocument,
+  type UploadableImage,
   uploadDocument,
   uploadImage,
 } from "./image-attachment";
@@ -81,6 +87,8 @@ import {
   agentPhaseLabel,
   proposalStatusLabel,
 } from "./labels";
+import { MAX_ATTACHMENTS, MAX_MESSAGE_CHARS, messageCounterLabel, tooLargeMessage } from "./limits";
+import { ComposerLinkPreview } from "./link-preview";
 import { MailToolCard } from "./mail-tool-card";
 import { type HeroRect, usePressScale, usePulse } from "./motion";
 import { RunningTasks } from "./running-tasks";
@@ -90,7 +98,7 @@ import { SavedDocumentCard, TaskThreadCard } from "./thread-artifacts";
 import { type Selection, useMuseThread } from "./threads";
 import { ToolDetailRow } from "./tool-detail";
 import { CHAT_TOOL_RENDERERS, type ChatToolMeta } from "./tool-registry";
-import { Button, Card, CheckRow, colors, ErrorNotice, MeasureCard, RiseIn, s } from "./ui";
+import { Button, Card, CheckRow, colors, ErrorNotice, MeasureCard, RiseIn, Sheet, s } from "./ui";
 import { useWorkspace } from "./workspace";
 
 const displayParameters = z.record(z.string(), z.unknown());
@@ -129,8 +137,12 @@ function ThinkingDots() {
   );
 }
 
-/** 聆听中扩散的光圈：让"正在听"这件事在余光里也能看见。 */
-function MicPulse() {
+/**
+ * 聆听中扩散的光圈：让"正在听"这件事在余光里也能看见。
+ * `level` 是实时音量（0..1）：有声音进来时光圈更大更亮 —— Muse 用的是实时波形，
+ * 至少要让"麦克风到底收到了没有"可见。
+ */
+function MicPulse({ level = 0 }: { level?: number }) {
   const value = usePulse({ duration: 1100 });
   return (
     <Animated.View
@@ -141,8 +153,18 @@ function MicPulse() {
         height: 44,
         borderRadius: 24,
         backgroundColor: colors.danger,
-        opacity: value.interpolate({ inputRange: [0, 1], outputRange: [0.42, 0] }),
-        transform: [{ scale: value.interpolate({ inputRange: [0, 1], outputRange: [1, 1.5] }) }],
+        opacity: value.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0.24 + level * 0.45, 0],
+        }),
+        transform: [
+          {
+            scale: value.interpolate({
+              inputRange: [0, 1],
+              outputRange: [1 + level * 0.3, 1.5 + level * 0.5],
+            }),
+          },
+        ],
       }}
     />
   );
@@ -444,6 +466,55 @@ function ReceiptRow({ action, onPress }: { action: ActionProposal; onPress: () =
 /** 反应面板的固定表情集（与服务端 REACTION_EMOJIS 一致；拉取失败时的兜底顺序）。 */
 const REACTION_FALLBACK: readonly string[] = ["👍", "👎", "❤️", "😂", "😮", "😢", "🙏", "🔥"];
 
+/**
+ * 待发附件（对标 Muse 的 `HatchAttachmentStaging` / `HatchPendingAttachment`）。
+ * 关键点：上传中/失败的那一条**留在输入框上方**，并且 asset 还握在手里 ——
+ * 所以「上传失败，轻触重试」是真的重试，不需要用户重新选一遍文件。
+ */
+type PendingUpload = {
+  id: string;
+  name: string;
+  kind: "image" | "document";
+  status: "uploading" | "failed";
+  message?: string;
+  asset: UploadableImage | PickedDocument;
+};
+
+/**
+ * 实时波形（对标 Muse 的 `DictationWaveform`）：音量真的在跳，才看得出"麦克风收到了没有"。
+ * 还没采到点时退回一个转圈，不留空。
+ */
+function DictationWaveform({ levels }: { levels: readonly number[] }) {
+  if (!levels.length) return <ActivityIndicator size="small" color={colors.blueDark} />;
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 2, height: 18 }}>
+      {levels.map((level, index) => (
+        <View
+          // 位置就是身份：波形是"最近 N 个采样"的滑动窗口，逐点重挂没有意义
+          // biome-ignore lint/suspicious/noArrayIndexKey: 见上
+          key={index}
+          style={{
+            width: 2,
+            borderRadius: 1,
+            backgroundColor: colors.blueDark,
+            height: 3 + level * 14,
+            opacity: 0.35 + level * 0.65,
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
+/**
+ * 排队中每一条自己的状态（Muse 的消息级文案：`正在发送…` / `已发送`）。
+ * 「点了发送却像没反应」就发生在这段：是排着、是在发、还是失败等重试，必须一眼看得出来。
+ */
+function queuedStateLabel(message: QueuedMessage): string {
+  if (message.sending) return "正在发送…";
+  return message.attempts ? "发送失败，稍后自动重试" : "排队中";
+}
+
 /** 长按消息的操作菜单（复制 / 再次发送或分享为文本 / 回应 / 撤回）。 */
 function MessageActionsModal({
   target,
@@ -462,16 +533,17 @@ function MessageActionsModal({
   onReact: (messageId: string) => void;
   onUnsend: (messageId: string) => void;
 }) {
-  const items: { key: string; label: string; danger?: boolean; run: () => void }[] = [
-    {
-      key: "copy",
-      label: "复制",
-      run: () => {
-        onClose();
-        void onCopy(target.text);
+  const items: { key: string; label: string; hint?: string; danger?: boolean; run: () => void }[] =
+    [
+      {
+        key: "copy",
+        label: "复制",
+        run: () => {
+          onClose();
+          void onCopy(target.text);
+        },
       },
-    },
-  ];
+    ];
   if (target.role === "user")
     items.push({ key: "resend", label: "再次发送", run: () => onResend(target.text) });
   else
@@ -485,7 +557,15 @@ function MessageActionsModal({
     });
   items.push({ key: "react", label: "回应…", run: () => onReact(target.id) });
   if (target.role === "user")
-    items.push({ key: "unsend", label: "撤回", danger: true, run: () => onUnsend(target.id) });
+    items.push({
+      key: "unsend",
+      label: "撤回",
+      danger: true,
+      // 如实交代边界（Muse 原文：删掉的消息会从对话中移除，但可能仍在智能体的记忆中）——
+      // 涉及隐私预期，说清楚比不说好。
+      hint: "撤回只把消息从这段对话里移除；它可能仍留在智能体的记忆里。",
+      run: () => onUnsend(target.id),
+    });
   return (
     <Modal transparent visible animationType="fade" onRequestClose={onClose}>
       <Pressable style={s.modalShade} onPress={onClose}>
@@ -514,6 +594,7 @@ function MessageActionsModal({
               ]}
             >
               <Text style={[s.text, item.danger && { color: colors.danger }]}>{item.label}</Text>
+              {!!item.hint && <Text style={[s.small, { marginTop: 2 }]}>{item.hint}</Text>}
             </Pressable>
           ))}
         </Pressable>
@@ -578,7 +659,7 @@ export function ChatScreen({
   thread?: Selection;
   active?: boolean;
 }) {
-  const { api, open, workspace: w, refresh, navigate } = useWorkspace();
+  const { api, notify, open, workspace: w, refresh, navigate } = useWorkspace();
   const { refresh: refreshAgent } = useAgentWorkspace();
   const { enabled: savedThreads, mainId, claimPrompt } = useMuseThread();
   const selection = thread || { id: "local", existing: false };
@@ -863,8 +944,15 @@ export function ChatScreen({
   );
   const flush = useCallback(() => {
     if (!loaded || !isReady || runLock.current || agent.isRunning) return;
-    void queue.flush(runQueued).catch((e) => setError(humanizeNetworkError(e)));
-  }, [agent, isReady, loaded, queue, runQueued]);
+    // 队列投出去一条就从 pending 摘掉，界面上一"消失"就分不清"发出去了"还是"被丢了"。
+    // 这里包一层给出「已发送」的回执（Muse 的消息级文案）。
+    void queue
+      .flush(async (message) => {
+        await runQueued(message);
+        notify("已发送");
+      })
+      .catch((e) => setError(humanizeNetworkError(e)));
+  }, [agent, isReady, loaded, notify, queue, runQueued]);
   // 会话就绪后把上次没发出去的补发出去（配合 api.ts 的重试：网络恢复即自动续上）
   useEffect(() => {
     if (!loaded || !isReady || runLock.current || agent.isRunning) return;
@@ -992,22 +1080,109 @@ export function ChatScreen({
     setAttachments([]);
     setPicking(false);
   }
-  /** 拍照 / 相册 → 上传到已有的文件接口 → 把服务端返回的文件名发给智能体（read_image 靠文件名读图）。 */
+  /**
+   * 勾选/取消附加文档。超上限时不静默丢弃 —— 说一句「最多可附加 N 项内容」（Muse 同款口径）。
+   * 原来是无上限累加，附件越多 composer 越挤，最后连发送键都被顶出去。
+   */
+  function toggleAttachment(id: string) {
+    if (attachments.includes(id)) {
+      setAttachments(attachments.filter((item) => item !== id));
+      return;
+    }
+    if (attachments.length >= MAX_ATTACHMENTS) {
+      notify(`最多可附加 ${MAX_ATTACHMENTS} 项内容`);
+      return;
+    }
+    setAttachments([...attachments, id]);
+  }
+  /**
+   * 上传一条待发附件并把它交给会话。失败**不把这条丢掉** —— 留在列表里标成失败，
+   * 用户轻触即可重试（asset 还在，不用重新选一遍）。
+   */
+  async function runUpload(item: PendingUpload) {
+    setUploads((list) =>
+      list.map((entry) =>
+        entry.id === item.id ? { ...entry, status: "uploading", message: undefined } : entry,
+      ),
+    );
+    try {
+      const artifact =
+        item.kind === "image"
+          ? await uploadImage(api, item.asset as UploadableImage)
+          : await uploadDocument(api, item.asset as PickedDocument);
+      await refresh().catch(() => {});
+      hapticSuccess();
+      setUploads((list) => list.filter((entry) => entry.id !== item.id));
+      if (!isReady || !loaded) {
+        setAttachError(
+          `${item.kind === "image" ? "图片" : "文件"}「${artifact.name}」已上传，但会话还没准备好，请稍后再发一次消息。`,
+        );
+        return;
+      }
+      enqueue(
+        item.kind === "image" ? imageUploadMessage(artifact) : documentUploadMessage(artifact),
+      );
+    } catch (e) {
+      hapticWarn();
+      setUploads((list) =>
+        list.map((entry) =>
+          entry.id === item.id
+            ? {
+                ...entry,
+                status: "failed",
+                message: e instanceof Error ? e.message : String(e),
+              }
+            : entry,
+        ),
+      );
+    }
+  }
+  /**
+   * 体积预检 → 登记待发 → 上传。相册直传与"拍完确认"两条路共用这一段。
+   */
+  async function acceptImage(asset: UploadableImage) {
+    setImageMenu(false);
+    setAttachError("");
+    // 选完就先判体积：传完才失败、还报一句跟图片无关的 PDF 文案，是最气人的那种失败。
+    const tooLarge = tooLargeMessage(asset.fileName ?? "这张图片", asset.fileSize);
+    if (tooLarge) {
+      hapticWarn();
+      setAttachError(tooLarge);
+      return;
+    }
+    const item: PendingUpload = {
+      id: `image-${Date.now()}`,
+      name: asset.fileName || "图片",
+      kind: "image",
+      status: "uploading",
+      asset,
+    };
+    setUploads((list) => [...list, item]);
+    await runUpload(item);
+  }
+  /**
+   * 拍照 / 相册 → （拍照先确认）→ 登记成待发附件 → 上传 → 报文件名给智能体。
+   * Muse 拍完会给一张 HatchCameraConfirmation 让你重拍/使用 —— 我们至少别把糊了的照片
+   * 直接送进工作区。
+   */
   async function attachImage(source: ImageSource) {
     setImageMenu(false);
     setAttachError("");
+    // 原生用应用内取景（Muse 的 HatchCameraScreenKt/HatchCameraConfirmation）；
+    // 网页版没有这个能力，退回系统相机。
+    if (source === "camera" && hasInAppCamera) {
+      setCameraOpen(true);
+      return;
+    }
     setImageBusy(source);
     try {
       const asset = await captureImage(source);
       if (!asset) return;
-      const artifact = await uploadImage(api, asset);
-      await refresh().catch(() => {});
-      hapticSuccess();
-      if (!isReady || !loaded) {
-        setAttachError(`图片「${artifact.name}」已上传，但会话还没准备好，请稍后再发一次消息。`);
+      if (source === "camera") {
+        setShotConfirm(asset);
         return;
       }
-      enqueue(imageUploadMessage(artifact));
+      await acceptImage(asset);
     } catch (e) {
       hapticWarn();
       setAttachError(e instanceof Error ? e.message : String(e));
@@ -1015,7 +1190,7 @@ export function ChatScreen({
       setImageBusy("");
     }
   }
-  /** 任意文件：DocumentPicker 全类型选 → 上传 → 报文件名给智能体（类型由服务端嗅探把关）。 */
+  /** 任意文件：DocumentPicker 全类型选 → 登记待发 → 上传 → 报文件名给智能体（类型由服务端嗅探把关）。 */
   async function pickDocument() {
     setImageMenu(false);
     setAttachError("");
@@ -1027,14 +1202,23 @@ export function ChatScreen({
         copyToCacheDirectory: true,
       });
       if (picked.canceled) return;
-      const artifact = await uploadDocument(api, picked.assets[0]);
-      await refresh().catch(() => {});
-      hapticSuccess();
-      if (!isReady || !loaded) {
-        setAttachError(`文件「${artifact.name}」已上传，但会话还没准备好，请稍后再发一次消息。`);
+      const asset = picked.assets[0];
+      // 同上：DocumentPicker 的 asset 自带 size，先在本地判掉，别让它跑到服务端再 413。
+      const tooLarge = tooLargeMessage(asset?.name ?? "所选文件", asset?.size);
+      if (tooLarge) {
+        hapticWarn();
+        setAttachError(tooLarge);
         return;
       }
-      enqueue(documentUploadMessage(artifact));
+      const item: PendingUpload = {
+        id: `document-${Date.now()}`,
+        name: asset?.name || "文件",
+        kind: "document",
+        status: "uploading",
+        asset: asset as PickedDocument,
+      };
+      setUploads((list) => [...list, item]);
+      await runUpload(item);
     } catch (e) {
       hapticWarn();
       setAttachError(e instanceof Error ? e.message : String(e));
@@ -1075,6 +1259,22 @@ export function ChatScreen({
     hydratedMessages.current = true;
   }
   const replying = busy || agent.isRunning;
+  // 待发附件（上传中/上传失败都留在这里，失败可原地重试）
+  const [uploads, setUploads] = useState<PendingUpload[]>([]);
+  // 暂停要有个"真的是我按的"确认（Muse 是一整屏交互）
+  const [pauseConfirm, setPauseConfirm] = useState(false);
+  // 刚拍的照片：先确认再进工作区（Muse 的 HatchCameraConfirmation）
+  const [shotConfirm, setShotConfirm] = useState<UploadableImage>();
+  // 应用内取景开着没有（原生走它；网页版 hasInAppCamera=false，退回系统相机）
+  const [cameraOpen, setCameraOpen] = useState(false);
+  // 附件还在上传 → 发送键要变成「上传中」（Muse 的第三个态）。否则点了发送像没反应：
+  // 这一会儿消息还进不了队列。
+  const uploading = !!imageBusy || uploads.some((item) => item.status === "uploading");
+  // 输入接近上限才显示计数（Muse：`已输入%1$d个字符…`）
+  const draftCounter = messageCounterLabel(draft.length);
+  // 语音上滑取消：按住后往上滑过阈值再松手 = 取消这次识别（Muse 的 DICTATION_CANCEL_THRESHOLD）
+  const [micCancelArmed, setMicCancelArmed] = useState(false);
+  const micStartY = useRef(0);
   // 相位推导（THINKING / TYPING / USING_TOOL…）：顶栏与工作气泡共用同一份推导。
   // 出字的判定取"最后一条消息是带正文的助手消息"——足够区分"在打字"和"还没动静"。
   const activeBackgroundCount = (agentData?.tasks ?? []).filter((task) =>
@@ -1181,10 +1381,15 @@ export function ChatScreen({
     },
     [agent, api, threadId, syncConversation],
   );
-  const copyMessageText = useCallback(async (text: string) => {
-    // 正文渲染会插入零宽空格折行；复制不能把不可见字符带给别人
-    await Clipboard.setStringAsync(text.replace(/\u200B/g, ""));
-  }, []);
+  const copyMessageText = useCallback(
+    async (text: string) => {
+      // 正文渲染会插入零宽空格折行；复制不能把不可见字符带给别人
+      await Clipboard.setStringAsync(text.replace(/\u200B/g, ""));
+      // 复制必须给回执（Muse：已复制到剪贴板）——静默复制会让人反复长按、反复复制
+      notify("已复制到剪贴板");
+    },
+    [notify],
+  );
   const shareMessageText = useCallback((text: string) => {
     void Share.share({ message: text.replace(/\u200B/g, "") }).catch(() => {});
   }, []);
@@ -1691,9 +1896,13 @@ export function ChatScreen({
             </Text>
             {outbox.pending.map((message) => (
               <View key={message.id} style={[s.row, { gap: 8 }]}>
-                <Text numberOfLines={2} style={[s.muted, { flex: 1 }]}>
-                  {displayJevUserMessage(message.text, messages)}
-                </Text>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text numberOfLines={2} style={s.muted}>
+                    {displayJevUserMessage(message.text, messages)}
+                  </Text>
+                  {/* 这一条自己的状态：排队中 / 正在发送… / 失败等重试（Muse 的活文案） */}
+                  <Text style={s.small}>{queuedStateLabel(message)}</Text>
+                </View>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`Remove queued message: ${displayJevUserMessage(message.text, messages)}`}
@@ -1736,13 +1945,7 @@ export function ChatScreen({
                       key={f.id}
                       checked={attachments.includes(f.id)}
                       label={f.name}
-                      onPress={() =>
-                        setAttachments(
-                          attachments.includes(f.id)
-                            ? attachments.filter((id) => id !== f.id)
-                            : [...attachments, f.id],
-                        )
-                      }
+                      onPress={() => toggleAttachment(f.id)}
                     />
                   ))
                 ) : (
@@ -1798,16 +2001,98 @@ export function ChatScreen({
             </Card>
           </RiseIn>
         )}
-        {!!speech.status && (
+        {(!!speech.status || micCancelArmed) && (
           <RiseIn style={[s.row, { gap: 8, paddingHorizontal: 14, paddingBottom: 8 }]}>
-            {speech.listening && <ActivityIndicator size="small" color={colors.blueDark} />}
-            <Text style={[s.small, { flex: 1 }]}>{speech.status}</Text>
+            {speech.listening && <DictationWaveform levels={speech.levels} />}
+            <Text style={[s.small, { flex: 1 }]}>
+              {micCancelArmed ? "松开手指即取消这次语音输入" : speech.status}
+            </Text>
             {speech.listening && (
               <Button small onPress={toggleSpeech}>
                 停止
               </Button>
             )}
           </RiseIn>
+        )}
+        {/* 草稿里粘了链接就先给张卡：Muse 的输入区也是这样（HatchLinkPreviewKt） */}
+        <ComposerLinkPreview api={api} draft={draft} />
+        {outbox.paused && (
+          <View
+            style={[
+              s.row,
+              {
+                gap: 8,
+                marginHorizontal: 12,
+                marginBottom: 6,
+                paddingHorizontal: 12,
+                paddingVertical: 9,
+                borderRadius: 14,
+                backgroundColor: "#FFF6E5",
+              },
+            ]}
+          >
+            <Pause size={14} color="#8A6D3B" />
+            <Text style={{ flex: 1, fontSize: 12, color: "#8A6D3B" }}>
+              已暂停：新消息会排队，不会发出去
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="继续发送"
+              hitSlop={8}
+              onPress={() => {
+                queue.resume();
+                flush();
+              }}
+            >
+              <Text style={{ fontSize: 12, color: colors.blueDark }}>继续</Text>
+            </Pressable>
+          </View>
+        )}
+        {uploads.length > 0 && (
+          <View
+            style={[s.row, { gap: 6, flexWrap: "wrap", paddingHorizontal: 12, paddingBottom: 6 }]}
+          >
+            {uploads.map((item) => (
+              <Pressable
+                key={item.id}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  item.status === "failed" ? `重新上传 ${item.name}` : `${item.name} 正在上传`
+                }
+                accessibilityState={{ busy: item.status === "uploading" }}
+                disabled={item.status === "uploading"}
+                onPress={() => void runUpload(item)}
+                style={[
+                  s.row,
+                  {
+                    gap: 6,
+                    borderRadius: 16,
+                    paddingHorizontal: 11,
+                    paddingVertical: 7,
+                    backgroundColor: item.status === "failed" ? "#FDECEC" : colors.sky,
+                  },
+                ]}
+              >
+                {item.status === "uploading" ? (
+                  <ActivityIndicator size="small" color={colors.blueDark} />
+                ) : (
+                  <RotateCcw size={13} color={colors.danger} />
+                )}
+                <Text numberOfLines={1} style={{ maxWidth: 150, fontSize: 12, color: colors.text }}>
+                  {item.name}
+                </Text>
+                {/* Muse 的原话：`上传失败。轻触即可重试` / `%1$s正在上传…` */}
+                <Text
+                  style={{
+                    fontSize: 11,
+                    color: item.status === "failed" ? colors.danger : colors.muted,
+                  }}
+                >
+                  {item.status === "uploading" ? "正在上传…" : "上传失败，轻触即可重试"}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
         )}
         <View
           style={{
@@ -1857,6 +2142,13 @@ export function ChatScreen({
                 ))}
             </View>
           )}
+          {!!draftCounter && (
+            <Text
+              style={[s.small, { textAlign: "right", paddingHorizontal: 14, paddingBottom: 4 }]}
+            >
+              {draftCounter}
+            </Text>
+          )}
           <View style={[s.row, { gap: 7, alignItems: "flex-end" }]}>
             <Pressable
               accessibilityRole="button"
@@ -1901,6 +2193,7 @@ export function ChatScreen({
               accessibilityLabel="给 OpenMuse 发消息"
               value={draft}
               onChangeText={setDraft}
+              maxLength={MAX_MESSAGE_CHARS}
               onContentSizeChange={(event) =>
                 setInputHeight(Math.max(44, Math.min(140, event.nativeEvent.contentSize.height)))
               }
@@ -1953,7 +2246,25 @@ export function ChatScreen({
               disabled={!loaded || !isReady}
               onPressIn={micPress.onPressIn}
               onPressOut={micPress.onPressOut}
-              onPress={toggleSpeech}
+              onTouchStart={(event) => {
+                micStartY.current = event.nativeEvent.pageY;
+                setMicCancelArmed(false);
+              }}
+              onTouchMove={(event) => {
+                if (!speech.listening) return;
+                const armed = shouldCancelDictation(micStartY.current, event.nativeEvent.pageY);
+                if (armed !== micCancelArmed) setMicCancelArmed(armed);
+              }}
+              onPress={() => {
+                // 滑过取消线再松手 = 取消（说错了能撤，不必先提交半句再删除）
+                if (micCancelArmed) {
+                  setMicCancelArmed(false);
+                  hapticWarn();
+                  speech.cancel();
+                  return;
+                }
+                toggleSpeech();
+              }}
               style={{
                 width: 44,
                 height: 44,
@@ -1965,16 +2276,17 @@ export function ChatScreen({
                 transform: [{ scale: micPress.scale }],
               }}
             >
-              {speech.listening && <MicPulse />}
+              {speech.listening && <MicPulse level={speech.level} />}
               <Mic size={21} strokeWidth={1.8} color={speech.listening ? "#FFF" : colors.text} />
             </AnimatedPressable>
             <AnimatedPressable
               accessibilityRole="button"
-              accessibilityLabel={replying ? "停止回复" : "发送消息"}
-              disabled={!replying && (!draft.trim() || !loaded || !isReady)}
+              accessibilityLabel={replying ? "停止回复" : uploading ? "正在上传附件" : "发送消息"}
+              accessibilityState={{ busy: uploading }}
+              disabled={!replying && (uploading || !draft.trim() || !loaded || !isReady)}
               onPressIn={sendPress.onPressIn}
               onPressOut={sendPress.onPressOut}
-              onPress={replying ? () => void stop() : guard("send", send)}
+              onPress={replying ? () => setPauseConfirm(true) : guard("send", send)}
               style={{
                 width: 44,
                 height: 44,
@@ -1987,6 +2299,8 @@ export function ChatScreen({
             >
               {replying ? (
                 <Square size={18} fill={colors.text} strokeWidth={0} />
+              ) : uploading ? (
+                <ActivityIndicator size="small" color={colors.text} />
               ) : (
                 <ArrowUp
                   size={25}
@@ -1998,6 +2312,81 @@ export function ChatScreen({
           </View>
         </View>
       </KeyboardAvoidingView>
+      {/* 应用内取景（原生）：拍完进确认面板 —— 不确认就直接进工作区太粗暴 */}
+      {cameraOpen && (
+        <InAppCamera
+          onCancel={() => setCameraOpen(false)}
+          onCapture={(photo) => {
+            setCameraOpen(false);
+            setShotConfirm(photo);
+          }}
+        />
+      )}
+      {/* 拍完先看一眼（Muse 的 HatchCameraConfirmation）：糊了能重拍，别直接送进工作区 */}
+      {!!shotConfirm && (
+        <Sheet
+          title="用这张照片？"
+          subtitle="确认后再上传；不满意可以重拍。"
+          onClose={() => setShotConfirm(undefined)}
+        >
+          <Image
+            source={{ uri: shotConfirm.uri }}
+            resizeMode="contain"
+            style={{
+              width: "100%",
+              height: 240,
+              borderRadius: 14,
+              backgroundColor: colors.canvas,
+            }}
+          />
+          <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+            <Button
+              style={{ flex: 1 }}
+              onPress={() => {
+                setShotConfirm(undefined);
+                // 重拍：原生回到取景，网页版回到系统相机
+                if (hasInAppCamera) setCameraOpen(true);
+                else void attachImage("camera");
+              }}
+            >
+              重拍
+            </Button>
+            <Button
+              primary
+              style={{ flex: 1 }}
+              onPress={() => {
+                const asset = shotConfirm;
+                setShotConfirm(undefined);
+                void acceptImage(asset);
+              }}
+            >
+              使用照片
+            </Button>
+          </View>
+        </Sheet>
+      )}
+      {/* 暂停确认（Muse 的 HatchPauseBottomSheetComponent + PauseHatchConfirmDialog）：
+          停止不是静默切换 —— 用户很容易以为停了，其实消息还在队列里等着发。 */}
+      {pauseConfirm && (
+        <Sheet
+          title="暂停这一轮？"
+          subtitle="暂停后排队的消息不会发出去；点「继续」时会自动接着发。"
+          onClose={() => setPauseConfirm(false)}
+        >
+          <View style={{ gap: 10 }}>
+            <Button
+              primary
+              onPress={() => {
+                setPauseConfirm(false);
+                void stop();
+              }}
+            >
+              暂停
+            </Button>
+            <Button onPress={() => setPauseConfirm(false)}>取消</Button>
+          </View>
+        </Sheet>
+      )}
     </View>
   );
 }

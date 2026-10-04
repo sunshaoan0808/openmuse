@@ -10,6 +10,8 @@ import {
 } from "../../../packages/domain/src/activity";
 
 export { stepsOfCurrentRun };
+
+import { useElapsedMs } from "./elapsed";
 import { colors, s } from "./ui";
 
 /**
@@ -36,12 +38,15 @@ export function RunActivityCard({
   style?: object;
 }) {
   const activity = foldActivity({ steps, running, startedAtMs, endedAtMs, labelFor });
+  // 还在跑时「用时」也得跟着心跳走（跑完才有折好的 durationMs）。
+  const liveMs = useElapsedMs(running ? startedAtMs : undefined);
 
   // 没跑过东西就不长出一张空卡（Muse 也是没有 activity 就不画）
   if (!activity.tasks.length) return null;
 
   const done = activity.tasks.filter((task) => task.isDone).length;
-  const duration = activity.durationMs === undefined ? undefined : formatDurationMs(activity.durationMs);
+  const durationMs = activity.durationMs ?? liveMs;
+  const duration = durationMs === undefined ? undefined : formatDurationMs(durationMs);
 
   return (
     <View style={[styles.card, style]}>
