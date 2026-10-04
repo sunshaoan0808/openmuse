@@ -9,3 +9,5 @@ export function hapticTap() {}
 export function hapticPress() {}
 export function hapticSuccess() {}
 export function hapticWarn() {}
+export function hapticLongPress() {}
+export function hapticSettle() {}

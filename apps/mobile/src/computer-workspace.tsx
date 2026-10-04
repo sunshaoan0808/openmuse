@@ -138,7 +138,12 @@ export function LinuxWorkspace({ tab }: { tab: "Terminal" | "文件" }) {
                       : "Connecting…"}
             </Text>
           </View>
-          {!snapshot && !error && <ActivityIndicator color={colors.blueDark} />}
+          {!snapshot && !error && (
+            <View style={[s.row, { gap: 10, padding: 4 }]}>
+              <ActivityIndicator color={colors.blueDark} />
+              <Text style={s.muted}>正在打开编辑器…</Text>
+            </View>
+          )}
         </View>
         {!!snapshot?.message && <Text style={s.small}>{snapshot.message}</Text>}
         {snapshot?.enabled && (
@@ -450,7 +455,12 @@ function ComputerFiles({ running, active }: { running: boolean; active: boolean 
     <View style={{ gap: 12 }}>
       <View style={s.between}>
         <Text style={s.heading}>工作区文件</Text>
-        {(busy || loading) && <ActivityIndicator color={colors.blueDark} />}
+        {(busy || loading) && (
+          <View style={[s.row, { gap: 10, padding: 4 }]}>
+            <ActivityIndicator color={colors.blueDark} />
+            <Text style={s.muted}>正在读取工作区快照…</Text>
+          </View>
+        )}
       </View>
       <Text selectable style={[s.small, { fontFamily: mono }]}>
         {editor?.path || path}

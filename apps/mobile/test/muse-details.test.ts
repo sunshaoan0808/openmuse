@@ -145,3 +145,60 @@ test("装了 expo-camera，并且不为了拍照顺手要麦克风权限", () =>
   assert.equal(camera[1].microphonePermission, false, "只拍照，别顺手要麦克风");
   assert.equal(camera[1].recordAudioAndroid, false);
 });
+
+// ── 第二批 Top5：触觉作曲 / 加载细分 / 错误三件套 / 错误码 / 限流 ─────────────
+test("A7 触觉：长按与回弹有专属序列（不是单发一次）", () => {
+  const native = read("haptics.native.ts");
+  assert.match(native, /export function hapticLongPress/, "长按要有确认感");
+  assert.match(native, /export function hapticSettle/, "回弹落位要有确认感");
+  const web = read("haptics.web.ts");
+  assert.match(web, /export function hapticLongPress/, "网页版空实现也要对齐接口");
+  assert.match(web, /export function hapticSettle/);
+  const chat = read("chat.tsx");
+  assert.equal(
+    (chat.match(/hapticLongPress\(\)/g) || []).length >= 2,
+    true,
+    "两处长按（用户气泡/助手回复）都要震",
+  );
+  assert.match(read("ui.tsx"), /hapticSettle\(\)/, "面板回弹要震");
+});
+
+test("A4 加载：裸转圈都要配一句在等什么", () => {
+  const hasLoadingText = (source: string, label: string) =>
+    assert.match(source, /ActivityIndicator[\s\S]{0,200}正在.+…/, label);
+  hasLoadingText(read("agent-ui.tsx"), "agent-ui 的转圈要有文案");
+  hasLoadingText(read("computer-workspace.tsx"), "computer-workspace 的转圈要有文案");
+  assert.match(read("jev-tool-card.tsx"), /正在准备选项…/, "英文 Preparing choices 要换成中文");
+});
+
+test("A5 错误：失败要说为什么 + 下一步", () => {
+  const browser = read("browser-tool-card.tsx");
+  assert.match(browser, /可能需要登录/, "浏览器失败要说可能的原因");
+  const mail = read("mail-tool-card.tsx");
+  assert.match(mail, /筛选条件太严/, "邮箱失败要说可能的原因");
+  const agent = read("agent-ui.tsx");
+  assert.match(agent, /还没同步过来/, "复核失败要说为什么");
+  const jev = read("jev-tool-card.tsx");
+  assert.ok(!jev.includes("The choices could not be displayed"), "英文错误文案要换成中文");
+});
+
+test("B4 错误码：服务端给 code，客户端透 code", () => {
+  const server = readFileSync(
+    join(import.meta.dirname, "..", "..", "server", "src", "errors.ts"),
+    "utf8",
+  );
+  assert.match(server, /QUOTA_EXHAUSTED/, "429 要有业务码");
+  assert.match(server, /retryable/, "要告诉客户端值不值得重试");
+  assert.match(server, /export function errorBody/, "响应体要统一");
+  assert.match(read("api.ts"), /payload\.code/, "客户端要把 code 透给上层");
+});
+
+test("B5 限流：429 带等多久，客户端说人话", () => {
+  const server = readFileSync(
+    join(import.meta.dirname, "..", "..", "server", "src", "app.ts"),
+    "utf8",
+  );
+  assert.match(server, /Retry-After/, "429 必须带 Retry-After 头");
+  assert.match(server, /errorBody\(error, 60\)/, "响应体也要带秒数");
+  assert.match(read("api.ts"), /别连点，越点等越久/, "客户端要把秒数说成人话");
+});

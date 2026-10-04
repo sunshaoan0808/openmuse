@@ -49,3 +49,42 @@ export function hapticSuccess() {
 export function hapticWarn() {
   safe(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning));
 }
+
+/**
+ * 按"场景"作曲，而不是单发一次：Muse 的 HapticBeat / HapticPulse 就是这个意思 ——
+ * 一次触感太短，用户在长按/拖拽里根本感觉不到"确认"。
+ * 用 setTimeout 排一个序列（调用方只调一次），失败照样吞掉。
+ */
+function pattern(steps: { style: "light" | "medium" | "heavy"; at: number }[]) {
+  if (!steps.length) return;
+  for (const step of steps)
+    setTimeout(
+      () =>
+        safe(() =>
+          Haptics.impactAsync(
+            step.style === "heavy"
+              ? Haptics.ImpactFeedbackStyle.Heavy
+              : step.style === "medium"
+                ? Haptics.ImpactFeedbackStyle.Medium
+                : Haptics.ImpactFeedbackStyle.Light,
+          ),
+        ),
+      step.at,
+    );
+}
+
+/** 长按确认：按够久了——Medium 起手，80ms 后 Light 收尾（"按住了"的感觉）。 */
+export function hapticLongPress() {
+  pattern([
+    { style: "medium", at: 0 },
+    { style: "light", at: 80 },
+  ]);
+}
+
+/** 拖拽回弹落位：Light-Light 两下短的（"关上了/弹回去了"）。 */
+export function hapticSettle() {
+  pattern([
+    { style: "light", at: 0 },
+    { style: "light", at: 70 },
+  ]);
+}

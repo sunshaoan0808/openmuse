@@ -118,13 +118,13 @@ export function JevToolCard({ result, loading }: { result: unknown; loading: boo
     return (
       <View style={[s.row, { gap: 10, padding: 14 }]}>
         <ActivityIndicator size="small" color={colors.blueDark} />
-        <Text style={s.muted}>Preparing choices…</Text>
+        <Text style={s.muted}>正在准备选项…</Text>
       </View>
     );
   }
 
   const parsed = parseJevResult(result);
-  if (!parsed) return <ErrorNotice error="The choices could not be displayed. Please retry." />;
+  if (!parsed) return <ErrorNotice error="选项显示不出来（返回的数据看不懂）。等它跑完再看，或重新问一次。" />;
   if (parsed.error) return <ErrorNotice error={parsed.error} />;
   const panel = parsed.panel;
   if (!panel) return null;

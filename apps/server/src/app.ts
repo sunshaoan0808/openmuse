@@ -40,7 +40,7 @@ import type { Store } from "./db.ts";
 import { DurableAgentRunner } from "./engine/durable-runner.ts";
 import { agentRoutes } from "./engine/routes.ts";
 import { AgentService } from "./engine/service.ts";
-import { AppError } from "./errors.ts";
+import { AppError, errorBody } from "./errors.ts";
 import { Files } from "./files.ts";
 import { gitProxyRoutes } from "./git-proxy.ts";
 import { GoogleAuth } from "./google-auth.ts";
@@ -137,7 +137,16 @@ export async function createApp(
   app.onError((error, c) => {
     if (error instanceof z.ZodError)
       return c.json({ error: error.issues.map((i) => i.message).join("; ") }, 422);
-    if (error instanceof AppError) return c.json({ error: error.message }, error.status);
+    if (error instanceof AppError) {
+      // B5 限流要告诉客户端"等多久"：Retry-After 头 + 响应体里的 retryAfter，
+      // 否则用户只能反复撞墙（Muse 那边是"升级方案或等待词元重置"的双选项）。
+      if (error.status === 429) {
+        // 登录窗口是 60 秒：告诉客户端等多久，别让它每秒撞一次墙
+        c.header("Retry-After", "60");
+        return c.json(errorBody(error, 60), error.status);
+      }
+      return c.json(errorBody(error), error.status);
+    }
     if (error.name === "PdfError" || error.name === "RecurringEventError")
       return c.json({ error: error.message }, 422);
     if (error instanceof SyntaxError) return c.json({ error: "请求数据无效" }, 400);

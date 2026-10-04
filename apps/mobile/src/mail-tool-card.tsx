@@ -58,8 +58,7 @@ export function MailToolCard({
     const parsed = z
       .object({ matches: z.array(z.object({ id: z.string() })), truncated: z.boolean() })
       .safeParse(value);
-    if (!parsed.success)
-      return <ErrorNotice error="邮箱没有返回可读结果。" />;
+    if (!parsed.success) return <ErrorNotice error="邮箱没有返回可读结果（可能是筛选条件太严）。放宽条件再试一次。" />;
     const count = parsed.data.matches.length;
     return (
       <View style={[s.row, { gap: 9, padding: 12 }]}>
@@ -75,7 +74,8 @@ export function MailToolCard({
   const parsed = z
     .object({ messages: z.array(messageSchema), truncated: z.boolean() })
     .safeParse(value);
-  if (!parsed.success) return <ErrorNotice error="无法显示这封邮件。" />;
+  if (!parsed.success)
+      return <ErrorNotice error="无法显示这封邮件（返回的数据格式不对）。换一封看看，或稍后重试。" />;
   const message = parsed.data.messages.at(-1);
   if (!message) return <Text style={s.muted}>此会话里没有消息。</Text>;
   return (

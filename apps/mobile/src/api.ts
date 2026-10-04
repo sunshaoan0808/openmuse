@@ -64,6 +64,12 @@ function networkErrorText(url: string) {
 /** 把网络层错误翻成一句能看懂的中文（界面各处统一用它，别漏出 RN 的英文原文）。 */
 export function humanizeNetworkError(error: unknown): string {
   if (isNetworkError(error)) return networkErrorText(apiUrl());
+  // 服务端给了业务码：429 按"等多久"说人话，别让用户每秒撞一次墙
+  const detail = error && typeof error === "object" ? (error as Record<string, unknown>) : {};
+  if (detail.code === "QUOTA_EXHAUSTED" || /登录尝试过于频繁/.test(error instanceof Error ? error.message : "")) {
+    const seconds = typeof detail.retryAfter === "number" ? detail.retryAfter : 60;
+    return `请求太频繁了，请 ${seconds} 秒后再试（别连点，越点等越久）。`;
+  }
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -158,7 +164,13 @@ export class MuseApi {
       if (!response.ok) {
         const message =
           typeof payload.error === "string" ? payload.error : `请求失败（${response.status}）`;
-        throw Object.assign(new Error(message), { transient: response.status >= 500 });
+        throw Object.assign(new Error(message), {
+          // 服务端现在给业务码：透给上层，让界面按 code 而不是按状态猜
+          code: typeof payload.code === "string" ? payload.code : undefined,
+          retryable: payload.retryable === true,
+          retryAfter: typeof payload.retryAfter === "number" ? payload.retryAfter : undefined,
+          transient: response.status >= 500,
+        });
       }
       return payload;
     });
