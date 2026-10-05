@@ -9,6 +9,12 @@ import { type TaskSecrets, taskSecrets } from "../credentials.ts";
 import { createGitHandle } from "../git-proxy.ts";
 import { withActivity } from "../live-activity.ts";
 import { assertRelative, ensureTaskSandbox, type Sandbox } from "../sandbox.ts";
+import {
+  createSiteAccount,
+  findSiteAccount,
+  forgetSiteAccount,
+  listSiteAccounts,
+} from "../site-accounts.ts";
 import { hasCjk, mergeSearchResults } from "../search.ts";
 import { lookAtImage } from "../vision.ts";
 import type { AgentService } from "./service.ts";
@@ -300,6 +306,71 @@ export function chatTools(ctx: ChatToolContext): NeutralTool[] {
           ctx.key("document", args),
         );
         return { id: file.id, name: file.name, mimeType: file.mimeType, size: file.size };
+      },
+    }),
+    tool({
+      name: "site_account",
+      description:
+        "创建 / 查询 / 忘记一个网站账户（注册账号）。当用户要「帮我注册个 XX 账号」「在 XX 上建号」「把登录信息存下来」时用它。create 会生成一个强密码（或用你给的），把站点+登录名+密码存起来，并把明文密码返回一次给你填表用；之后用 get 取回密码，用 list 看有哪些账户（只显示密码后 6 位），用 forget 删除。注册流程通常还需要 browse_web + page_act 去填表，以及 read_mail_thread 取邮箱验证码。",
+      parameters: z.object({
+        action: z.enum(["create", "get", "list", "forget"]).describe("要做什么"),
+        site: z.string().min(1).max(120).optional().describe("站点名，例如 GitHub（create 必填）"),
+        url: z.url().max(4096).optional().describe("注册页或站点地址，建议填"),
+        username: z.string().min(1).max(200).optional().describe("登录名：邮箱或用户名（create 必填）"),
+        password: z.string().min(8).max(200).optional().describe("自定义密码；不填就自动生成一个强的"),
+        passwordLength: z.number().int().min(12).max(64).optional().describe("自动生成密码的长度，默认 20"),
+        key: z.string().min(1).max(200).optional().describe("get/forget 用：账户 id、站点名或登录名"),
+        note: z.string().max(500).optional().describe("备注：是否已验证邮箱、是否开了两步验证等"),
+      }),
+      execute: async (args) => {
+        const db = ctx.service.db;
+        switch (args.action) {
+          case "create": {
+            if (!args.site || !args.username)
+              throw new Error("创建账户需要同时提供 site（站点名）和 username（登录名）");
+            const { account, password } = await createSiteAccount(db, ctx.owner, {
+              site: args.site,
+              url: args.url,
+              username: args.username,
+              password: args.password,
+              note: args.note,
+              length: args.passwordLength,
+            });
+            // 明文只在这里返回一次，后续 list/get 用 tail 展示
+            return {
+              id: account.id,
+              site: account.site,
+              url: account.url,
+              username: account.username,
+              password, // 一次性：给浏览器工具填表用，不要写进日志或长期记忆
+              passwordTail: account.passwordTail,
+              note: account.note,
+              next:
+                "现在用 browse_web 打开注册页、page_act 填表；若需要邮箱验证码，用 search_mail/read_mail_thread 取码；注册成功后告诉用户账户已就绪。",
+            };
+          }
+          case "get": {
+            if (!args.key) throw new Error("get 需要 key（账户 id、站点名或登录名）");
+            const account = await findSiteAccount(db, ctx.owner, args.key);
+            if (!account) throw new Error(`没找到账户「${args.key}」`);
+            return {
+              id: account.id,
+              site: account.site,
+              url: account.url,
+              username: account.username,
+              password: account.password,
+              note: account.note,
+            };
+          }
+          case "list":
+            return { accounts: await listSiteAccounts(db, ctx.owner) };
+          case "forget": {
+            if (!args.key) throw new Error("forget 需要 key（账户 id、站点名或登录名）");
+            const account = await forgetSiteAccount(db, ctx.owner, args.key);
+            if (!account) throw new Error(`没找到账户「${args.key}」`);
+            return { forgot: account.site, username: account.username };
+          }
+        }
       },
     }),
     tool({
