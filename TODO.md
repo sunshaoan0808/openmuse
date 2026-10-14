@@ -70,6 +70,20 @@
 
 ## 🐛 真机问题
 
+- [x] **聊天一直 401，但同一把 key 用 curl 却 200**（2026-10-14 用户真机撞到，已修）
+      症状：app 聊天报 `Runtime info request failed with status 401` / 网关侧
+      `401 Invalid API key`；**同一把 key 用 curl 或直接调 agent（同一段代码）都是 200**，
+      只有走 HTTP 聊天这条路才 401。
+      根因链（用本地回声代理抓包定位，非猜测）：
+      1. CopilotKit 运行时**按设计**把入站 `authorization` 转发到 agent 上 ——
+         默认黑名单只挡 `x-forwarded-*`/`x-real-ip` 之类代理头，**不挡 authorization**
+         （见 `ForwardHeadersConfig` 文档与 `DEFAULT_DENY_HEADER_NAMES`）
+      2. `@ag-ui/mastra` 把 agent 的 headers 塞进模型调用的 `modelSettings.headers`
+      3. 于是 app 的会话令牌（`Bearer <43 字>`）**覆盖了 provider 的 apiKey**，被当模型 key 发给网关
+      修法：`new CopilotRuntime({ ..., forwardHeaders: { deny: ["authorization"] } })`
+      （两条运行时分支都要加）。守卫：`tests/copilotkit-forward-auth.test.ts`（验证过会红）。
+      排查手段留档：`scripts/echo-proxy.py`（回声代理，只记头指纹）+ `scripts/check-sdk-call.ts`
+      + `apps/server/src/index.ts` 的 `[config]` 启动自检（打印 key 长度/前缀/sha256 前 8 位）。
 - [x] **聊天报 401「Runtime info request failed」且会话过期后不自愈**（2026-10-14 用户真机撞到）
       症状：自己的 API 全部正常（`/api/workspace` 200），唯独聊天一直 401，
       且**必须冷启动 App 才恢复**。

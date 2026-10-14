@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
 import type { ChatTurn } from "./chat-turns.ts";
@@ -5,6 +6,24 @@ import { readConfig } from "./config.ts";
 import { createStore } from "./db.ts";
 
 const config = readConfig();
+// 启动自检：模型链路三要素各打印一行指纹（长度/前缀/sha256 头，**绝不打印密钥本体**）。
+// 这行是为"网关报 401 Invalid API key"这类事故准备的 —— 第一个要回答的问题是
+// "进程手里的到底是哪个 key"，没有这行就只能靠猜。
+{
+  const key = process.env.OPENAI_API_KEY ?? process.env.DEEPSEEK_API_KEY ?? "";
+  const source = process.env.OPENAI_API_KEY
+    ? "OPENAI_API_KEY"
+    : process.env.DEEPSEEK_API_KEY
+      ? "DEEPSEEK_API_KEY(兜底!)"
+      : "(未配置，将退化为字面量 'gateway')";
+  const fingerprint = key
+    ? `${key.slice(0, 4)}… len=${key.length} sha256=${createHash("sha256").update(key).digest("hex").slice(0, 8)}`
+    : "(空)";
+  console.log(
+    `[config] mode=${config.mode} baseURL=${process.env.OPENAI_BASE_URL ?? "(未配置)"} ` +
+      `model=${config.model ?? "(未配置)"} apiKey=${fingerprint} 来源=${source}`,
+  );
+}
 const db = await createStore({
   dataDir: `${config.dataDir}/postgres`,
   databaseUrl: config.databaseUrl,

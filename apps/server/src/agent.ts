@@ -30,6 +30,23 @@ export function agentConfigured(config: Config) {
 }
 /** 从请求头解析 owner（与 identifyUser 同源），供引擎工厂使用。 */
 
+/**
+ * 不让入站的 `Authorization` 转发给 agent。
+ *
+ * 为什么必须显式关掉：CopilotKit 的运行时**按设计**会把入站请求的
+ * `authorization` 与自定义 `x-*` 头转发到 agent 上（那是给"远程 agent 拿服务令牌"用的场景，
+ * 见其 `forwardHeaders` 文档与 DEFAULT_DENY_HEADER_NAMES —— 默认黑名单只挡
+ * `x-forwarded-*`/`x-real-ip` 之类代理头，**不挡 authorization**）。
+ *
+ * 而 `@ag-ui/mastra` 会把 agent 身上的 headers 塞进模型调用的
+ * `modelSettings.headers`，于是 app 的会话令牌（`Bearer <43 字>`）**覆盖掉 provider 的 apiKey**，
+ * 被当成模型 API key 发给网关 —— 实测网关回 401 Invalid API key，且现象极具迷惑性：
+ * 同样的 key 用 curl 或直接调 agent 都是 200，只有走 HTTP 聊天这条路才 401。
+ *
+ * 我们的 agent 是**进程内**的，不需要任何入站头，所以这里直接拒绝转发 authorization。
+ */
+const FORWARD_HEADERS: { deny: string[] } = { deny: ["authorization"] };
+
 export function makeRuntime(
   config: Config,
   service: AgentService,
@@ -81,6 +98,7 @@ export function makeRuntime(
     ? new CopilotRuntime({
         agents,
         intelligence,
+        forwardHeaders: FORWARD_HEADERS,
         identifyUser: async (request: Request) => ({
           id: await auth.owner(request.headers.get("authorization") ?? undefined),
           name: "OpenMuse user",
@@ -90,6 +108,7 @@ export function makeRuntime(
     : new CopilotRuntime({
         agents,
         ...(runner ? { runner } : {}),
+        forwardHeaders: FORWARD_HEADERS,
         identifyUser: async (request: Request) => ({
           id: await auth.owner(request.headers.get("authorization") ?? undefined),
           name: "OpenMuse user",
