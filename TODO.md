@@ -68,6 +68,19 @@
       (http://127.0.0.1:18712/v1)`。文档里那套"从东京打 .3:9527"的做法已过时；
       本机可用的入口是 `10.7.0.1:9527`（`.3:18712` 从本机不可达）。
 
+## 🐛 真机问题
+
+- [x] **聊天报 401「Runtime info request failed」且会话过期后不自愈**（2026-10-14 用户真机撞到）
+      症状：自己的 API 全部正常（`/api/workspace` 200），唯独聊天一直 401，
+      且**必须冷启动 App 才恢复**。
+      成因：服务端会话 24 小时过期；`api.ts` 的 401 续期只更新自己的副本并 `saveToken`，
+      **不更新 `App.tsx` 的 `token` state**；而 CopilotKit Provider 的 headers 正是从这个
+      state 来的，它不走那条续期钩子 —— 于是永远拿着死令牌。
+      修复：续期成功后 `setToken(session.token)`（`App.tsx`），库侧 `setHeaders` 的 effect
+      会把新令牌同步给 runtime 客户端。已加回归守卫 `apps/mobile/test/token-refresh.test.ts`
+      （验证过：撤掉修复即红）。
+      **注意：要重打 APK 才对现有手机生效** —— 当前包遇到同样情况仍是冷启动解决。
+
 ## 🟢 产品与杂项
 
 - [ ] **人设编辑器** —— 角色现在是磁盘文件，用户改不了；已有 `SCHEMA.md` 图纸 + 14 个样板可用

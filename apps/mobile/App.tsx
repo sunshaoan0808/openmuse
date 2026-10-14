@@ -159,6 +159,14 @@ export default function App() {
       if (!key) return null;
       try {
         const session = await createSession(key);
+        // **必须同时更新 App 的 token state**，不能只把新令牌交回调用方。
+        // api.ts 收到 401 会自己续期并 saveToken，但它不碰这里的 state；而 CopilotKit
+        // Provider 的 headers 正是从这个 state 来的 —— 聊天通道自己不走 api.ts 的续期
+        // 钩子，于是会话一过期它就永远用着死令牌。症状：自己的 API 全部自愈（/api/workspace
+        // 200），唯独聊天报「Runtime info request failed with status 401」，且必须冷启动
+        // 才恢复（冷启动会从存储里读到续期后的令牌）。库侧支持轮换：
+        // CopilotKitCoreReact 有 setHeaders 的 effect，props 一变就同步给 runtime 客户端。
+        setToken(session.token);
         return session.token;
       } catch {
         return null;
