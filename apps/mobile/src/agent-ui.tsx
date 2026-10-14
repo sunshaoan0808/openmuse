@@ -37,6 +37,7 @@ import type { ActionProposal, Artifact, BrowserSession } from "../../../packages
 import type {
   AgentArtifact,
   AgentMemory,
+  AgentPersonaSummary,
   AgentTask,
   Evidence,
   Goal,
@@ -2232,7 +2233,7 @@ export function NotificationsSheet() {
   );
 }
 export function AppsScreen() {
-  const { navigate, open } = useWorkspace();
+  const { navigate, open, api } = useWorkspace();
   const { data, mutate } = useAgentWorkspace();
   const [query, setQuery] = useState("");
   const [settings, setSettings] = useState(false);
@@ -2240,6 +2241,9 @@ export function AppsScreen() {
   const [tone, setTone] = useState(data?.identity.tone || "warm");
   const [avatar, setAvatar] = useState(data?.identity.avatar || "sky");
   const [showChatUpdates, setShowChatUpdates] = useState(data?.identity.showChatUpdates !== false);
+  /** 绑定的角色 id；空串 = 不绑定（通用助手人格） */
+  const [personaId, setPersonaId] = useState<string>(data?.identity.personaId || "");
+  const [personas, setPersonas] = useState<AgentPersonaSummary[]>([]);
   const [memory, setMemory] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2249,13 +2253,31 @@ export function AppsScreen() {
       setTone(data.identity.tone);
       setAvatar(data.identity.avatar || "sky");
       setShowChatUpdates(data.identity.showChatUpdates !== false);
+      setPersonaId(data.identity.personaId || "");
     }
   }, [
     data?.identity.name,
     data?.identity.tone,
     data?.identity.avatar,
     data?.identity.showChatUpdates,
+    data?.identity.personaId,
   ]);
+  // 角色清单是磁盘上的静态资产，展开设置时取一次即可（服务端还带 30 秒缓存）。
+  useEffect(() => {
+    if (!settings || personas.length) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await api.request<{ personas: AgentPersonaSummary[] }>("/api/agent/personas");
+        if (!cancelled) setPersonas(list.personas ?? []);
+      } catch {
+        /* 取不到就不显示选择器：不影响其余设置 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [settings, personas.length, api]);
   async function save(path: string, body: unknown) {
     setBusy(true);
     setError("");
@@ -2350,6 +2372,78 @@ export function AppsScreen() {
                 </Button>
               ))}
             </View>
+            <Text style={s.heading}>角色</Text>
+            <Text style={s.muted}>
+              绑一个角色，她会用自己的口吻和视角跟你说话；不绑就是通用的 OpenMuse。
+            </Text>
+            <View style={[s.row, { flexWrap: "wrap", gap: 8 }]}>
+              <Pressable
+                accessibilityRole="radio"
+                accessibilityLabel="不绑定角色"
+                accessibilityState={{ checked: personaId === "" }}
+                onPress={() => setPersonaId("")}
+                style={{
+                  paddingVertical: 7,
+                  paddingHorizontal: 13,
+                  borderRadius: 18,
+                  borderWidth: 1,
+                  borderColor: personaId === "" ? colors.blueDark : colors.line,
+                  backgroundColor: personaId === "" ? colors.blue : colors.canvas,
+                }}
+              >
+                <Text
+                  style={{
+                    fontSize: 13,
+                    color: personaId === "" ? colors.blueDark : colors.text,
+                  }}
+                >
+                  不绑定
+                </Text>
+              </Pressable>
+              {personas.map((item) => {
+                const on = personaId === item.id;
+                return (
+                  <Pressable
+                    key={item.id}
+                    accessibilityRole="radio"
+                    accessibilityLabel={`角色 ${item.name}`}
+                    accessibilityState={{ checked: on }}
+                    onPress={() => {
+                      setPersonaId(item.id);
+                      // 选中角色时把名称一并预填成角色名（可再改）：否则会出现"角色选了柳如烟、
+                      // 回复里却自称 OpenMuse"的割裂感。
+                      setName(item.name);
+                    }}
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 6,
+                      paddingVertical: 6,
+                      paddingHorizontal: 13,
+                      borderRadius: 18,
+                      borderWidth: 1,
+                      borderColor: on ? colors.blueDark : colors.line,
+                      backgroundColor: on ? colors.blue : colors.canvas,
+                    }}
+                  >
+                    <Text style={{ fontSize: 15 }}>{item.avatar ?? "🙂"}</Text>
+                    <Text style={{ fontSize: 13, color: on ? colors.blueDark : colors.text }}>
+                      {item.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {(() => {
+              const picked = personas.find((item) => item.id === personaId);
+              if (!picked) return null;
+              return (
+                <Text style={s.small}>
+                  {picked.prototype ? `${picked.prototype} · ` : ""}
+                  {picked.oneLine ?? picked.description ?? ""}
+                </Text>
+              );
+            })()}
             <CheckRow
               label="在聊天中显示后台更新"
               checked={showChatUpdates}
@@ -2360,7 +2454,14 @@ export function AppsScreen() {
               busy={busy}
               disabled={!name.trim()}
               onPress={() =>
-                void save("/identity", { name: name.trim(), tone, avatar, showChatUpdates })
+                void save("/identity", {
+                  name: name.trim(),
+                  tone,
+                  avatar,
+                  showChatUpdates,
+                  // 空串 = 解绑角色（服务端把空串当"不注入角色"）
+                  personaId: personaId.trim(),
+                })
               }
             >
               保存偏好

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { TEMP_WARM } from "./memory-temperature.ts";
 import {
   createTaskSchema,
   goalInputSchema,
@@ -497,6 +498,8 @@ export function chatTools(ctx: ChatToolContext): NeutralTool[] {
           text,
           source: "User confirmed in chat",
           createdAt: new Date().toISOString(),
+          // 用户刚确认的信息按「温热」记：优先注入，14 天未更新后自动降为冷存（见 memory-temperature.ts）
+          temp: TEMP_WARM,
         };
         await ctx.service.db.insertIfAbsent(ctx.owner, "memories", value);
         return value;

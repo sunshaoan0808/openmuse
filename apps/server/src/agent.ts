@@ -11,6 +11,7 @@ import type { Auth } from "./auth.ts";
 import type { Config } from "./config.ts";
 import { ConversationAgent } from "./engine/conversation.ts";
 import { createMastraChatAgent } from "./engine/mastra-engine.ts";
+import { loadAssistantContext } from "./engine/assistant-context.ts";
 import type { AgentService } from "./engine/service.ts";
 import { createJevAdapter, type JevAdapter } from "./jev/adapter.ts";
 
@@ -41,14 +42,20 @@ export function makeRuntime(
   const sharedJevAdapter = () => (jevAdapter ??= createJevAdapter(config));
   const agents: AgentsFactory = async ({ request }) => {
     const owner = await auth.owner(request.headers.get("authorization") ?? undefined);
+    // 角色 + 长期记忆（两个引擎共用同一段；读不到则返回空片段，行为与接入前一致）。
+    const contextBlock = (await loadAssistantContext(service, owner)).block;
     return {
       default:
         config.agentEngine === "mastra"
           ? (() => {
-              const mastra = createMastraChatAgent(config, {
-                service,
-                owner: owner,
-              });
+              const mastra = createMastraChatAgent(
+                config,
+                {
+                  service,
+                  owner: owner,
+                },
+                contextBlock,
+              );
               if (!mastra)
                 throw new Error(
                   "AGENT_ENGINE=mastra 需要 MODEL（如 openai/vendor/model）与 OPENAI_BASE_URL",

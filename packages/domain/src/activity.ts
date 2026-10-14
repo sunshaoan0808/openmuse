@@ -89,6 +89,7 @@ const FAMILIES: { key: string; title: string; tools: readonly string[] }[] = [
     ],
   },
   { key: "git", title: "提交代码", tools: ["git_commit", "git_push"] },
+  { key: "account", title: "注册账户", tools: ["site_account"] },
   { key: "ask", title: "问你", tools: ["ask_user", "present_choices"] },
 ];
 
@@ -242,6 +243,7 @@ const ACTION_TEXT: Record<string, string> = {
   delegate_task: "派活",
   create_goal: "定目标",
   remember_fact: "记一笔",
+  site_account: "注册网站账户",
   agent_status: "看进展",
   save_document: "写文件",
   import_pdf: "导入 PDF",

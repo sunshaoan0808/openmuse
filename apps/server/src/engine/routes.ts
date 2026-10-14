@@ -8,6 +8,7 @@ import type {
 } from "../../../../packages/domain/src/agent.ts";
 import { AppError } from "../errors.ts";
 import { readActivities } from "../live-activity.ts";
+import { listPersonaTemplatesCached, personaSummary } from "./personas.ts";
 import type { AgentService } from "./service.ts";
 
 const text = z.string().trim().min(1).max(4000);
@@ -178,20 +179,28 @@ export function agentRoutes(service: AgentService): Hono<{ Variables: { owner: s
         tone: z.enum(["warm", "concise", "thoughtful"]),
         avatar: z.enum(["sky", "sand", "lilac"]).optional(),
         showChatUpdates: z.boolean().optional(),
+        /** 绑定的角色 id（personas/templates 或 personas/runtime 下的目录名）；留空 = 用运行态角色 */
+        personaId: z.string().trim().max(64).optional(),
       })
       .parse(await c.req.json());
     const owner = c.get("owner");
     await service.ensure(owner);
+    // 解绑要写显式的 null：这条记录是**合并更新**（data || patch），字段缺席等于"不改"。
+    const patch = { ...body, personaId: body.personaId ? body.personaId : null };
     const identity = await service.db.compareAndSwap<AgentIdentity>(
       owner,
       "agent-settings",
       "identity",
       {},
-      body,
+      patch,
     );
     if (!identity) throw new AppError("智能体身份已变更，刷新后重试", 409);
     return c.json(identity);
   });
+  // 可选角色清单（App 设置页的角色选择器用）。磁盘资产、30 秒缓存，不带 SOUL/GENOME 正文。
+  app.get("/personas", async (c) =>
+    c.json({ personas: listPersonaTemplatesCached().map(personaSummary) }),
+  );
   app.get("/notifications", async (c) =>
     c.json((await service.snapshot(c.get("owner"))).notifications),
   );

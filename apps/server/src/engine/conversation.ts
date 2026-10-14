@@ -10,6 +10,7 @@ import { createJevAdapter, type JevAdapter } from "../jev/adapter.ts";
 import { JevService } from "../jev/service.ts";
 import { presentChoicesTool } from "../jev/tools.ts";
 import { chatInstructions, jevInstructions } from "./chat-prompt.ts";
+import { loadAssistantContext } from "./assistant-context.ts";
 import { chatTools, lastUserText } from "./chat-tools.ts";
 import { mcpTools } from "./mcp-tools.ts";
 import type { AgentService } from "./service.ts";
@@ -177,23 +178,31 @@ export class ConversationAgent extends AbstractAgent {
           ]
         : []),
     ];
-    const agent = tanstackAgent({
-      model: this.config.model ?? "openai/unconfigured",
-      maxSteps: 10,
-      stepLimitNote:
-        "I reached my step limit for this reply before finishing. Say “continue” and I’ll pick up where I left off.",
-      tools,
-      prompt: `${chatInstructions()}${jev ? jevInstructions() : ""}${computerInstructions}`,
-    });
+    // 角色 + 长期记忆：两个引擎共用同一段（见 assistant-context.ts）。
+    // 记忆按温度排序并受 token 预算约束，不再全量注入。
+    // 拼提示词要读磁盘与库，所以按本文件既有模式放进 Observable 的异步 IIFE 里。
     return this.expireOnUserTurn(
       new Observable((subscriber) => {
-        const subscription = agent
-          .run({ ...input, tools: input.tools.filter((t) => t.name === "open_workspace") })
-          .subscribe(subscriber);
+        let agent: ReturnType<typeof tanstackAgent> | null = null;
+        let subscription: { unsubscribe(): void } | undefined;
+        void (async () => {
+          const assistant = await loadAssistantContext(this.service, this.owner);
+          agent = tanstackAgent({
+            model: this.config.model ?? "openai/unconfigured",
+            maxSteps: 10,
+            stepLimitNote:
+              "I reached my step limit for this reply before finishing. Say “continue” and I’ll pick up where I left off.",
+            tools,
+            prompt: `${chatInstructions()}${assistant.block}${jev ? jevInstructions() : ""}${computerInstructions}`,
+          });
+          subscription = agent
+            .run({ ...input, tools: input.tools.filter((t) => t.name === "open_workspace") })
+            .subscribe(subscriber);
+        })();
         return () => {
           browserAbort.abort();
-          agent.abortRun();
-          subscription.unsubscribe();
+          agent?.abortRun();
+          subscription?.unsubscribe();
         };
       }),
       jev,

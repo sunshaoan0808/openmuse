@@ -136,6 +136,12 @@ export interface AgentMemory {
   text: string;
   source: string;
   createdAt: string;
+  /**
+   * 记忆温度：3=🔥燃烧（始终注入，不衰减）/ 2=🌡️温热（优先注入，14 天未更新则降为冷存）/
+   * 1=❄️冷存（预算够才注入）。缺省按冷存处理。模型与衰减规则见
+   * `apps/server/src/engine/memory-temperature.ts`。
+   */
+  temp?: number;
 }
 export interface AgentArtifact {
   id: string;
@@ -159,6 +165,33 @@ export interface AgentIdentity {
   tone: "warm" | "concise" | "thoughtful";
   avatar?: "sky" | "sand" | "lilac";
   showChatUpdates?: boolean;
+  /**
+   * 绑定的角色（persona）id：对应 `apps/server/personas/templates/<id>/` 或 `runtime/<id>/`。
+   * `null` / 空 = 不注入角色（保持通用助手人格）；资产缺失时自动退化为只用 name/tone，
+   * 行为与接入前一致。见 `apps/server/src/engine/personas.ts`。
+   */
+  personaId?: string | null;
+}
+
+/** 角色模板的对外摘要（设置页列表用；不带 SOUL/GENOME 正文，省流量）。 */
+export interface AgentPersonaSummary {
+  id: string;
+  name: string;
+  /** 10 大原型之一，如「冷傲型」 */
+  prototype?: string;
+  gender?: string;
+  description?: string;
+  /** 一句台词（详情用） */
+  oneLine?: string;
+  /** 核心底色（一个字 + 解读） */
+  core?: string;
+  /** emoji 头像 */
+  avatar?: string;
+  order?: number;
+  /** 7 维人格光谱 */
+  spectrum?: Record<string, number>;
+  /** 4 层递进魅力 */
+  charmLayers?: string[];
 }
 export interface AgentWorkspace {
   tasks: AgentTask[];

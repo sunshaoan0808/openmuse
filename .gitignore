@@ -16,3 +16,10 @@ artifacts/
 .env.*
 !.env.example
 .search-keys.txt
+
+# 第三方角色资产（柳如烟 / Ruyan AI，CC BY-NC-ND 4.0）：**不入库**。
+# 该授权禁止演绎与再分发；本仓库公开，提交即等于对外分发。
+# 缺了这两个目录服务仍能启动（角色功能静默退化），资产放本地即可，见
+# apps/server/personas/ORIGIN.md。换目录用 OPENMUSE_PERSONAS_DIR 环境变量。
+apps/server/personas/templates/
+apps/server/personas/runtime/

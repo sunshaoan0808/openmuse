@@ -51,6 +51,8 @@ function friendlyError(error: unknown): string {
 export function createMastraChatAgent(
   config: Config,
   ctx: { service: AgentService; owner: string },
+  /** 角色 + 长期记忆片段（由调用方 await loadAssistantContext 取得；两个引擎共用同一段）。 */
+  contextBlock = "",
 ): MastraAgent | undefined {
   // 每请求一个 requestKey：与自带引擎一致——同一请求内重试不会重复建任务/目标，跨请求则会新建。
   const requestKey = randomUUID();
@@ -158,8 +160,9 @@ export function createMastraChatAgent(
   const agent = new Agent({
     id: "openmuse-mastra",
     name: "openmuse-mastra",
-    // JEV 开启时把选项/对比卡的指令一并给模型（与自带引擎同一份指令）
-    instructions: `${chatInstructions()}${jev ? jevInstructions() : ""}`,
+    // JEV 开启时把选项/对比卡的指令一并给模型（与自带引擎同一份指令）；
+    // contextBlock = 角色 + 长期记忆，与自带引擎同源，避免两边漂移。
+    instructions: `${chatInstructions()}${contextBlock}${jev ? jevInstructions() : ""}`,
     // 用 chat() 明确走 /chat/completions：网关是 OpenAI 兼容端点，不保证实现 /responses。
     model: gateway.chat(modelId),
     tools,
