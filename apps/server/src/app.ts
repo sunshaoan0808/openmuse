@@ -35,6 +35,7 @@ import {
   turnOutcome,
   unsendMessage,
 } from "./chat-turns.ts";
+import { advanceEmotionFromTurn } from "./engine/assistant-context.ts";
 import { ComputerService, type DockerRunner } from "./computer.ts";
 import { computerRoutes } from "./computer-routes.ts";
 import { assertApiDeploymentConfig, type Config, intelligenceConfigured } from "./config.ts";
@@ -821,6 +822,10 @@ export async function createApp(
           await ensureThread(owner, activeTurn.threadId, { messageCount: next.messages.length });
         }
         await db.put(owner, "turns", finishTurn(activeTurn, { ...outcome, now }));
+        // 情绪推进：一轮结束后按角色光谱更新情感状态，下一轮注入时生效
+        // （见 engine/emotion.ts）。放在后台这一支、失败只影响情绪本身——
+        // 它绝不能拖垮这一轮的存储与回复。
+        void advanceEmotionFromTurn(agent, owner, produced).catch(() => {});
         // 这一轮没成功时把实时状态改成"出错了"：否则界面上那条"正在搜索网页…"会一直挂到
         // 90 秒窗口过期，而屏幕上其实已经弹了红色报错（真机撞到过："状态正在搜索，实际已经报错"）
         if (outcome.status === "failed" || outcome.status === "interrupted") {

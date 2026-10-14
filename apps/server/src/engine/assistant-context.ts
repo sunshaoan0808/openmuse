@@ -7,6 +7,12 @@
  * 两个引擎（自带 `conversation.ts` 与 `mastra-engine.ts`）共用本模块，避免提示词再次漂移。
  */
 import type { AgentIdentity, AgentMemory } from "../../../../packages/domain/src/agent.ts";
+import {
+  analyzeEmotion,
+  applyEmotionUpdate,
+  emotionPromptLine,
+  type EmotionState,
+} from "./emotion.ts";
 import { applyTemperatureDecay, estimateTokens, selectMemoriesForPrompt } from "./memory-temperature.ts";
 import { type LoadedPersona, loadPersona, personaPromptBlock } from "./personas.ts";
 import type { AgentService } from "./service.ts";
@@ -16,6 +22,9 @@ import type { AgentService } from "./service.ts";
  * 这正是替代「全量塞入」的那一步。
  */
 export const MEMORY_PROMPT_BUDGET_TOKENS = 700;
+
+/** 情绪状态的存储位置：`records` 里 kind='emotion' 的单条记录。 */
+export const EMOTION_RECORD_ID = "state";
 
 /** 衰减扫描的最小间隔：防止高频快照调用反复扫描（上游同此值） */
 const DECAY_INTERVAL_MS = 3_600_000;
@@ -29,7 +38,49 @@ export interface AssistantContext {
   memoryCount: number;
   memoryTokens: number;
   memorySkipped: number;
+  /** 当前情绪状态（角色有状态的关键；null = 还没积累过） */
+  emotion: EmotionState | null;
   block: string;
+}
+
+/** 读当前情绪状态。读不到（从未积累 / 记录损坏）一律当 null，不影响对话。 */
+export async function loadEmotionState(
+  service: Pick<AgentService, "db">,
+  owner: string,
+): Promise<EmotionState | null> {
+  try {
+    return await service.db.get<EmotionState>(owner, "emotion", EMOTION_RECORD_ID);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 一轮对话结束后推进情绪状态。
+ *
+ * 用**角色自己的光谱**做加权 —— 这就是"同一句话，不同角色反应不同"的来源；
+ * 没绑角色（spectrum 空）时退化为纯关键词判断，contextLevel 记为 1。
+ *
+ * 失败一律吞掉：情绪是锦上添花，绝不能因为它让对话挂掉。
+ */
+export async function recordTurnEmotion(
+  service: Pick<AgentService, "db">,
+  owner: string,
+  persona: LoadedPersona | null,
+  userText: string,
+  assistantText: string,
+): Promise<EmotionState | null> {
+  if (!userText.trim()) return null;
+  try {
+    const spectrum = persona?.meta?.spectrum ?? {};
+    const analysis = analyzeEmotion(userText, assistantText, spectrum);
+    const current = await loadEmotionState(service, owner);
+    const next = applyEmotionUpdate(current, analysis);
+    await service.db.put(owner, "emotion", { id: EMOTION_RECORD_ID, ...next });
+    return next;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -112,6 +163,7 @@ export async function loadAssistantContext(
       memoryCount: 0,
       memoryTokens: 0,
       memorySkipped: 0,
+      emotion: null,
       block: "",
     };
   }
@@ -132,6 +184,8 @@ export async function loadAssistantContext(
   }
 
   const memory = memoryPromptBlock(memories);
+  const emotion = await loadEmotionState(service, owner);
+  const emotionLine = emotionPromptLine(emotion);
   return {
     personaId,
     persona,
@@ -139,11 +193,48 @@ export async function loadAssistantContext(
     memoryCount: memory.used,
     memoryTokens: memory.tokens,
     memorySkipped: memory.skipped,
-    block: `${personaPromptBlock(persona)}${memory.text}`,
+    emotion,
+    // 顺序：角色 → 情绪 → 记忆。情绪紧跟角色，因为它是"角色此刻的状态"。
+    block: `${personaPromptBlock(persona)}${emotionLine ? `\n\n${emotionLine}` : ""}${memory.text}`,
   };
 }
 
 /** 记忆写入时的默认温度：用户刚确认的信息按「温热」记（上游同此约定） */
 export function newMemoryTokens(text: string): { text: string; temp: number; tokens: number } {
   return { text, temp: 2, tokens: estimateTokens(text) };
+}
+
+/**
+ * 一轮结束后推进情绪 —— 从这一轮产出的消息里取「最后一条用户消息 + 助手回复」。
+ *
+ * 调用点放在回合结束的后台分支（app.ts）：只用到 `db`，所以签名放宽到 Pick，
+ * 免得为了一个后台小动作去构造整个 AgentService。
+ */
+export async function advanceEmotionFromTurn(
+  service: Pick<AgentService, "db">,
+  owner: string,
+  messages: readonly Record<string, unknown>[],
+): Promise<EmotionState | null> {
+  // 入参来自 SSE 组装出来的 StoredMessage，字段是 unknown（见 chat-turns.ts），
+  // 所以在这里收窄，而不是要求调用方先做一次无意义的映射。
+  const text = (value: unknown): string => (typeof value === "string" ? value : "");
+  const userText = text(
+    [...messages].reverse().find((message) => message.role === "user")?.content,
+  );
+  if (!userText.trim()) return null;
+  const assistantText = messages
+    .filter((message) => message.role === "assistant")
+    .map((message) => text(message.content))
+    .join("\n");
+
+  let persona: LoadedPersona | null = null;
+  try {
+    const identity = await service.db.get<AgentIdentity>(owner, "agent-settings", "identity");
+    const personaId = identity?.personaId?.trim() || null;
+    if (personaId) persona = loadPersona(personaId);
+  } catch {
+    persona = null;
+  }
+
+  return recordTurnEmotion(service, owner, persona, userText, assistantText);
 }
