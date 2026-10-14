@@ -2,6 +2,25 @@
 
 > 最后更新：2026-10-14 · 分支 `apk/preview`
 
+## 🛑 事故记录（2026-10-14 下午）
+
+- [x] **「发消息没回复 + 第二条一直排队」——两件独立故障，都已修**
+      1. **空回合被当成成功**（真病根）：`MODEL=nvidia/nemotron-3-super-120b-a12b` 是推理模型，
+         实测短消息（「给我讲个笑话」）会**把 800 token 预算全烧在 reasoning 上、`content` 返回 `null`**；
+         服务端把这个「没有产出的回合」记成 `succeeded` → 客户端永远收不到回复 → 那条消息留在待发箱，
+         下一条就一直「排队中」。证据：直连网关实测 `content=空 reasoning=951字 ctok=800`。
+         处置：① `MODEL` 换成 `nvidia/nemotron-3-ultra-550b-a55b`（实测三次全部有正文，且比 120B 更快，
+         5.7s vs 10.7s）；② 把那轮 `turns` 记录回滚成 `interrupted` → 服务端续跑巡检自己补答成功
+         （回复已入库，客户端重开即同步到）。
+         **待修（需改 `model.ts`）**：给主对话调用加大 `max_tokens`；空 `content` 判为失败而不是成功；
+         `reasoning_content` 有内容时回退展示。这条不修，换模型只是绕过概率。
+      2. **服务宕机 15 次**：我派给 dsh 的 P0 任务在 `apps/server/src/engine/model.ts` 留下语法错误
+         （`Expected ")" but found "]"`），而 OpenMuse 是 **tsx 直跑源码** → 启动即崩、systemd 反复重启。
+         处置：dsh 半成品完整存档在 `~/backups/dsh-p0-20261014T163117/`（`work.patch` + `tool-executor.ts`），
+         回滚 4 个文件后服务恢复 200。**教训：派 agent 改「源码直跑」的线上服务所在仓库 = 定时炸弹**；
+         现在改为**在副本 `/home/ubuntu/openmuse-dsh` 里干活**，并在工作单里加了硬约束 7/8/9
+         （不许碰线上树、每改一个文件就跑一次 typecheck、交付前连续两次干净）。
+
 ## 🔴 待人工操作（agent 权限之外）
 
 - [ ] **APK 打包被 GitHub 挡住** —— fork `sunshaoan0808/openmuse` 的 Actions 被停用，
