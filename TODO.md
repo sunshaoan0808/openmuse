@@ -70,6 +70,21 @@
 
 ## 🐛 真机问题
 
+- [x] **第二条消息永远「排队中」，服务端收不到任何请求**（2026-10-14 用户真机撞到，已修）
+      症状：第一条消息正常收到回复；第二条一直显示「排队中」，服务端日志里只有
+      `GET /api/agent` / `GET /api/workspace` 轮询，**没有任何 `POST .../run`**；
+      服务端 turn 表显示第一条已 `succeeded`。
+      根因：跨境链路上 run 的长连接常被掐，而"流断了"**不一定触发 onError**
+      （服务端 tee 了后台一支，回复照样落库）。这种"静默断流"下客户端已把回复捞回来、
+      界面也不报错，但 **`agent.isRunning` 一直挂着 true** —— `flush()` 的守卫
+      （`if (... || agent.isRunning) return`）于是把之后每条消息都挡回去，永远排队。
+      （既有的 `recoverDroppedTurn` 只负责"把回复捞回来 / 重发一次"，**不收回运行态**。）
+      修法：加看门狗 —— 判据用**服务端的 turn 记录**（权威）：客户端的 turn 已终态
+      （succeeded/failed/interrupted）而客户端还说在跑，等 6 秒宽限期后 stopAgent
+      复位客户端状态机（服务端早已跑完，停止请求是幂等的）。
+      纯函数落在 `apps/mobile/src/run-watchdog.ts`，单测 `apps/mobile/test/run-watchdog.test.ts`
+      （4 例，含"服务端还在 running 时绝不能误收"）。
+      **注意：这是客户端修复，要重打 APK 才对现有手机生效。**
 - [x] **聊天一直 401，但同一把 key 用 curl 却 200**（2026-10-14 用户真机撞到，已修）
       症状：app 聊天报 `Runtime info request failed with status 401` / 网关侧
       `401 Invalid API key`；**同一把 key 用 curl 或直接调 agent（同一段代码）都是 200**，

@@ -54,6 +54,7 @@ import { BrowserRunContext, BrowserToolCard } from "./browser-tool-card";
 import { hasInAppCamera, InAppCamera } from "./camera-view";
 import { acknowledgedIds, mergeConversation } from "./conversation-merge";
 import { ConversationQueue, type QueuedMessage } from "./conversation-queue";
+import { RECLAIM_GRACE_MS, shouldReclaimRun } from "./run-watchdog";
 import { runConversationTurn } from "./conversation-run";
 import { loadCursor, outboxStorage, saveCursor } from "./conversation-store";
 import { guard } from "./crash-log";
@@ -808,6 +809,22 @@ export function ChatScreen({
         : "";
     setChatTrouble(error || stuck);
   }, [error, busy, agent.isRunning, lastTurn, setChatTrouble]);
+  // 看门狗：客户端还说"在跑"、而服务端那一轮已经是终态时，把运行态收回来。
+  // 没有它的话，流被掐断（跨境链路常态）且没触发 onError 时，agent.isRunning 会一直挂着，
+  // 之后每条消息都被 flush 的守卫挡回去 —— 真机表现就是"第二条永远排队中"、服务端收不到请求。
+  // 判据见 run-watchdog.ts（用服务端的 turn 记录，它是权威）。
+  useEffect(() => {
+    if (!shouldReclaimRun(agent.isRunning, lastTurn?.status)) return;
+    const timer = setTimeout(() => {
+      // stopAgent 在这里只是复位客户端状态机：服务端那一轮早就跑完了，停止请求是幂等的
+      try {
+        void copilotkit.stopAgent({ agent });
+      } catch {
+        // 复位失败不该影响其它逻辑
+      }
+    }, RECLAIM_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [agent, agent.isRunning, copilotkit, lastTurn]);
   const syncConversation = useCallback(async () => {
     const since = await loadCursor(threadId);
     const result = await api.request<{
