@@ -14,6 +14,7 @@ import {
   type EmotionState,
 } from "./emotion.ts";
 import { applyTemperatureDecay, estimateTokens, selectMemoriesForPrompt } from "./memory-temperature.ts";
+import { extractTurnTexts } from "./memory-sediment.ts";
 import { type LoadedPersona, loadPersona, personaPromptBlock } from "./personas.ts";
 import type { AgentService } from "./service.ts";
 
@@ -215,17 +216,9 @@ export async function advanceEmotionFromTurn(
   owner: string,
   messages: readonly Record<string, unknown>[],
 ): Promise<EmotionState | null> {
-  // 入参来自 SSE 组装出来的 StoredMessage，字段是 unknown（见 chat-turns.ts），
-  // 所以在这里收窄，而不是要求调用方先做一次无意义的映射。
-  const text = (value: unknown): string => (typeof value === "string" ? value : "");
-  const userText = text(
-    [...messages].reverse().find((message) => message.role === "user")?.content,
-  );
+  // 与记忆沉淀共用同一份文本提取（见 memory-sediment.ts 的 extractTurnTexts）
+  const { userText, assistantText } = extractTurnTexts(messages);
   if (!userText.trim()) return null;
-  const assistantText = messages
-    .filter((message) => message.role === "assistant")
-    .map((message) => text(message.content))
-    .join("\n");
 
   let persona: LoadedPersona | null = null;
   try {

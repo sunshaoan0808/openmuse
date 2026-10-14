@@ -36,6 +36,7 @@ import {
   unsendMessage,
 } from "./chat-turns.ts";
 import { advanceEmotionFromTurn } from "./engine/assistant-context.ts";
+import { extractTurnTexts, sedimentTurnMemories } from "./engine/memory-sediment.ts";
 import { ComputerService, type DockerRunner } from "./computer.ts";
 import { computerRoutes } from "./computer-routes.ts";
 import { assertApiDeploymentConfig, type Config, intelligenceConfigured } from "./config.ts";
@@ -810,6 +811,7 @@ export async function createApp(
       const { error } = await consumeSse(toStore, (events) => collected.push(...events));
       const now = new Date().toISOString();
       const produced = assembleTurnMessages(collected, now);
+      const turnTexts = extractTurnTexts(produced);
       const outcome = error
         ? { status: "failed" as const, error: `连接中断：${error}` }
         : turnOutcome(collected);
@@ -826,6 +828,19 @@ export async function createApp(
         // （见 engine/emotion.ts）。放在后台这一支、失败只影响情绪本身——
         // 它绝不能拖垮这一轮的存储与回复。
         void advanceEmotionFromTurn(agent, owner, produced).catch(() => {});
+        // 记忆自动沉淀：判断这一轮有没有值得长期记住的东西（见 engine/memory-sediment.ts）。
+        // 自带闸门（过短/纯应答不调模型、同一 owner 15 秒内只跑一次），同样静默失败。
+        void sedimentTurnMemories(db, owner, turnTexts.userText, turnTexts.assistantText).then(
+          (outcome) => {
+            if (outcome.added.length || outcome.revised.length) {
+              console.log(
+                `[memory] 自动沉淀 owner=${owner}：新增 ${outcome.added.length} 条，` +
+                  `修正 ${outcome.revised.length} 条`,
+              );
+            }
+          },
+          () => {},
+        );
         // 这一轮没成功时把实时状态改成"出错了"：否则界面上那条"正在搜索网页…"会一直挂到
         // 90 秒窗口过期，而屏幕上其实已经弹了红色报错（真机撞到过："状态正在搜索，实际已经报错"）
         if (outcome.status === "failed" || outcome.status === "interrupted") {

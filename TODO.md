@@ -23,8 +23,14 @@
       `mastra-engine.ts` 两个引擎接线；App「人格与记忆」角色选择器；`GET /personas`
 - [x] **② 记忆温度模型** —— `engine/memory-temperature.ts`：🔥/🌡️/❄️ 三档 + `<!-- locked -->`
       免衰减 + 温热 14 天降冷存 + 按温度排序 + token 预算截断
-- [ ] **②b 记忆自动沉淀** —— 现在**只有模型主动调 `remember_fact` 才写**，缺"这段对话值不值得记"的判断。
-      上游对应 `memory_manager.py` 的提炼环节。
+- [x] **②b 记忆自动沉淀** —— `engine/memory-sediment.ts`：一轮结束后把「既有记忆 + 刚发生的一轮」
+      交给模型，只取结构化 JSON（`{"add":[...],"revise":[{"id":"短标识","text":"..."}]}`），
+      再经 `rememberMemory()` 落库。revise 让模型能主动纠正矛盾记忆，并留 `revisedFrom` 痕。
+      闸门：<5 字或纯应答不调模型、同一 owner 15 秒内只跑一次、凭据正则拦截、
+      `max_tokens=1200`（推理模型会把预算吃光，给少了 content 为 null）。
+      接线：`app.ts` 回合结束后调用，静默失败。
+      **真机验证**：真网关 + `openai/gpt-oss-20b`，12.8s 准确提取一条新事实，
+      没有重复记已有的「白虎」，寒暄未误记。
 - [x] **②c 记忆去重 / 归并** —— `engine/memory-dedupe.ts`：归一化（全角转半角 + 只留 `\p{L}\p{N}`）
       后按 key 分组归并，保留信息量最大的写法、温度取高者、写 `updatedAt`。
       写入侧 `remember_fact` 改走 `rememberMemory()`；存量清理脚本 `scripts/dedupe-memories.ts`
@@ -42,6 +48,25 @@
       待办：另一条引擎路径（`conversation.ts` 自带引擎）尚未挂同一个钩子 —— 线上是 mastra，暂不影响。
 - [ ] **④ 社交图谱** —— 上游 `social_graph.py` 1005 行，多角色关系演化
 - [ ] **⑤ 圆桌 / 多角色同席** —— 产品级差异点，等 ②③ 站住再做
+
+## 🔧 已修复的环境问题（2026-10-14）
+
+- [x] **OpenMuse 的模型链路此前是断的**：`.env` 里 `OPENAI_API_KEY` 是 17 字符的占位符
+      （`loca…`），`MODEL=openai/nemotron-3-super-120b-a12b` 的前缀也不对 ——
+      实测该 id 会被网关拒（`400 付费模型不可用`），占位 key 一律 `401 Invalid API key`。
+      已改为真 zen key + `MODEL=nvidia/nemotron-3-super-120b-a12b`（`.env` 权限 600），
+      并新增 `SEDIMENT_MODEL=openai/gpt-oss-20b`。服务重启后启动日志无 shadowed 警告,
+      即 `.env` 生效。**注意**：库内最近一次真实对话是 2026-10-05，之后没人用过，
+      所以这个断链一直没被发现。
+- [x] **网关的可用模型有付费限制**：zh 网关（`10.7.0.1:9527`）对未带 `:free` 的付费模型返回
+      `400 付费模型不可用，请使用免费模型（:free 后缀）`。已实测可用的有
+      `nvidia/nemotron-3-super-120b-a12b`、`openai/gpt-oss-20b`、`ministral-8b-latest`；
+      不可用：`nvidia/nemotron-3-nano-30b-a3b`、`mistral-small-latest`。
+- [x] **推理类模型的小 `max_tokens` 会拿到空 `content`**：额度会被 `reasoning_content` 吃光
+      （实测 `max_tokens=10` 时 `content` 为 `null`）。沉淀调用已设为 1200。
+- [ ] **`10.7.0.3:9527` 直连已被禁用**：返回 `403 直连已禁用: 本机请求必须经隐私网关
+      (http://127.0.0.1:18712/v1)`。文档里那套"从东京打 .3:9527"的做法已过时；
+      本机可用的入口是 `10.7.0.1:9527`（`.3:18712` 从本机不可达）。
 
 ## 🟢 产品与杂项
 
