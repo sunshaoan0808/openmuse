@@ -16,6 +16,7 @@
       Actions 实测 `enabled=true / allowed=all`，三个工作流均 active）。出包走它的
       **Build Android APK** 工作流，输入 `api_url` / `build_type` / `abis`。
       脱敏过程与差异说明见该仓库的 `SANITIZED.md`。
+      **✅ 已出包（2026-10-14）**：run `#38575268187` 全绿（Android SDK/NDK 安装 8 分钟 + 构建，14:00:54Z 完成），产物 `openmuse.apk` 50.6MB / arm64-v8a / versionName 0.1.0 / v2 签名块正常，已放到 `APK_DIST_DIR` 并由 <https://openmuse.claw.ssan.me/download/openmuse.apk> 分发（HTTP 200 实测，`sha256 52200c7b…bf3e`；旧包留档 `openmuse-2026-10-04.apk`）。包内含三条客户端修复（会话续期回写 / 静默断流看门狗 / 发送门禁拆除）+ 服务端自动续跑。构建注解提示 `actions/setup-java@v4` 与 Node 20 系列已弃用，后续升级到 v5 即可。
       ⚠️ 同时修掉两处**必须不再犯**的问题（详见下一条）：真 key 曾进过测试文件、
       `.openmuse-mastra/`（28MB Postgres 数据目录）曾被我提交入库 —— 两者均已从工作树
       **与全部历史**中清除，并强推 fork。
