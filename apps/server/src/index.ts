@@ -4,6 +4,7 @@ import { createApp } from "./app.ts";
 import type { ChatTurn } from "./chat-turns.ts";
 import { readConfig } from "./config.ts";
 import { createStore } from "./db.ts";
+import { startTurnResumer } from "./engine/turn-resume.ts";
 
 const config = readConfig();
 // 启动自检：模型链路三要素各打印一行指纹（长度/前缀/sha256 头，**绝不打印密钥本体**）。
@@ -41,8 +42,17 @@ for (const record of await db.scan<ChatTurn>("turns")) {
     finishedAt: now,
   });
 }
-const { app, agent } = await createApp(db, config);
+const { app, auth, agent } = await createApp(db, config);
 if (config.taskWorkerEnabled) agent.start();
+// 服务端自动续跑未完成的一轮 —— 用户原话：「用户端要求无感，重试动作要做到服务端」。
+// 启动时立刻跑一遍：服务重启打断的那些轮次（index.ts 上面刚标成 interrupted）正是这时候补上的；
+// 之后按周期巡检，把"用户消息没被回答"的轮次自己补跑掉，不再等客户端重发。
+const stopTurnResumer = startTurnResumer({
+  store: db,
+  auth,
+  config,
+  log: (message) => console.log(message),
+});
 // 额外监听一个公网地址（通常是本机的 IPv6）：入口域名只有 A 记录，跨境链路上
 // 长连接（聊天那一轮的 SSE）常被掐；而手机侧的 IPv6 到这台机器是通的，且比绕欧洲
 // 那台反代更近。设了 PUBLIC_HOST 才开这一路，不影响原有 mesh 监听。
@@ -56,6 +66,7 @@ const server = serve({ fetch: app.fetch, port: config.port, hostname: config.hos
   console.log(`OpenMuse ${config.mode} API ready at ${config.publicUrl}`),
 );
 const shutdown = () => {
+  stopTurnResumer();
   server.close(() => {
     void agent
       .stop()

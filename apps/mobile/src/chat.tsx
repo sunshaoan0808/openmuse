@@ -53,7 +53,7 @@ import { BrowserActionCard } from "./browser-action-card";
 import { BrowserRunContext, BrowserToolCard } from "./browser-tool-card";
 import { hasInAppCamera, InAppCamera } from "./camera-view";
 import { acknowledgedIds, mergeConversation } from "./conversation-merge";
-import { ConversationQueue, type QueuedMessage } from "./conversation-queue";
+import { ConversationQueue, QueueBusyError, type QueuedMessage } from "./conversation-queue";
 import { RECLAIM_GRACE_MS, shouldReclaimRun } from "./run-watchdog";
 import { runConversationTurn } from "./conversation-run";
 import { loadCursor, outboxStorage, saveCursor } from "./conversation-store";
@@ -902,10 +902,41 @@ export function ChatScreen({
     );
     setSaveError("");
   }, [agent, api, threadId]);
+  /**
+   * 发之前先问一次服务端：客户端这一轮的运行态到底还算不算数。
+   *
+   * 为什么必须有这一步：`agent.isRunning` 会因为**静默断流**永远挂着 true
+   * （服务端 tee 了后台一支，回复照样落库、但客户端收不到终态事件）。只靠它判断的话，
+   * 之后每条消息都被让位挡回去，永远「排队中」—— 真机撞到过。
+   *
+   * 服务端才是"这一轮跑没跑完"的权威：它只在整条流消费完才把 turn 写成终态。
+   * 所以客户端说在跑、服务端说终态时，就把客户端状态强制收回，接着发。
+   *
+   * @returns true = 现在可以发；false = 服务端确实还在跑（让位重试，不算失败）
+   */
+  const releaseStaleRun = useCallback(async () => {
+    // 自己的发送还挂在半路（runLock）：那是真的在发，别插队
+    if (runLock.current) return false;
+    if (!agent.isRunning) return true;
+    const result = await syncConversation().catch(() => null);
+    // 判据与看门狗同一个纯函数：客户端说在跑 + 服务端已终态 → 该收回
+    if (!shouldReclaimRun(agent.isRunning, result?.turn?.status)) return false;
+    try {
+      // 复位客户端状态机；服务端那一轮早已结束，这个停止请求是幂等的
+      void copilotkit.stopAgent({ agent });
+    } catch {
+      return false;
+    }
+    return true;
+  }, [agent, copilotkit, syncConversation]);
   const run = useCallback(
     async (message?: QueuedMessage) => {
-      if (runLock.current || agent.isRunning || !isReady || !loaded)
-        throw new Error("会话还没准备好。");
+      // 「能不能发」不再由客户端某个状态一票否决：
+      // - 队列自己保证一次只投一条（runCycle 是串行的）
+      // - 并发由**服务端的 durable-runner** 收口（同轮重复忽略、同会话第二轮排队）
+      // 客户端只负责"把消息送出去"这一件事，卡住就退避重试，绝不整条停摆。
+      if (!loaded || !isReady) throw new QueueBusyError();
+      if (!(await releaseStaleRun())) throw new QueueBusyError();
       runLock.current = true;
       setBusy(true);
       setError("");
@@ -940,6 +971,7 @@ export function ChatScreen({
       loaded,
       refresh,
       refreshAgent,
+      releaseStaleRun,
       saveHistory,
       queue,
       syncConversation,
@@ -960,7 +992,11 @@ export function ChatScreen({
     [run],
   );
   const flush = useCallback(() => {
-    if (!loaded || !isReady || runLock.current || agent.isRunning) return;
+    // 只在"会话还没就绪"时让位；**不再看 agent.isRunning / runLock** ——
+    // 那两个状态会因静默断流卡死，一卡住消息就永远发不出去（真机撞到过）。
+    // 真正在跑时由 run() 抛 QueueBusyError 让位重试（不计失败），
+    // 并发则由服务端 durable-runner 收口。
+    if (!loaded || !isReady) return;
     // 队列投出去一条就从 pending 摘掉，界面上一"消失"就分不清"发出去了"还是"被丢了"。
     // 这里包一层给出「已发送」的回执（Muse 的消息级文案）。
     void queue
@@ -971,11 +1007,11 @@ export function ChatScreen({
       .catch((e) => setError(humanizeNetworkError(e)));
   }, [agent, isReady, loaded, notify, queue, runQueued]);
   // 会话就绪后把上次没发出去的补发出去（配合 api.ts 的重试：网络恢复即自动续上）
+  // 待发箱里只要有货就推一次（推不动时由 run() 让位重试）。
+  // 判据故意简单：**不看 agent.isRunning / busy** —— 它们会卡死，而服务端才是权威。
   useEffect(() => {
-    if (!loaded || !isReady || runLock.current || agent.isRunning) return;
-    if (!queue.getSnapshot().pending.length) return;
-    flush();
-  }, [loaded, isReady, agent, queue, flush]);
+    if (loaded && isReady && queue.getSnapshot().pending.length) flush();
+  }, [loaded, isReady, queue, flush, outbox.pending.length]);
   const enqueue = useCallback(
     (text: string) => {
       queue.enqueue({ id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text });
@@ -1007,9 +1043,10 @@ export function ChatScreen({
     },
     [agent.isRunning, flush, isReady, loaded, queue, saveError],
   );
+  // 有待发就有推的机会（不再等 busy/isRunning 落下来 —— 它们可能永远落不下来）
   useEffect(() => {
-    if (!busy && !agent.isRunning && outbox.pending.length) flush();
-  }, [busy, agent.isRunning, outbox.pending.length, flush]);
+    if (outbox.pending.length) flush();
+  }, [outbox.pending.length, flush]);
   useEffect(() => {
     if (active && prompt && isReady && loaded && claimPrompt(prompt.id) && prompt.text.trim())
       enqueue(prompt.text);
