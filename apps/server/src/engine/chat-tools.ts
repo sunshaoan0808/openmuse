@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { rememberMemory } from "./memory-dedupe.ts";
 import { TEMP_WARM } from "./memory-temperature.ts";
 import {
   createTaskSchema,
@@ -493,16 +494,24 @@ export function chatTools(ctx: ChatToolContext): NeutralTool[] {
       description: "Remember a preference explicitly supplied or confirmed by the user",
       parameters: z.object({ text: z.string().min(1).max(2000) }),
       execute: async ({ text }) => {
-        const value = {
+        const candidate = {
           id: createHash("sha256").update(ctx.key("memory", text)).digest("hex"),
-          text,
+          text: text.trim(),
           source: "User confirmed in chat",
           createdAt: new Date().toISOString(),
           // 用户刚确认的信息按「温热」记：优先注入，14 天未更新后自动降为冷存（见 memory-temperature.ts）
           temp: TEMP_WARM,
         };
-        await ctx.service.db.insertIfAbsent(ctx.owner, "memories", value);
-        return value;
+        // 走统一写入口：`id = sha256(owner+text)` 只挡得住逐字节相同的文本，
+        // 同一句话的另一种写法（标点/引号差异）在这里归并成一条，不再堆积近重复。
+        const { memory, action, absorbed } = await rememberMemory(
+          ctx.service.db,
+          ctx.owner,
+          candidate,
+        );
+        return action === "merged"
+          ? { ...memory, note: `已并入已有的同一条记忆，吸收副本 ${absorbed.length} 条` }
+          : memory;
       },
     }),
     // ---- 会改外部世界的动作：只在任务里可用，且必须在沙箱里跑 ----
