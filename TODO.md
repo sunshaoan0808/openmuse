@@ -11,7 +11,32 @@
       `workflow enable` 均无效）、push 触发（当天 push 未产生任何运行 → 整个 Actions 都停了）。
       **修法**：打开 <https://github.com/sunshaoan0808/openmuse/actions> ，点横幅里的
       `I understand my workflows, go ahead and enable them`。
-      **备选**：在本账号下建一个**非 fork** 仓库推上去跑（非 fork 的 dispatch 已验证可用）。
+      **✅ 已用「备选」绕开（2026-10-14）**：新建非 fork 公开仓库
+      <https://github.com/sunshaoan0808/openmuse-shell>（361 文件、单次提交的脱敏快照，
+      Actions 实测 `enabled=true / allowed=all`，三个工作流均 active）。出包走它的
+      **Build Android APK** 工作流，输入 `api_url` / `build_type` / `abis`。
+      脱敏过程与差异说明见该仓库的 `SANITIZED.md`。
+      ⚠️ 同时修掉两处**必须不再犯**的问题（详见下一条）：真 key 曾进过测试文件、
+      `.openmuse-mastra/`（28MB Postgres 数据目录）曾被我提交入库 —— 两者均已从工作树
+      **与全部历史**中清除，并强推 fork。
+      ⚠️ **该 zen key 已公开过，需轮换**（网关在 mesh 内网 `10.7.0.1:9527`，外部还需 mesh 权限，
+      但既然公开过就应视为已泄露）。
+- [ ] **🔐 凭据泄露善后：轮换 zen 网关 key（需人工，agent 无法自助轮换）**
+      事情经过：`tests/memory-sediment.test.ts` 里我写「凭据拦截」单测时，用了**真 key**
+      （长度 16、`sha256` 头 `fde627a1`，与服务启动自检打印的指纹逐位一致）当"假样本"，
+      随提交 `8977cfe` 推到了**公开 fork**。
+      已做：① 该文件里的 key 换成真·假值；② `git filter-branch` 重写全部历史 + 强推 fork；
+      ③ **从公网克隆回来独立复扫**：186 个提交、真 key 出现 0 次、工作区 0 命中。
+      剩下必须你做的：**轮换这个 key**（清除历史不等于没泄露过；网关在 mesh 内网
+      `10.7.0.1:9527`，外部还要 mesh 权限才能用，但按"已泄露"处理）。
+      新 key 请落到本机一个 600 文件里（例如 `~/zen-key.txt`），我来更新 `.env`（600、已 gitignore），
+      不要再贴进聊天或写进代码/测试/文档。
+- [ ] **🔐 运行时数据目录曾入库（已清除）** —— `.openmuse-mastra/`（Mastra 开发时的 Postgres
+      数据目录，981 文件 / 28MB / 含 WAL）被我提交进了库，且随公开 fork 可见。
+      根因：`.gitignore` 忽略了 `.openmuse/` 却漏了 `.openmuse-mastra/`。
+      已做：补 `.gitignore`、`git rm --cached`、连同 `.openmuse-api.log` 与
+      `apps/worker/om_*.mjs`、`zh_*.mjs`（共 20 个一次性探针脚本）一起从**全部历史**抹除，
+      仓库体积 55MB → 14MB。工作区文件保留，本机开发不受影响。
 - [ ] **Hermes 网关重启** —— `model.default` 已从 550B 改为更强的 `nemotron-3-super-120b`，
       需重启 Hermes 进程才生效；重启会掐断当前会话，所以要在会话外执行。
 
