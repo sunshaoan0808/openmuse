@@ -23,3 +23,6 @@ artifacts/
 # apps/server/personas/ORIGIN.md。换目录用 OPENMUSE_PERSONAS_DIR 环境变量。
 apps/server/personas/templates/
 apps/server/personas/runtime/
+.openmuse-mastra/
+*.log
+!README.md
