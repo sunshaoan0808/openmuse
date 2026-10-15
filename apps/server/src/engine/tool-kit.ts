@@ -1,5 +1,12 @@
 import { defineTool } from "@copilotkit/runtime/v2";
 import type { z } from "zod";
+import {
+  runToolCall,
+  type ToolAssessment,
+  type ToolCallContext,
+  type ToolPolicy,
+  type ToolRisk,
+} from "./tool-executor.ts";
 
 /**
  * 中性工具描述符：与具体 agent 框架无关。
@@ -15,6 +22,18 @@ export interface NeutralTool<S extends z.ZodType = z.ZodType> {
   description: string;
   parameters: S;
   execute: (args: z.output<S>) => Promise<unknown>;
+  /**
+   * 静态风险等级。`sensitive` 的能力**默认不放行**（P0 没有审批入口），
+   * 由 `tool-executor.ts` 的咽喉拦下并明确告诉模型别重试。
+   */
+  risk?: ToolRisk;
+  /** 逐次评估：看这次调用具体对谁动手、结果会不会流出本机、要不要打码。 */
+  assess?: (args: z.output<S>) => ToolAssessment | Promise<ToolAssessment>;
+  /**
+   * 审计上下文（owner / 会话号）。工具闭包里有，咽喉拿不到，所以由工具自己交出来；
+   * 没交的就记 `-`，不影响执行。
+   */
+  context?: () => ToolCallContext;
 }
 
 /** 套回自带引擎的 `defineTool`（AG-UI / tanstack agent 用）。 */
@@ -64,9 +83,15 @@ function describeResult(result: unknown) {
 }
 
 /**
- * 工具调用留痕：线上出现"答非所问"时，后台必须能复盘到**模型实际传的参数**与结果规模——
+ * 工具调用留痕 **+ 咽喉收口**。
+ *
+ * 留痕：线上出现"答非所问"时，后台必须能复盘到**模型实际传的参数**与结果规模——
  * 否则只能靠猜（曾经真的猜不出来：会话不落库、日志也不记工具调用）。
  * 只打印参数摘要与规模，不回显完整内容。
+ *
+ * 收口：执行一律走 `runToolCall`（tool-executor.ts）。这里是**两个引擎唯一的共同出口**
+ * （自带引擎经 `forAgUi`、Mastra 经 `forMastra`，两边都先过本函数），
+ * 所以"没有工具能绕过咽喉"这件事只需要在这一处成立，不必去每个调用点重复。
  */
 export function instrument<S extends z.ZodType>(tool: NeutralTool<S>): NeutralTool<S> {
   return {
@@ -75,7 +100,13 @@ export function instrument<S extends z.ZodType>(tool: NeutralTool<S>): NeutralTo
       const started = Date.now();
       const summary = summarize(args);
       try {
-        const result = await tool.execute(args);
+        // 咽喉：拒绝名单 → 评估 → 拒批/放行 → 执行 → 打码 → 审计。
+        // 没声明 risk/assess 的工具，这里等价于直接 `tool.execute(args)`：返回值原样、抛错原样。
+        const result = await runToolCall(
+          tool as unknown as ToolPolicy,
+          args,
+          tool.context?.() ?? {},
+        );
         console.log(
           `[tool] ${tool.name} ${summary} → ${describeResult(result)} (${Date.now() - started}ms)`,
         );

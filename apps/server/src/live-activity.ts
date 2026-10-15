@@ -147,6 +147,9 @@ export function withActivity<
   return tools.map((tool) => {
     const wrapped = {
       ...tool,
+      // 咽喉的审计上下文（owner / 会话号）：只有这里两个值都在手，顺手套上，
+      // tool-kit 的 `instrument` 会取它写审计；没套到的工具审计里记 `-`，不影响执行。
+      context: () => ({ owner: context.owner, threadId: context.threadId }),
       execute: async (args: never) => {
         void recordActivity(
           context.service?.db,

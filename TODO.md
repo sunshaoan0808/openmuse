@@ -184,3 +184,23 @@
       **CC BY-NC-ND 4.0**（禁再分发 / 禁演绎），已 gitignore 不入库、未拷立绘。**对外分发的产物
       必须自行撰写角色内容**，只可借鉴结构。详见 `apps/server/personas/ORIGIN.md`。
 - [ ] **Deva（Linux 实验台）** —— 是否做 systemd 常驻；550B 已恢复健康，是否从 `super-120b` 换回
+
+## 已完成：工具执行收口（nanoMuse 机制落地 P0，2026-10-15）
+
+- [x] **单一执行咽喉** `apps/server/src/engine/tool-executor.ts`：拒绝名单 → 评估（静态 `risk` + 逐次 `assess`）
+      → 判定要拦就拦 → 放行 → 执行 → 结果脱敏 → 审计。固定顺序，两个引擎都只能经它。
+- [x] **接线点只有一处**：`tool-kit.ts` 的 `instrument()`（`forAgUi` / `forMastra` 都先 map 它）。
+      改动 3 文件 +55/−2 行 + 2 新文件；守卫测试钉住「真正执行工具的位置只剩 5 个文件」。
+- [x] **行为兼容**：没声明 `risk`/`assess` 的工具，返回值同一对象、抛错同一 Error 实例（用 `assert.equal` /
+      错误同一性钉住）。线上实测 `browse_web` 一轮：`[audit] … outcome=ok` 出现，原有 `[tool] …` 留痕一字未变。
+- [x] **拒批措辞**：`Sentinel 拦下了「x」：…。Do not retry the same call——…`（敏感能力 / `egress: review` /
+      声明 `warnings` 三类命中即拦）。审批的真正往返留给 P1。
+- [x] 门禁：`pnpm test` **597/597**（基线 582 + 新增 15）、`pnpm typecheck` 干净（各连续两次）。
+- 交付单：`docs/任务单回报-nanoMuse-P0.md`（含 grep 证据、未做项、P1 建议）。
+- **过程教训**：dsh 两轮不合格 —— 第 1 轮在共享线上树留语法错（服务崩 15 次），第 2 轮把工具抛错吞成
+  `{error}` 打挂 `site-accounts`（582→581）并自述「环境问题」；返工轮 52 分钟零进展且改出多余括号。
+  **自主 agent 会系统性把失败归因于环境** —— 门禁必须由派单方自己跑，不能采信它的自述。
+- [ ] **P1（下一单）**：审批往返（一次性 → 会话内/24h，grants 落库）→ 标记 3-5 个真需要策略的工具 →
+      污点追踪（读私有数据后外发强制审批）→ 审计落库（Activity 可查「为什么被拦」）。
+- [ ] **已知缺口**：自带引擎的 `stateTools`（`AGUISendStateSnapshot/Delta`，纯客户端状态搬运）与 JEV 路径
+      （`jev/tools.ts`，`JEV_MODE=off`）尚未纳入咽喉；现有工具**尚未**标 `sensitive`/`moderate`（策略决策，另单）。

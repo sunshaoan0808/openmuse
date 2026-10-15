@@ -61,6 +61,11 @@ export interface Config {
   searchProvider?: "brave" | "tavily" | "serper" | "firecrawl";
   taskWorkerEnabled?: boolean;
   computerEnabled?: boolean;
+  /**
+   * 工具拒绝名单（逗号分隔的 `TOOL_DENY_LIST`）：命中的工具连执行都不会执行，
+   * 由 `tool-executor.ts` 的咽喉直接拦下，并回灌模型「不要重试同一个调用」。
+   */
+  toolDenyList?: string[];
   computerImage?: string;
   computerDeploymentId?: string;
   allowedOrigins: string[];
@@ -107,6 +112,18 @@ export function browserWorkerUrl(value?: string): string | undefined {
 // writes never re-fire here: they are dispatched outside the model loop through
 // reviewed, idempotency-keyed actions.
 export const MODEL_MAX_RETRIES = 2;
+/**
+ * 工具拒绝名单（`TOOL_DENY_LIST`，逗号分隔）。单独抽出来是给咽喉用的：
+ * 工具每次调用都要读它，不能走 `readConfig()`（那会连带校验整个环境，坏配置里还会抛）。
+ * 留空 = 不拦任何工具 = 与改造前一致。
+ */
+export function readToolDenyList(value = process.env.TOOL_DENY_LIST): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
 export function readConfig(): Config {
   const mode = process.env.WORKSPACE_MODE ?? "sample";
   if (mode !== "sample" && mode !== "live")
@@ -172,6 +189,8 @@ export function readConfig(): Config {
       : undefined,
     taskWorkerEnabled: process.env.TASK_WORKER_ENABLED !== "false",
     computerEnabled: process.env.COMPUTER_ENABLED === "true",
+    // 拒绝名单：留空 = 不拦任何工具（与改造前一致）。要拦就写 TOOL_DENY_LIST=run_shell,xxx
+    toolDenyList: readToolDenyList(),
     computerImage: process.env.COMPUTER_IMAGE ?? "openmuse-computer:local",
     computerDeploymentId: process.env.COMPUTER_DEPLOYMENT_ID,
     allowedOrigins: (
