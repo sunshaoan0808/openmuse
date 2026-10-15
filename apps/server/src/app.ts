@@ -992,7 +992,10 @@ export async function createApp(
         void advanceEmotionFromTurn(agent, owner, produced).catch(() => {});
         // 记忆自动沉淀：判断这一轮有没有值得长期记住的东西（见 engine/memory-sediment.ts）。
         // 自带闸门（过短/纯应答不调模型、同一 owner 15 秒内只跑一次），同样静默失败。
-        void sedimentTurnMemories(db, owner, turnTexts.userText, turnTexts.assistantText).then(
+        void sedimentTurnMemories(db, owner, turnTexts.userText, turnTexts.assistantText, {
+          // 生产接线：把真实 store 交给沉淀侧的**可回滚日志**（`kind='memory-log'`）。
+          logSink: db,
+        }).then(
           (outcome) => {
             if (outcome.added.length || outcome.revised.length) {
               console.log(

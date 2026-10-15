@@ -12,6 +12,13 @@
  * —— 归并只处理"同一句话的不同写法"，不会去动内容不同的两条。
  */
 
+import { isUserAuthored, planRemoval, protectedIds } from "./memory-adjudicate.ts";
+import {
+  appendMemoryLog,
+  type MemoryLogWriter,
+  type MemorySnapshot,
+} from "./memory-log.ts";
+
 /** 记忆的最小形状（与 `records` 表里 `kind='memories'` 的 data 对应）。 */
 export interface MemoryRecord {
   id: string;
@@ -128,50 +135,121 @@ export async function rememberMemory<T extends MemoryRecord>(
   store: MemoryStore,
   owner: string,
   candidate: T,
-): Promise<{ memory: T; action: "inserted" | "merged"; absorbed: string[] }> {
+): Promise<{
+  memory: T;
+  action: "inserted" | "merged";
+  absorbed: string[];
+  absorbedRecords: T[];
+  keeperIsNew: boolean;
+}> {
   const existing = await store.list<T>(owner, "memories");
   const key = normalizeMemoryText(candidate.text ?? "");
 
   if (!key) {
     await store.put(owner, "memories", candidate);
-    return { memory: candidate, action: "inserted", absorbed: [] };
+    return {
+      memory: candidate,
+      action: "inserted",
+      absorbed: [],
+      absorbedRecords: [],
+      keeperIsNew: true,
+    };
   }
 
   const sameKey = existing.filter((item) => normalizeMemoryText(item.text ?? "") === key);
   if (sameKey.length === 0) {
     await store.put(owner, "memories", candidate);
-    return { memory: candidate, action: "inserted", absorbed: [] };
+    return {
+      memory: candidate,
+      action: "inserted",
+      absorbed: [],
+      absorbedRecords: [],
+      keeperIsNew: true,
+    };
   }
 
   // 候选文本未必更好，所以和已有的一起挑一次"最优写法"。
   const group = [candidate, ...sameKey];
-  const winner = group.reduce((best, item) => preferable(best, item), group[0]!);
+
+  // 用户手写保护：只要既有记录里有用户手写的，keeper 必须是用户手写的那条
+  // （不能拿机器沉淀的条目把它顶掉）；若候选本身是用户手写而既有都是机器沉淀，keeper 取候选。
+  const storedUserAuthored = sameKey.filter(isUserAuthored);
+  const pool = storedUserAuthored.length > 0 ? storedUserAuthored : group;
+  const winner = pool.reduce((best, item) => preferable(best, item), pool[0]!);
 
   // 保留 winner 的 id（若 winner 是候选则沿用候选 id）；文本用 winner 的，温度/时间做归并。
   const keeper = mergeRecords(winner, group.filter((item) => item !== winner));
   await store.put(owner, "memories", keeper);
 
   const absorbed: string[] = [];
+  const absorbedRecords: T[] = [];
   for (const item of group) {
     if (item.id === keeper.id) continue;
+    // 永不"拿机器条目顶掉用户手写"；keeper 自己也是用户手写时，同 key 的副本照旧归并
+    // （存量数据的 source 常缺失，一律算用户手写，见 memory-adjudicate.ts:isUserAuthored）。
+    if (isUserAuthored(item) && !isUserAuthored(keeper)) continue;
     await store.remove(owner, "memories", item.id);
     absorbed.push(item.id);
+    absorbedRecords.push(item);
   }
-  return { memory: keeper, action: "merged", absorbed };
+
+  // keeper 是否为本轮新增（候选胜出且同 key 原本不存在）
+  const keeperIsNew = keeper.id === candidate.id && !sameKey.some((item) => item.id === candidate.id);
+
+  return {
+    memory: keeper,
+    action: "merged",
+    absorbed,
+    absorbedRecords,
+    keeperIsNew,
+  };
 }
 
 /** 对已有记忆做一次全量归并（一次性清理 / 定期维护用）。返回被合并掉了多少条。 */
 export async function dedupeOwnerMemories(
   store: MemoryStore,
   owner: string,
-): Promise<{ before: number; after: number; merged: { kept: string; dropped: string[] }[] }> {
+  logSink?: MemoryLogWriter,
+): Promise<{
+  before: number;
+  after: number;
+  merged: { kept: string; dropped: string[] }[];
+  skippedByGuard: { dropped: string; keeper: string }[];
+  logFailed?: boolean;
+}> {
   const all = await store.list<MemoryRecord>(owner, "memories");
   // 先记下条数：`all` 可能与存储内部的数组是同一个引用，删除会把它的长度一起改掉。
   const before = all.length;
   const plan = planDedupe(all);
 
-  const byKeeper = new Map<string, MemoryRecord[]>();
+  const protectedSet = protectedIds(all);
+  // 删除上限（20% 且至少留 4）是给"囤积很多条"的批量清理用的：
+  // 只有集合本身大过下限时才生效；小集合没有囤积问题，照旧归并
+  //（既有单测 tests/memory-dedupe.test.ts 用 2 条数据，必须仍然归并成 1 条）。
+  const allowedDrops =
+    all.length > 4 ? planRemoval(all.length, plan.absorbed.length) : plan.absorbed.length;
+
+  // 只对"允许范围内且非用户手写"的 absorbed 执行删除；其余原样保留。
+  const actualDropped: { dropped: MemoryRecord; keeper: MemoryRecord }[] = [];
+  const skippedByGuard: { dropped: string; keeper: string }[] = [];
+  let budget = allowedDrops;
   for (const { dropped, keeper } of plan.absorbed) {
+    // 只有"拿机器条目顶掉用户手写"才拦：keeper 自己也是用户手写时，同 key 的
+    // 副本照旧归并（否则存量数据（source 缺失）永远归并不掉，既有回归锁直接红）。
+    const sacrifice = protectedSet.has(dropped.id) && !protectedSet.has(keeper.id);
+    if (sacrifice) {
+      skippedByGuard.push({ dropped: dropped.id, keeper: keeper.id });
+    } else if (budget > 0) {
+      actualDropped.push({ dropped, keeper });
+      budget -= 1;
+    } else {
+      skippedByGuard.push({ dropped: dropped.id, keeper: keeper.id });
+    }
+  }
+
+  // 按 keeper 分组实际删除的记录：写回归并后的 keeper，再删副本。
+  const byKeeper = new Map<string, MemoryRecord[]>();
+  for (const { dropped, keeper } of actualDropped) {
     const bucket = byKeeper.get(keeper.id);
     if (bucket) bucket.push(dropped);
     else byKeeper.set(keeper.id, [dropped]);
@@ -190,5 +268,30 @@ export async function dedupeOwnerMemories(
     merged.push({ kept: keeperId, dropped });
   }
 
-  return { before, after: before - plan.absorbed.length, merged };
+  // 日志：被删条目的完整 data 作为 before 快照（足以还原）。
+  // 只在调用方显式给了日志出口时才写 —— 既有单测用的假 store 不区分 kind，
+  // 往同一个 store 里塞 memory-log 行会污染它的记忆列表（回归锁会红）。
+  let logFailed = false;
+  if (actualDropped.length > 0 && logSink) {
+    const beforeSnapshots: MemorySnapshot[] = actualDropped.map(({ dropped }) => ({
+      id: dropped.id,
+      data: dropped,
+    }));
+    const result = await appendMemoryLog(logSink, {
+      action: "dedupe-merge",
+      owner,
+      before: beforeSnapshots,
+      after: [],
+      reason: "归并同义记忆",
+    });
+    logFailed = result.logFailed;
+  }
+
+  return {
+    before,
+    after: before - actualDropped.length,
+    merged,
+    skippedByGuard,
+    ...(logFailed ? { logFailed } : {}),
+  };
 }

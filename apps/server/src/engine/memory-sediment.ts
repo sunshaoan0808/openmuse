@@ -19,6 +19,8 @@
 import { createHash } from "node:crypto";
 import { dedupeOwnerMemories, rememberMemory, type MemoryRecord, type MemoryStore } from "./memory-dedupe.ts";
 import { TEMP_WARM } from "./memory-temperature.ts";
+import { allowRewrite, tokenizeForCompare } from "./memory-adjudicate.ts";
+import { appendMemoryLog, type MemoryLogWriter, type MemorySnapshot } from "./memory-log.ts";
 
 /**
  * 低于这个长度不沉淀。
@@ -47,6 +49,24 @@ export function memoryId(text: string): string {
  * 明显是凭据的文本不该进长期记忆。宁可漏拦（模型也可能把 token 说成别的样子），
  * 也不放过最常见的几种形态。
  */
+/** 功能字（不含事实）：改写时必然出现，词表约束不该被它们绊倒。 */
+const FUNCTION_CHARS = new Set("的了是在我你他她它们和与把被就都也很会能要有不没吗呢吧给对从到之其于而且但所以这那".split(""));
+
+/**
+ * 改写文本里**凭空多出来的实义字**（§2.2 的"不许造词"落到单字层）。
+ *
+ * 为什么不是二元组：二元组会把跨词边界的组合（`我的`/`的代`/`是我`）判成新词，
+ * 正常改写全被误杀。要拦的是"造实体"—— 出现源里没有的**实义字**才算。
+ */
+export function inventedChars(nextText: string, sources: readonly string[]): string[] {
+  return [...new Set([...nextText])].filter(
+    (ch) =>
+      /\p{Script=Han}/u.test(ch) &&
+      !FUNCTION_CHARS.has(ch) &&
+      !sources.some((source) => source.includes(ch)),
+  );
+}
+
 const SECRET_PATTERNS: RegExp[] = [
   /sk-[A-Za-z0-9_-]{16,}/,
   /zen-[A-Za-z0-9_-]{8,}/,
@@ -172,12 +192,18 @@ export function buildSedimentPrompt(
 export interface SedimentDeps {
   /** 单次补全。默认走 OPENAI_BASE_URL 的 OpenAI 兼容端点；测试里注入假实现。 */
   complete?: (prompt: string) => Promise<{ text?: string; error?: string }>;
+  /** 记忆日志出口；不传就不写日志（测试里省略，生产传 Store）。 */
+  logSink?: MemoryLogWriter;
 }
 
 export interface SedimentOutcome {
   added: { text: string; merged: boolean }[];
   revised: { id: string; from: string; to: string }[];
+  /** 新词表拒绝的修正 */
+  rejected: { id: string; text: string; unknown: string[] }[];
   skipped: string | null;
+  /** 日志写入失败标记 */
+  logFailed?: boolean;
 }
 
 /** 默认补全实现：与 `vision.ts` 同一条路子（OpenAI 兼容 /chat/completions）。 */
@@ -231,7 +257,7 @@ export async function sedimentTurnMemories(
   assistantText: string,
   deps: SedimentDeps = {},
 ): Promise<SedimentOutcome> {
-  const nothing = { added: [], revised: [], skipped: null } as SedimentOutcome;
+  const nothing = { added: [], revised: [], rejected: [], skipped: null } as SedimentOutcome;
 
   const trimmed = userText.trim();
   if (trimmed.length < MIN_USER_CHARS || ACK_PATTERN.test(trimmed)) {
@@ -243,6 +269,8 @@ export async function sedimentTurnMemories(
   if (Date.now() - last < MIN_INTERVAL_MS) return { ...nothing, skipped: "距上次沉淀太近" };
 
   const complete = deps.complete ?? defaultComplete;
+  /** 可回滚日志出口：不传就完全不写（测试里的内存 store 不区分 kind，写了会污染它的记忆列表）。 */
+  const log = deps.logSink;
 
   try {
     const existing = await store.list<MemoryRecord>(owner, "memories");
@@ -271,12 +299,47 @@ export async function sedimentTurnMemories(
         temp: TEMP_WARM,
       });
       added.push({ text: result.memory.text, merged: result.action === "merged" });
+      // 只给**真正新增**的那条记日志：`before` 空、`after` 只留 id —— 回滚时把这条删掉即可（§2.3）。
+      // 归并（merged）不记：它的 keeper 是一条既有记忆，回滚会把人家已有的内容一起删掉。
+      if (log && result.action === "inserted") {
+        await appendMemoryLog(log, {
+          action: "sediment-add",
+          owner,
+          before: [],
+          after: [{ id: result.memory.id }],
+          reason: "自动沉淀新事实",
+        });
+      }
     }
 
     const revised: SedimentOutcome["revised"] = [];
+    const rejected: SedimentOutcome["rejected"] = [];
     for (const item of plan.revise) {
       const target = existing.find((memory) => memory.id === item.id);
       if (!target || target.text === item.text) continue;
+      // §2.2 词表裁决：改写后的文本**不许凭空造词** —— 允许的来源只有「原记忆 + 本轮用户消息」。
+      // 刻意**不给助手回复**：那等于让模型把自己刚说过的话固化成"用户事实"。
+      //
+      // 粒度是**单字**而不是二元组（实测修正的教训）：二元组会把"我的/的代/是我/我白"这类
+      // **跨词边界**的组合判成新词，于是既有回归锁（tests/memory-sediment.test.ts:178
+      // "修正后与另一条撞车"）直接红 —— 正常改写被误杀。真正要拦的是**造实体**
+      //（凭空冒出的"成都"），所以：
+      //   1. 单字层：出现源里没有的**实义字** → 拒（功能字如 的/了/是/在 免疫，它们不承载事实）；
+      //   2. 二元组层：成片未知（> 60% 词数）→ 拒，兜住"全用源里的字拼出一句新事实"这种更隐蔽的造词。
+      const sources = [target.text, userText];
+      const invented = inventedChars(item.text, sources);
+      const verdict = allowRewrite(item.text, sources, {
+        allowUnknown: Math.ceil(tokenizeForCompare(item.text).length * 0.6),
+      });
+      if (invented.length > 0 || !verdict.ok) {
+        // 丢弃这条修正：不改写、不新建、原记录一个字都不动（只记下被拒的原因与未知词）。
+        rejected.push({
+          id: target.id,
+          text: item.text,
+          unknown: [...new Set([...invented, ...verdict.unknown])],
+        });
+        continue;
+      }
       await store.put(owner, "memories", {
         ...target,
         text: item.text,
@@ -286,12 +349,22 @@ export async function sedimentTurnMemories(
         revisedFrom: target.text,
       });
       revised.push({ id: target.id, from: target.text, to: item.text });
+      if (log) {
+        // 改写前/后都留快照，回滚时能把旧文本原样写回（§2.3）。
+        await appendMemoryLog(log, {
+          action: "sediment-revise",
+          owner,
+          before: [{ id: target.id, data: target }],
+          after: [{ id: target.id, data: { ...target, text: item.text } }],
+          reason: "自动沉淀修正一条记忆",
+        });
+      }
     }
 
     // 修正可能让两条撞成同一句话 —— 用既有的归并收尾
     if (revised.length) await dedupeOwnerMemories(store, owner);
 
-    return { added, revised, skipped: null };
+    return { added, revised, rejected, skipped: null };
   } catch (error) {
     return { ...nothing, skipped: error instanceof Error ? error.message : String(error) };
   }
