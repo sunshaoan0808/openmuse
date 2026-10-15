@@ -253,3 +253,21 @@
 - ⚠ 未覆盖：桌面控制类工具（`computer-tools.ts` 那批）不在咽喉内，标不了（P1d 缺口）；`read_pages`/`page_elements` 等
   只读浏览类暂标默认（`safe`），等污点追踪（P1d）再决定要不要提升。
 - ⚠ 又一次实锤：网关 `Service temporarily overloaded` 时 OpenMuse 收空回合却记 `succeeded` —— 见上文"空 content 判成功"病根。
+
+### P1d 咽喉缺口收口 + 污点追踪（派单再次被网关吃光，由派单方接手实现）
+
+- [x] **缺口一（真缺口）**：`tanstack-agent.ts` 把 `stateTools`（`AGUISendStateSnapshot`/`Delta`）裸塞进
+      `chat({ tools })`，绕过咽喉 → 改为走 `forAgUi(stateTools)`（同一套 `instrument`，不复制第四份实现）；
+      新增源码级守则钉住（`forAgUi(stateTools` 必须存在、`...stateTools]` 不许再出现）。
+- [x] **缺口二**：`jev/tools.ts` 当前无消费者（`JEV_MODE=off`）→ 文件顶部写明"消费者必须经 `instrument`/咽喉"，
+      并由守则读这段说明兜住（接上时不许直接 `tool.execute()`）。
+      **纠正旧判断**：`computer-tools` 其实一直在咽喉里（经 `forAgUi`/`forMastra`），其 `execute` 吞错返回 `{error}` 是工具既有契约。
+- [x] **污点追踪**：`engine/taint.ts`（按 owner+thread、进程内存）+ 工具声明 `readsPrivate` / `outward`；
+      咽喉判定顺序不变，污点作为**额外审批触发**（线程带污点 + 外发 ⇒ 必审批，理由点名污染来源工具）；
+      读私有数据在执行前打污点（**fail closed**：执行报错也算读过）；靠授权放行的外发清除污点（once）；线程间隔离。
+      已标：`search_mail`/`read_mail_thread`/`read_image` = readsPrivate；`site_account`/`page_act`/`git_push` = outward。
+- [x] 门禁：污点测试 **8/8**、守卫 **17/17**、全量 **661/661**（651 基线 + 10 新增）、typecheck 根+mobile 退出码 0。
+- [x] **线上真实验证**（临时把 `save_document` 标 outward 以隔离"污点"这一因）：线程 A 先 `search_mail`
+      （邮箱未连接但污点照打）→ `save_document` 被拦，库里理由点名 `search_mail`、journal `risk=moderate outcome=awaiting_approval`；
+      干净线程 B 同一工具 `ok`（不误伤）。收尾还原干净。
+- ⚠ 派单账：本轮 dsh 跑 66 分钟、**74 次 60s 静默超时（≈37 分钟纯等待）**、重试预算耗尽 exit=1、零产出 → 派单方接手。

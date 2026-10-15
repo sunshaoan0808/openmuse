@@ -27,6 +27,10 @@ export interface NeutralTool<S extends z.ZodType = z.ZodType> {
    * 由 `tool-executor.ts` 的咽喉拦下并明确告诉模型别重试。
    */
   risk?: ToolRisk;
+  /** 会读到私有数据（邮箱正文、文件、截图…）：放行执行时给线程打污点（P1d 污点追踪）。 */
+  readsPrivate?: boolean;
+  /** 会把东西发出去（建号 / 提交表单 / 推远端…）：线程带污点时一律走审批（P1d）。 */
+  outward?: boolean;
   /** 逐次评估：看这次调用具体对谁动手、结果会不会流出本机、要不要打码。 */
   assess?: (args: z.output<S>) => ToolAssessment | Promise<ToolAssessment>;
   /**

@@ -228,6 +228,25 @@ test("接线守卫：两个引擎的外壳都是先套 instrument 再定义工�
   assert.match(mastra, /tools\.map\(instrument\)/, "Mastra 引擎必须经 instrument（咽喉）");
 });
 
+test("接线守卫：tanstack 引擎的 stateTools 也过咽喉（P1d，源码级）", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync("apps/server/src/engine/tanstack-agent.ts", "utf8");
+  // 这两个工具（AGUISendStateSnapshot / Delta）曾经被裸塞进 `chat({ tools })`，
+  // 因此绕过了拒绝名单、风险判定与审计。它们必须和其余工具走同一条收口路径。
+  assert.match(src, /forAgUi\(stateTools/, "stateTools 必须先过 forAgUi → instrument（咽喉）");
+  assert.doesNotMatch(src, /\.\.\.stateTools\]/, "不许再把裸 stateTools 直接交给运行时");
+});
+
+test("接线守卫：JEV 工具文件写明收口约束（当前无消费者，P1d）", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync("apps/server/src/jev/tools.ts", "utf8");
+  assert.match(
+    src,
+    /必须经[\s\S]{0,80}instrument/,
+    "JEV 工具必须写明「消费者必须经 instrument/咽喉」；接上时不许直接 tool.execute()",
+  );
+});
+
 test("接线守卫：真正执行工具的地方只有这 4 个文件（多一个就说明有人绕过咽喉）", async () => {
   const { execFileSync } = await import("node:child_process");
   const { readFileSync } = await import("node:fs");

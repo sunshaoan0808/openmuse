@@ -21,6 +21,13 @@
 import { randomBytes } from "node:crypto";
 import { readToolDenyList } from "../config.ts";
 import {
+  clearTaint,
+  markTaint,
+  taintOf,
+  taintReason,
+  taintRequiresApproval,
+} from "./taint.ts";
+import {
   type ApprovalBackend,
   type GrantRecord,
   pendingApprovalMessage,
@@ -52,6 +59,10 @@ export interface ToolAssessment {
 export interface ToolPolicy {
   name: string;
   risk?: ToolRisk;
+  /** 会读到私有数据（邮箱正文、文件、截图…）：放行执行时给线程打污点（P1d）。 */
+  readsPrivate?: boolean;
+  /** 会把东西发出去（建号 / 提交表单 / 推远端…）：线程有污点时一律走审批（P1d）。 */
+  outward?: boolean;
   assess?: (args: unknown) => ToolAssessment | Promise<ToolAssessment>;
   execute: (args: never) => Promise<unknown>;
 }
@@ -380,6 +391,9 @@ export async function runToolCall(
   const granted: GrantRecord | null = backend
     ? await backend.acquireGrant({ owner, tool: tool.name, threadId })
     : null;
+  // 授权命中、且这次是**外发**动作 → 用户的点头覆盖了"用私有数据外发"，清掉污点（once 语义，P1d §2.3）。
+  // 放在这里是因为它紧跟授权：只有真的靠授权放行的外发才清，别的路径都不动污点。
+  if (granted && tool.outward) clearTaint(owner, threadId);
 
   // 3) 评估：静态 risk + 逐次 assess 合并（assess 说的算）。P0 语义一字未改。
   let assessment: ToolAssessment = { risk: tool.risk ?? "safe" };
@@ -404,15 +418,21 @@ export async function runToolCall(
     }
   }
 
-  // 4) 要拦就拦：敏感能力 / 结果外流 / 声明了要人先看的警告。
+  // 3.5) 污点（P1d）：线程读过私有数据时，**外发动作即使档位不高也要人点头**。
+  //      读类工具不受影响 —— 否则读完私有数据的那一刻，下一次读自己就被拦住了。
+  const taint = taintOf(owner, threadId);
+  const taintForced = taintRequiresApproval(taint, tool);
+
+  // 4) 要拦就拦：敏感能力 / 结果外流 / 声明了要人先看的警告 / 线程带污点还要外发。
   //    有 grant 的调用走不到这里（P1b 第 2 步已放行）；没 grant → **登记一条待审批**，
   //    再回灌「等待审批」文案（别重试 / 已通知用户 / 批了同一个调用就会成功）。
   //
   //    `!granted` 是承重的一环：第 2 步命中授权时必须真的**放行**（单子 §2.2 判定顺序的第 2 条）。
   //    少了它，`needsApproval` 照样成立 —— 用户批准了还是被拦，而那条 `once` 授权
   //    已经在第 2 步被消耗掉，等于批准了个寂寞（这正是本用例钉住的那条）。
-  if (!granted && needsApproval(assessment)) {
-    const reason = pendingReason(assessment);
+  if (!granted && (needsApproval(assessment) || taintForced)) {
+    const reason =
+      taintForced && taint ? taintReason(taint, tool.name) : pendingReason(assessment);
     if (backend) {
       // 登记的参数摘要**已经按评估结论脱敏 + 截断**，与审计行、与模型看到的内容一致。
       const approval = await backend.registerApproval({
@@ -451,6 +471,10 @@ export async function runToolCall(
 
   // 5) 放行 → 执行（工具自己的错误原样抛出，本模块不吞）
   //    审计的 decision 记 `granted:<scope>`，所以复盘时一眼分得出「靠授权放的」还是「本来就能放」。
+  //
+  //    读私有数据的工具**在执行前**打污点（fail closed）：万一执行到一半抛错，"这次会话已经看到了私有数据"
+  //    这个事实也依然成立，之后的往外发必须继续要人点头。
+  if (tool.readsPrivate) markTaint(owner, threadId, tool.name);
   const decision = granted ? `granted:${granted.scope}` : "ok";
   try {
     const raw = await tool.execute(args as never);

@@ -1,3 +1,13 @@
+/**
+ * JEV 模式的工具定义（`present_choices` 等）。
+ *
+ * **收口约束（P1d）**：这些工具同样是"模型能调用的工具"，被接上时必须经 `tool-kit.ts` 的
+ * `instrument`（→ `tool-executor.ts` 的咽喉：拒绝名单 / 风险评估 / 审计 / 污点判定），
+ * 也就是先用 `forAgUi` / `forMastra` 包装再交给运行时 —— **不许直接 `tool.execute()`**。
+ *
+ * 当前 `JEV_MODE=off`、还没有消费者引用本文件；约束从写下这一刻起生效，
+ * 并由 `tests/tool-executor.test.ts` 的接线守卫读这段说明来兜住（删掉它守则会红）。
+ */
 import { defineTool } from "@copilotkit/runtime/v2";
 import { z } from "zod";
 import { type JevToolResult, jevOptionSchema } from "../../../../packages/domain/src/jev.ts";

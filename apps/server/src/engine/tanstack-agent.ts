@@ -13,6 +13,7 @@ import { type OpenAIChatModel, openaiText } from "@tanstack/ai-openai";
 import { map, mergeMap, type Observable } from "rxjs";
 import { z } from "zod";
 import { MODEL_MAX_RETRIES } from "../config.ts";
+import { forAgUi, type NeutralTool } from "./tool-kit.ts";
 
 // Same "provider/model" strings, env vars and base URL formats as the AI SDK resolver in
 // @copilotkit/runtime. Each provider SDK retries transient failures up to MODEL_MAX_RETRIES times.
@@ -106,6 +107,11 @@ export function tanstackAgent(options: {
   /** Said when the step limit, not the model, ends a run; otherwise the reply just stops. */
   stepLimitNote?: string;
 }) {
+  // stateTools 来自 CopilotKit 的 `defineTool`（AGUISendStateSnapshot / AGUISendStateDelta）。
+  // 它们同样是"模型能调用的工具"，所以必须与其余工具走**同一条收口路径**：先过 `forAgUi`
+  // （内部 `instrument` → 咽喉：拒绝名单 / 风险评估 / 审计），再交给运行时。
+  // 这里原来是裸的 `tool.execute` —— 那两个工具因此绕过了咽喉（P1d 修）。
+  const wrappedStateTools = forAgUi(stateTools as unknown as NeutralTool[]);
   const agent = new BuiltInAgent({
     type: "tanstack",
     factory: ({ input, abortController }) => {
@@ -128,7 +134,7 @@ export function tanstackAgent(options: {
         systemPrompts: system ? [system] : [],
         tools: [
           ...converted.tools,
-          ...[...options.tools, ...stateTools].map((tool) =>
+          ...[...options.tools, ...wrappedStateTools].map((tool) =>
             toolDefinition({
               name: tool.name,
               description: tool.description,
