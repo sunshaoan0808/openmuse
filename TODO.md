@@ -237,3 +237,19 @@
 - ⚠ **教训（写进派单规范）**：① 第 1 轮在"正要写测试文件"处收工（实现已改 +325/−15，但 0 新测试、0 回报）→ 发返工单后补齐；
       ② 它在**自己的沙箱里**跑全量测试得 627/9 并归因"内核不许 user namespace"，派单方在沙箱外实测 636/636 全绿 ——
       **agent 自述的门禁数字不可信，正反两个方向都会错**；③ harness 写文件带 umask 077，产出的测试文件是 600，并入主仓要 `chmod 644`。
+
+### P1c App 侧审批入口 + 工具风险标注（派单三轮被网关吃光，由派单方接手实现）
+
+- [x] App 侧：`apps/mobile/src/approvals.ts`（纯逻辑：pending 过滤/时间倒序/坏行兜底/三档标签/非法 scope 本地拦/幂等键）、
+      `api.ts` 三个方法（listApprovals / approveApproval / denyApproval，POST 带幂等键、沿用 401 续期重试）、
+      `approval-card.tsx`（形制对齐 activity-card 的任务行）、并入 `ActivityScreen`（"等你复核"计数含待审批 +
+      "等你确认"区块，沿用 `BUSY_POLL_MS` 轮询，取不到时安静降级）；未碰 `chat.tsx`、无新页面/导航/配色/依赖。
+- [x] 门禁：`pnpm test` **646/646**（基线 636 + 新增 10）、`pnpm typecheck` 根+mobile 退出码 0；提交 `a373f79` 推 fork。
+- [x] **工具风险标注**（策略项，用户点头后执行）：`page_act` / `site_account` / `git_push` → `sensitive`（拦下 + 待审批）；
+      `git_commit` / `workspace_write_file` / `workspace_edit_file` / `save_document` / `delegate_task` / `create_goal` /
+      `remember_fact` / `search_mail` / `read_mail_thread` / `read_image` → `moderate`（放行但必进审计）。共 13 个。
+- [x] 线上真实链路验证（真工具 `site_account`）：拦下（`outcome=awaiting_approval` + pending 行）→ REST 批准 `once`
+      （写出 grant）→ 同一提示再跑**工具真执行**（`outcome=ok|sensitive`，真写出 `site_accounts` 记录）；测试数据已清理。
+- ⚠ 未覆盖：桌面控制类工具（`computer-tools.ts` 那批）不在咽喉内，标不了（P1d 缺口）；`read_pages`/`page_elements` 等
+  只读浏览类暂标默认（`safe`），等污点追踪（P1d）再决定要不要提升。
+- ⚠ 又一次实锤：网关 `Service temporarily overloaded` 时 OpenMuse 收空回合却记 `succeeded` —— 见上文"空 content 判成功"病根。
