@@ -1,5 +1,10 @@
 import * as FileSystem from "expo-file-system/legacy";
 import { Platform } from "react-native";
+import {
+  type ApprovalScope,
+  approveIdempotencyKey,
+  denyIdempotencyKey,
+} from "./approvals";
 
 /** Build-time default. Override with EXPO_PUBLIC_API_URL when building the APK. */
 export const BUILD_API_URL = (
@@ -175,6 +180,36 @@ export class MuseApi {
       return payload;
     });
   }
+  /**
+   * 待审批列表（P1b 服务端）：取数用会话身份，服务端只返回本 owner 的。
+   * 返回体原样交给 `parseApprovals` 过滤/排序/兜底 —— 这里不做形状假设。
+   */
+  listApprovals(limit = 50) {
+    return this.request<unknown>(`/approvals?limit=${limit}`);
+  }
+
+  /** 批准一条待审批。档位只认 `once` / `session` / `24h`（非法档位服务端 400，界面侧先挡一道）。 */
+  approveApproval(id: string, scope: ApprovalScope) {
+    return this.request<unknown>(
+      `/approvals/${encodeURIComponent(id)}/approve`,
+      { scope },
+      "POST",
+      // 幂等键：同一条审批 + 同一档位重复提交只生效一次（链路抖动重发不会多写一条授权）
+      { idempotencyKey: approveIdempotencyKey(id, scope) },
+    );
+  }
+
+  /** 拒绝一条待审批：只置状态，**不产生任何放行**。 */
+  denyApproval(id: string, reason?: string) {
+    const trimmed = (reason ?? "").trim();
+    return this.request<unknown>(
+      `/approvals/${encodeURIComponent(id)}/deny`,
+      trimmed ? { reason: trimmed } : {},
+      "POST",
+      { idempotencyKey: denyIdempotencyKey(id) },
+    );
+  }
+
   /** 取一段文本（例如智能体写出来的 .md/.txt 文件内容）。内容接口返回的是正文，不是 JSON。 */
   async text(path: string): Promise<string> {
     const url = `${apiUrl()}${path}`;

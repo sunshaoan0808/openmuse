@@ -21,6 +21,9 @@ import {
   Upload,
 } from "lucide-react-native";
 import { useEffect, useState } from "react";
+import { ApprovalRow } from "./approval-card";
+import { type ApprovalScope, type PendingApproval, parseApprovals } from "./approvals";
+import { BUSY_POLL_MS } from "./poll-cadence";
 import {
   ActivityIndicator,
   Image,
@@ -1130,10 +1133,45 @@ export function FilesScreen() {
   );
 }
 export function ActivityScreen() {
-  const { workspace: w, open } = useWorkspace();
+  const { workspace: w, open, api, refresh, notify } = useWorkspace();
   const [filter, setFilter] = useState("all");
+  // 待审批（P1b 服务端）：跟活动页一起轮询。取不到时安静降级成空列表 —— 不弹错、不挡别的区块。
+  const [approvals, setApprovals] = useState<PendingApproval[]>([]);
+  const [busy, setBusy] = useState<{ id: string; scope: ApprovalScope | "deny" } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try {
+        const payload = await api.listApprovals();
+        if (alive) setApprovals(parseApprovals(payload));
+      } catch {
+        if (alive) setApprovals([]);
+      }
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), BUSY_POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [api]);
   const pending = w.actions.filter((a) => a.status === "awaiting_review");
   const actions = w.actions.filter((a) => filter === "all" || a.status === "awaiting_review");
+  /** 批准 / 拒绝一条：成功后本地立刻移除（不等下一次轮询）；失败保留该行并提示一次。 */
+  const decide = async (approval: PendingApproval, scope: ApprovalScope | "deny") => {
+    if (busy) return;
+    setBusy({ id: approval.id, scope });
+    try {
+      if (scope === "deny") await api.denyApproval(approval.id);
+      else await api.approveApproval(approval.id, scope);
+      setApprovals((prev) => prev.filter((a) => a.id !== approval.id));
+      void refresh();
+    } catch {
+      notify("这条审批没提交成功，请稍后再试");
+    } finally {
+      setBusy(null);
+    }
+  };
   return (
     <View style={{ gap: 20 }}>
       <View style={[s.row, { gap: 10 }]}>
@@ -1141,9 +1179,23 @@ export function ActivityScreen() {
           全部动态
         </Button>
         <Button small primary={filter === "review"} onPress={() => setFilter("review")}>
-          等你复核 · {pending.length}
+          等你复核 · {pending.length + approvals.length}
         </Button>
       </View>
+      {approvals.length > 0 && (
+        <Card>
+          <SectionHeading title="等你确认" />
+          {approvals.map((a) => (
+            <ApprovalRow
+              key={a.id}
+              approval={a}
+              busy={busy && busy.id === a.id ? busy.scope : null}
+              onDecide={(scope) => void decide(a, scope)}
+              onDeny={() => void decide(a, "deny")}
+            />
+          ))}
+        </Card>
+      )}
       {actions.length > 0 && (
         <Card>
           <SectionHeading title="你的操作" />
