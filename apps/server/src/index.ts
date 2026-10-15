@@ -4,6 +4,7 @@ import { createApp } from "./app.ts";
 import type { ChatTurn } from "./chat-turns.ts";
 import { readConfig } from "./config.ts";
 import { createStore } from "./db.ts";
+import { attachAuditStore, flushAuditSink } from "./engine/audit-store.ts";
 import { startTurnResumer } from "./engine/turn-resume.ts";
 
 const config = readConfig();
@@ -29,6 +30,11 @@ const db = await createStore({
   dataDir: `${config.dataDir}/postgres`,
   databaseUrl: config.databaseUrl,
 });
+// 审计落库：咽喉产出的每条审计事件写成 records 一行（单子 §1.2）。
+// 优雅降级：接不上就只保留控制台那一行 `[audit] …`（tool-executor.ts 里一字未改），
+// **绝不让审计可用性决定服务起不起来**。
+if (!attachAuditStore(db))
+  console.error("[audit-persist] 审计只落控制台，查询接口 /audit 会返回空列表。");
 await db.recoverInterruptedActions();
 // 上次没跑完的对话轮次：进程已经重启，它们不可能还在跑——标成 interrupted，
 // 免得 App 重连后一直等一条永远不会来的回复。
@@ -68,8 +74,10 @@ const server = serve({ fetch: app.fetch, port: config.port, hostname: config.hos
 const shutdown = () => {
   stopTurnResumer();
   server.close(() => {
-    void agent
-      .stop()
+    // 先把在途的审计写完再关库，免得退出这一刻的审计随进程一起消失（只影响关停，不影响工具耗时）。
+    void flushAuditSink()
+      .catch(() => {})
+      .then(() => agent.stop())
       .then(() => db.close())
       .then(() => process.exit(0));
   });

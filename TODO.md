@@ -204,3 +204,19 @@
       污点追踪（读私有数据后外发强制审批）→ 审计落库（Activity 可查「为什么被拦」）。
 - [ ] **已知缺口**：自带引擎的 `stateTools`（`AGUISendStateSnapshot/Delta`，纯客户端状态搬运）与 JEV 路径
       （`jev/tools.ts`，`JEV_MODE=off`）尚未纳入咽喉；现有工具**尚未**标 `sensitive`/`moderate`（策略决策，另单）。
+
+### P1a 审计落库（已派单 dsh 完成；门禁与线上实测由派单方执行）
+
+- [x] 咽喉每条判定落 Postgres `records`（`kind='audit'`）：字段含 `tool/owner/threadId/risk/outcome/target/egress/durationMs`
+    与**被拦时的 `reason`**；查询入口 `GET /audit` 与 `GET /api/audit`（取数用会话 owner，`?owner=` 只做一致性校验，
+    不一致返回 403 —— 防读越权，比原单更严）。
+- [x] 控制台 `[audit] …` 行**一字未改**；`persistAudit` 不 await、同步抛错与异步 reject 都吞掉 →
+    工具返回值/抛错实例/耗时不受落库影响（硬契约，单测用同一性断言钉死）。
+- [x] 门禁（派单方自己跑）：副本与主仓均 `pnpm test` **616/616**（基线 597 + 新增 19）、`pnpm typecheck` 退出码 0；
+    `tests/` 既有文件未被改、无 `.bak` 垃圾、源码级守卫「执行点只有那 4 个文件」保持绿。
+- [x] 线上真落库实测（重启 `openmuse.service` 后）：`browse_web` 一轮 → 库里 `…|browse_web|ok|safe|-|3426ms`；
+    systemd 注入 `TOOL_DENY_LIST=browse_web` 再跑 → `…|browse_web|blocked|safe|工具「browse_web」在拒绝名单里|1ms`（0ms=连执行都没执行）。
+- ⚠ **踩坑记录（查明是我自己的操作失误，非应用问题）**：`.env` 原本**不以换行结尾**，我用 `echo >>` 追加
+      `TOOL_DENY_LIST` 时把它**粘到了 `SEDIMENT_MODEL` 行尾**，于是名单没生效、还把 `SEDIMENT_MODEL` 写脏（已修复并复核）。
+      按行正确追加后，`.env` 路径**正常生效**（实测 `outcome=denied (0ms)` + 库里 `blocked` + reason）。
+      **教训：往这类无尾换行的 `.env` 追加键值前先补换行；还原时不能只按行首匹配删。**

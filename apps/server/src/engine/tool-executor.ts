@@ -11,6 +11,7 @@
  *
  * 本模块只依赖结构类型，不 import tool-kit.ts —— 免得与接线处形成运行时环。
  */
+import { randomBytes } from "node:crypto";
 import { readToolDenyList } from "../config.ts";
 
 /** 静态风险档位：`moderate` 放行但一定进审计；`sensitive` 默认不放行（P0 没有审批入口）。 */
@@ -55,6 +56,135 @@ export interface ExecutorDeps {
 }
 
 const defaultAudit = (line: string) => console.log(line);
+
+// ---------------------------------------------------------------------------
+// 审计落库（P1a）：上面那行 `[audit] …` 控制台输出**一字不改**（线上日志依赖它），
+// 这里在同一条咽喉上**另开一条出口**把结构化事件送出去，落 Postgres 的 records 表。
+//
+// 硬契约（与 P0 的行为契约同级）：落库失败**绝不**影响工具的返回值 / 抛错实例 /
+// 错误形状 / 耗时语义 —— 同步抛错接住，异步失败自己吞掉，只留一行日志。
+// 因此 `persistAudit` 是 fire-and-forget：调用方**不 await**，工具的耗时不含写库时间。
+// ---------------------------------------------------------------------------
+
+/** 落库的判定结果：放行 / 被拦 / 工具自己出错。（控制台行仍用 denied/refused/… 的细粒度词） */
+export type AuditOutcome = "ok" | "blocked" | "error";
+
+/** 落库的一行审计。字段与单子 §1 对齐；未发生的一律写 `null`，不省略，便于查询。 */
+export interface AuditEvent {
+  /** 时间有序、可读：`<17位时间戳>-<8位随机十六进制>`。字典序 == 时间序。 */
+  id: string;
+  /** ISO 时间戳。 */
+  at: string;
+  tool: string;
+  owner: string;
+  threadId: string | null;
+  risk: ToolRisk;
+  outcome: AuditOutcome;
+  /** 控制台行的细粒度判定（`denied`/`refused`/`assess_failed`/`ok`/`error`），排障时看它。 */
+  decision: string;
+  target: string | null;
+  egress: "none" | "allow" | "review";
+  egressTarget: string | null;
+  summary: string | null;
+  /** 被拦时才有人话理由；放行/出错时为 null。 */
+  reason: string | null;
+  durationMs: number;
+  /** 本次调用的参数摘要（**已按评估结论脱敏**）。 */
+  args: unknown;
+  /** 工具结果摘要（**已按评估结论脱敏**，且已截断）。 */
+  result: unknown;
+}
+
+/** 审计出口。允许返回 Promise，但调用方不 await（见上面的硬契约）。 */
+export type AuditSink = (event: AuditEvent) => void | Promise<void>;
+
+/** 缺 owner 时用的占位 owner，与 Auth.session() 落库的 `local-user` 保持一致。 */
+export const AUDIT_FALLBACK_OWNER = "local-user";
+
+let auditSink: AuditSink | null = null;
+/** 在途的落库 promise，只为关停时兜底；热路径不 await 它。 */
+const inFlight = new Set<Promise<void>>();
+
+/** 接上审计出口（服务启动时调用）；传 null 摘掉，退回「只留控制台那行」。 */
+export function setAuditSink(sink: AuditSink | null): void {
+  auditSink = sink;
+}
+
+/** 当前挂着的审计出口（没接时为 null）。 */
+export function getAuditSink(): AuditSink | null {
+  return auditSink;
+}
+
+/**
+ * 关停兜底：等服务退出前把在途的落库写完，避免最后一两条审计随进程一起消失。
+ * 只在 shutdown 里 await —— 工具热路径永远不碰它。
+ */
+export async function flushAuditSink(): Promise<void> {
+  while (inFlight.size) await Promise.all([...inFlight]);
+}
+
+/** 审计事件 id：时间戳（可读、可排序）+ 随机短串（同毫秒内不撞）。 */
+export function auditEventId(at: string): string {
+  return `${at.replace(/[-:.TZ]/g, "")}-${randomBytes(4).toString("hex")}`;
+}
+
+const AUDIT_MAX_TEXT = 200;
+const AUDIT_MAX_KEYS = 8;
+const AUDIT_MAX_ITEMS = 3;
+const AUDIT_MAX_DEPTH = 3;
+
+/**
+ * 落库前的结构摘要：限制深度/键数/条数/文本长度，免得一行工具结果把库撑爆、
+ * 也不至于把整页正文抄进审计表。**脱敏必须在这之前做完**（调用方传进来的就是脱敏后的值）。
+ */
+function auditSnapshot(value: unknown, depth = 0): unknown {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string")
+    return value.length > AUDIT_MAX_TEXT ? `${value.slice(0, AUDIT_MAX_TEXT)}…` : value;
+  if (typeof value !== "object") return value;
+  if (Array.isArray(value))
+    return depth >= AUDIT_MAX_DEPTH
+      ? `[array:${value.length}]`
+      : value.slice(0, AUDIT_MAX_ITEMS).map((item) => auditSnapshot(item, depth + 1));
+  if (depth >= AUDIT_MAX_DEPTH) return `{keys:${Object.keys(value as object).length}}`;
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>).slice(
+    0,
+    AUDIT_MAX_KEYS,
+  ))
+    out[key] = auditSnapshot(item, depth + 1);
+  return out;
+}
+
+/** 给外部（测试/其它模块）复用的摘要器。 */
+export const summarizeAuditValue = auditSnapshot;
+
+/**
+ * 送一条审计出去 —— **绝不影响调用方**。
+ * 同步抛错接住、异步 reject 接住，各留一行 `[audit-persist]` 日志；成功则不记日志（免得刷屏）。
+ * 注意这里**不 await 返回的 promise**：工具耗时不因写库而变，这是本模块的硬契约。
+ */
+export function persistAudit(event: AuditEvent): void {
+  const sink = auditSink;
+  if (!sink) return;
+  try {
+    const settled = Promise.resolve(sink(event)).catch((error: unknown) => {
+      console.error(
+        `[audit-persist] 审计写入失败 id=${event.id} tool=${event.tool}：${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+    inFlight.add(settled);
+    void settled.finally(() => inFlight.delete(settled));
+  } catch (error) {
+    console.error(
+      `[audit-persist] 审计出口抛错 id=${event.id} tool=${event.tool}：${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
 
 /**
  * 拒绝名单：命中的工具**一律不发**，连执行都不执行。
@@ -144,10 +274,42 @@ export async function runToolCall(
       assessment.egressTarget ?? "-"
     }`;
 
+  /**
+   * 送一条落库审计（结构化，与上面那行控制台输出并行，两条出口互不影响）。
+   * `redacted` 传的是**已经按评估结论打码过**的值 —— 落库内容必须与模型看到的一致。
+   */
+  const emit = (
+    outcome: AuditOutcome,
+    decision: string,
+    assessment: ToolAssessment,
+    extra: { reason?: string | null; args?: unknown; result?: unknown } = {},
+  ) => {
+    const at = new Date().toISOString();
+    persistAudit({
+      id: auditEventId(at),
+      at,
+      tool: tool.name,
+      owner: ctx.owner ?? AUDIT_FALLBACK_OWNER,
+      threadId: ctx.threadId ?? null,
+      risk: assessment.risk ?? tool.risk ?? "safe",
+      outcome,
+      decision,
+      target: assessment.target ?? null,
+      egress: assessment.egress ?? "none",
+      egressTarget: assessment.egressTarget ?? null,
+      summary: assessment.summary ?? null,
+      reason: extra.reason ?? null,
+      durationMs: Date.now() - started,
+      args: auditSnapshot(redactResult(args, assessment)),
+      result: auditSnapshot(extra.result ?? null),
+    });
+  };
+
   // 1) 拒绝名单
   const denied = decideDeny(tool.name, deps.denyList);
   if (denied) {
     line("outcome=denied");
+    emit("blocked", "denied", { risk: tool.risk ?? "safe" }, { reason: denied, args });
     throw new Error(
       blockedMessage(tool.name, denied, "改用一个在允许范围内的工具，或者把这件活交给用户自己决定。"),
     );
@@ -162,6 +324,10 @@ export async function runToolCall(
     } catch (error) {
       // 评估自己坏了 → fail closed，不赌
       line(`outcome=assess_failed error=${error instanceof Error ? error.message : String(error)}`);
+      emit("blocked", "assess_failed", { risk: tool.risk ?? "safe" }, {
+        reason: "对这次调用的评估失败了，宁可拦住也不放行",
+        args,
+      });
       throw new Error(
         blockedMessage(
           tool.name,
@@ -175,6 +341,7 @@ export async function runToolCall(
   // 3) 要拦就拦：敏感能力 / 结果外流 / 声明了要人先看的警告（P0 一律拒批）
   if (needsApproval(assessment)) {
     line(`outcome=refused ${where(assessment)} summary=${assessment.summary ?? "-"}`);
+    emit("blocked", "refused", assessment, { reason: blockedReason(assessment), args });
     throw new Error(
       blockedMessage(
         tool.name,
@@ -188,13 +355,19 @@ export async function runToolCall(
   try {
     const raw = await tool.execute(args as never);
     line(`outcome=ok ${where(assessment)} summary=${assessment.summary ?? "-"}`);
-    return redactResult(raw, assessment);
+    const redacted = redactResult(raw, assessment);
+    emit("ok", "ok", assessment, { args, result: redacted });
+    return redacted;
   } catch (error) {
     line(
       `outcome=error ${where(assessment)} error=${
         error instanceof Error ? error.message.slice(0, 160) : String(error)
       }`,
     );
+    emit("error", "error", assessment, {
+      reason: error instanceof Error ? error.message : String(error),
+      args,
+    });
     throw error;
   }
 }

@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import pg from "pg";
 import { AppError } from "./errors.ts";
+import type { AuditEvent } from "./engine/tool-executor.ts";
 import { backgroundFailure } from "./log.ts";
 
 type Row = { data: Record<string, unknown> };
@@ -49,6 +50,37 @@ export async function recoverRows<T>(
     console.error(`[db] ${label} 共跳过 ${skipped} 行损坏数据（其余 ${rows.length} 行正常返回）`);
   return rows;
 }
+/** 审计查询的过滤条件：`threadId` 不给就是该 owner 的全部会话；`limit` 有上限，别让人拉爆内存。 */
+export interface AuditQuery {
+  threadId?: string;
+  limit?: number;
+}
+
+export const AUDIT_DEFAULT_LIMIT = 100;
+export const AUDIT_MAX_LIMIT = 500;
+
+/** 把库里读回来的审计行补齐成「未发生的字段一律 null」的形状，查询方不用到处判空。 */
+export function normalizeAudit(row: Partial<AuditEvent> & { id: string }): AuditEvent {
+  return {
+    id: row.id,
+    at: typeof row.at === "string" ? row.at : "",
+    tool: typeof row.tool === "string" ? row.tool : "",
+    owner: typeof row.owner === "string" ? row.owner : "",
+    threadId: typeof row.threadId === "string" ? row.threadId : null,
+    risk: row.risk ?? "safe",
+    outcome: row.outcome ?? "ok",
+    decision: row.decision ?? "ok",
+    target: typeof row.target === "string" ? row.target : null,
+    egress: row.egress ?? "none",
+    egressTarget: typeof row.egressTarget === "string" ? row.egressTarget : null,
+    summary: typeof row.summary === "string" ? row.summary : null,
+    reason: typeof row.reason === "string" ? row.reason : null,
+    durationMs: typeof row.durationMs === "number" ? row.durationMs : 0,
+    args: row.args ?? null,
+    result: row.result ?? null,
+  };
+}
+
 export class Store {
   constructor(private readonly db: Database) {}
   async get<T = Record<string, unknown>>(
@@ -102,6 +134,54 @@ export class Store {
       [owner, kind, value.id, JSON.stringify(value)],
     );
     return value;
+  }
+  /**
+   * 写一条审计（单子 §1.1）。就是普通 `records` 一行：`kind='audit'`，owner 取调用上下文，
+   * 缺失时咽喉已经填了 `local-user`。
+   *
+   * 与 `put` 同一个 INSERT 形状，**不额外加重试/事务** —— 咽喉那边是 fire-and-forget 的，
+   * 这里失败只会被咽喉记一行日志，不影响工具行为。
+   */
+  async putAudit(event: AuditEvent): Promise<AuditEvent> {
+    return this.put(event.owner, "audit", event);
+  }
+  /**
+   * 查审计（单子 §1.4）：按 owner 取，可按 threadId 过滤，按 limit 限量，**最近的在前**。
+   * 只读：不加锁、不写任何东西。行坏了走 `recoverRows` 跳过，跟 `list` 同一套降级。
+   */
+  async listAudit(owner: string, options: AuditQuery = {}): Promise<AuditEvent[]> {
+    const threadId = options.threadId?.trim() || null;
+    const limit = Math.min(
+      Math.max(Math.trunc(options.limit ?? AUDIT_DEFAULT_LIMIT), 1),
+      AUDIT_MAX_LIMIT,
+    );
+    const filter = "owner=$1 AND kind='audit' AND ($2::text IS NULL OR data->>'threadId'=$2)";
+    try {
+      const result = await this.db.query(
+        `SELECT data FROM records WHERE ${filter} ORDER BY updated_at DESC,id DESC LIMIT $3`,
+        [owner, threadId, limit],
+      );
+      return result.rows.map((row) => normalizeAudit(row.data as { id: string }));
+    } catch (error) {
+      return recoverRows<AuditEvent>(
+        "listAudit",
+        error,
+        async () => {
+          const ids = await this.db.query(
+            `SELECT ctid::text AS ctid FROM records WHERE ${filter} ORDER BY updated_at DESC,id DESC LIMIT $3`,
+            [owner, threadId, limit],
+          );
+          return (ids.rows as unknown as { ctid: string }[]).map((row) => String(row.ctid));
+        },
+        async (ctid) => {
+          const row = await this.db.query(
+            "SELECT data FROM records WHERE ctid=$1",
+            [ctid],
+          );
+          return normalizeAudit(row.rows[0]?.data as { id: string });
+        },
+      );
+    }
   }
   async remove(owner: string, kind: string, id: string): Promise<void> {
     await this.db.query("DELETE FROM records WHERE owner=$1 AND kind=$2 AND id=$3", [

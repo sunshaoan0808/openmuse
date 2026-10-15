@@ -40,7 +40,7 @@ import { extractTurnTexts, sedimentTurnMemories } from "./engine/memory-sediment
 import { ComputerService, type DockerRunner } from "./computer.ts";
 import { computerRoutes } from "./computer-routes.ts";
 import { assertApiDeploymentConfig, type Config, intelligenceConfigured } from "./config.ts";
-import type { Store } from "./db.ts";
+import { AUDIT_MAX_LIMIT, type AuditQuery, type Store } from "./db.ts";
 import { DurableAgentRunner } from "./engine/durable-runner.ts";
 import { agentRoutes } from "./engine/routes.ts";
 import { AgentService } from "./engine/service.ts";
@@ -235,7 +235,9 @@ export async function createApp(
       "<h1>Google is connected</h1><p>Return to OpenMuse and refresh your workspace.</p>",
     );
   });
-  app.use("/api/*", async (c, next) => {
+  // 审计查询挂在裸路径 `/audit`（单子 §1.4 写的路径），它不在 `/api/*` 里，
+  // 所以两条路径都挂上同一个鉴权中间件 —— `/audit` 的 `owner` 才有值。
+  const ownerFromSession: Handler<{ Variables: { owner: string } }> = async (c, next) => {
     const signedRoute =
       /^\/api\/files\/[^/]+\/content$|^\/api\/browsers\/[^/]+\/(?:preview|console)$/.test(
         c.req.path,
@@ -246,7 +248,9 @@ export async function createApp(
         : await auth.owner(c.req.header("authorization"));
     c.set("owner", owner);
     await next();
-  });
+  };
+  app.use("/api/*", ownerFromSession);
+  app.use("/audit", ownerFromSession);
   /**
    * 链接预览（对标 Muse 的 `HatchLinkPreviewKt`）：只取标题/描述，不抓缩略图。
    *
@@ -344,6 +348,29 @@ export async function createApp(
     );
   });
   app.get("/api/drafts", async (c) => c.json(await db.list(c.get("owner"), "drafts")));
+  // 审计查询（单子 §1.4，**只读**）：为什么这次工具调用被拦，复盘时全靠它。
+  // owner 一律取会话里的那个（`c.get("owner")`）—— query 里那个 `owner` 只做一致性校验，
+  // 不作为取数依据，否则这条只读接口就成了跨用户读审计的后门。
+  const auditQuerySchema = z.object({
+    owner: z.string().trim().min(1).optional(),
+    threadId: z.string().trim().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(AUDIT_MAX_LIMIT).optional(),
+  });
+  const readAudit: Handler<{ Variables: { owner: string } }> = async (c) => {
+    const owner = c.get("owner");
+    const query = auditQuerySchema.parse(c.req.query());
+    if (query.owner && query.owner !== owner)
+      throw new AppError("只能查看自己的审计记录。", 403);
+    const filters: AuditQuery = {
+      ...(query.threadId ? { threadId: query.threadId } : {}),
+      ...(query.limit ? { limit: query.limit } : {}),
+    };
+    return c.json({ audit: await db.listAudit(owner, filters) });
+  };
+  // 单子写的路径是 `/audit`；仓库其余读接口都在 `/api/*` 下（带会话鉴权中间件）。
+  // 两条都注册，共用同一个 handler，鉴权口径也一致。
+  app.get("/api/audit", readAudit);
+  app.get("/audit", readAudit);
   app.post("/api/drafts", async (c) => {
     const body = emailDraftSchema.extend({ id: z.string().optional() }).parse(await c.req.json());
     const existing = body.id
