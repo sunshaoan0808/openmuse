@@ -220,3 +220,20 @@
       `TOOL_DENY_LIST` 时把它**粘到了 `SEDIMENT_MODEL` 行尾**，于是名单没生效、还把 `SEDIMENT_MODEL` 写脏（已修复并复核）。
       按行正确追加后，`.env` 路径**正常生效**（实测 `outcome=denied (0ms)` + 库里 `blocked` + reason）。
       **教训：往这类无尾换行的 `.env` 追加键值前先补换行；还原时不能只按行首匹配删。**
+
+### P1b 审批往返（服务端）（已派单 dsh 完成；门禁与线上实测由派单方执行）
+
+- [x] 三种授权语义落 Postgres `kind='grants'`：`once`（下一次同工具/同线程调用放行，**原子消耗**，并发只过一次）、
+      `session`（同 thread + 同进程实例，重启即失效）、`24h`（`expiresAt=授权时刻+24h`，owner 内任意线程）。
+- [x] 咽喉判定顺序：**拒绝名单（最高优先，有名单即使有 grant 也拦，且不吃掉授权）** → 有效 grant 命中放行（审计记 `granted:<scope>`）
+      → 静态 risk / 逐次 assess → 无 grant 则登记 `kind='approvals'` 待审批 + 回灌「等待审批」文案（别重试 / 已通知用户 / 批准后同一调用会成功）。
+- [x] REST：`GET /approvals`、`POST /approvals/:id/approve {scope}`、`POST /approvals/:id/deny`，两种前缀（`/api/*` 与裸路径）都挂鉴权；
+      取数一律用会话 owner，非法 scope→400、别人的/不存在的 id→404。
+- [x] 门禁（派单方沙箱外自跑）：副本与主仓均 `pnpm test` **636/636**（基线 616 + 新增 20）、`pnpm typecheck` 退出码 0、
+      `[audit]` 行未动、源码级守卫「执行点只有那 4 个文件」保持绿、`tests/` 既有文件未被改、无垃圾文件。
+- [x] **线上三轮实测**（临时给 `browse_web` 加一行 `risk:"sensitive"`，脚本自动还原）：
+      拦（`outcome=awaiting_approval` + pending 行）→ `GET /approvals` 取到 → `approve{once}` 写出 grant →
+      放行（`outcome=granted:once`，`consumedAt` 落上）→ **再拦（新 pending）**；全链路语义正确。
+- ⚠ **教训（写进派单规范）**：① 第 1 轮在"正要写测试文件"处收工（实现已改 +325/−15，但 0 新测试、0 回报）→ 发返工单后补齐；
+      ② 它在**自己的沙箱里**跑全量测试得 627/9 并归因"内核不许 user namespace"，派单方在沙箱外实测 636/636 全绿 ——
+      **agent 自述的门禁数字不可信，正反两个方向都会错**；③ harness 写文件带 umask 077，产出的测试文件是 600，并入主仓要 `chmod 644`。

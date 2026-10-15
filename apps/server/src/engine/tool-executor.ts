@@ -1,8 +1,15 @@
 /**
- * 工具执行咽喉（Sentinel 式收口，P0 只做机制骨架）。
+ * 工具执行咽喉（Sentinel 式收口，P0 机制骨架 + P1b 审批往返）。
  *
- * 固定顺序，不许绕：
- *   拒绝名单 → 评估（静态 risk + 逐次 assess）→ 判定要拦就拦（拒批 + 人话理由）→ 放行 → 执行 → 结果脱敏 → 审计
+ * 固定顺序，不许绕（P1b §2，**顺序本身是硬要求**）：
+ *   1. 拒绝名单（**最高优先级：命中就不放行，哪怕用户已经批准过、有 grant 也不放行**）
+ *   2. 有效 grant 命中 → 直接放行，审计记 `granted:<scope>`；`once` 在这里被原子消耗
+ *   3. 评估（静态 risk + 逐次 assess，P0 语义一字未改）
+ *   4. 要拦但没有 grant → 登记一条待审批 + 回灌「等待审批」文案（别重试 / 已通知用户 / 批了就会成功）
+ *   5. 放行 → 执行 → 结果脱敏 → 审计
+ *
+ * 没有审批后端（`setApprovalBackend(null)`，服务没接上库）时，第 2/4 步整体退化为 P0 行为：
+ * 直接拒批 + 「当前没有可用的审批入口」。**已声明 risk/assess 的工具因此不会看到新文案。**
  *
  * **最关键的一条**：没声明 `risk` / `assess` 的工具，执行路径的可见行为必须与改造前**逐字一致**——
  * 返回值原样返回、抛错原样抛出（本模块**不 catch 工具的错**）。仓库里工具靠 `throw` 表达失败
@@ -13,9 +20,16 @@
  */
 import { randomBytes } from "node:crypto";
 import { readToolDenyList } from "../config.ts";
+import {
+  type ApprovalBackend,
+  type GrantRecord,
+  pendingApprovalMessage,
+  pendingReason,
+  type RiskLevel,
+} from "./approvals.ts";
 
-/** 静态风险档位：`moderate` 放行但一定进审计；`sensitive` 默认不放行（P0 没有审批入口）。 */
-export type ToolRisk = "safe" | "moderate" | "sensitive";
+/** 静态风险档位：`moderate` 放行但一定进审计；`sensitive` 需要审批（授权后可放行）。 */
+export type ToolRisk = RiskLevel;
 
 /** 一次调用的评估结果：静态声明与逐次评估合并后的观点。 */
 export interface ToolAssessment {
@@ -186,6 +200,45 @@ export function persistAudit(event: AuditEvent): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 审批后端（P1b）：与上面的审计出口同一套接法 —— 启动时装上，没装就退回 P0 的「直接拒批」。
+//
+// **降级同样是硬要求**：后端没接上（或登记待审批失败）时，被拦的工具仍然被拦，
+// 只是抛出的 Error 回到 P0 的那句「当前没有可用的审批入口」。绝不让审批的可用性
+// 决定工具能不能跑。
+// ---------------------------------------------------------------------------
+
+let approvalBackend: ApprovalBackend | null = null;
+
+/** 接上审批后端（服务启动时调用）；传 null 摘掉，退回 P0 的「直接拒批」。 */
+export function setApprovalBackend(backend: ApprovalBackend | null): void {
+  approvalBackend = backend;
+}
+
+/** 当前挂着的审批后端（没接时为 null）。REST 层用它判断审批入口是否可用。 */
+export function getApprovalBackend(): ApprovalBackend | null {
+  return approvalBackend;
+}
+
+/**
+ * 「等待审批」错误：与咽喉自己的「拦下」错误分开，好让调用方一眼分清
+ * 「这个工具被永久否决了」还是「它在等用户点头」（live-activity / 未来客户端要靠它分文案）。
+ *
+ * 消息由 `pendingApprovalMessage` 生成，三件事必须都在：**别重试同一调用 / 已通知用户 /
+ * 拿到授权后同一调用会成功**（单子 §2.4）。
+ */
+export class ToolApprovalPendingError extends Error {
+  constructor(
+    readonly tool: string,
+    /** 登记成功的那条待审批的 id（没登记上就没有）。 */
+    readonly approvalId: string | null,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ToolApprovalPendingError";
+  }
+}
+
 /**
  * 拒绝名单：命中的工具**一律不发**，连执行都不执行。
  * 纯函数，便于单测直接钉。
@@ -305,7 +358,10 @@ export async function runToolCall(
     });
   };
 
-  // 1) 拒绝名单
+  // 1) 拒绝名单 —— **最高优先级**。
+  //    命中就不放行，**哪怕用户已经批准过、哪怕有一条有效 grant**：
+  //    拒绝名单是运维侧的「这个能力在本部署上不存在」，授权是用户侧的「这次我同意」，
+  //    前者不能被后者覆盖。注意这里在 grant 查询**之前**返回（顺序即优先级）。
   const denied = decideDeny(tool.name, deps.denyList);
   if (denied) {
     line("outcome=denied");
@@ -315,9 +371,19 @@ export async function runToolCall(
     );
   }
 
-  // 2) 评估：静态 risk + 逐次 assess 合并（assess 说的算）
+  const owner = ctx.owner ?? AUDIT_FALLBACK_OWNER;
+  const threadId = ctx.threadId ?? null;
+
+  // 2) 有效 grant 命中 → 直接放行（P1b）。`once` 在这里被**原子**消耗，并发下只能过一个。
+  //    grant 命中时**跳过第 3 步的评估** —— 判定顺序是硬要求，第 3 步排在这个命中之后。
+  const backend = getApprovalBackend();
+  const granted: GrantRecord | null = backend
+    ? await backend.acquireGrant({ owner, tool: tool.name, threadId })
+    : null;
+
+  // 3) 评估：静态 risk + 逐次 assess 合并（assess 说的算）。P0 语义一字未改。
   let assessment: ToolAssessment = { risk: tool.risk ?? "safe" };
-  if (tool.assess) {
+  if (!granted && tool.assess) {
     try {
       const perCall = await tool.assess(args);
       assessment = { ...assessment, ...perCall, risk: perCall.risk ?? assessment.risk };
@@ -338,8 +404,40 @@ export async function runToolCall(
     }
   }
 
-  // 3) 要拦就拦：敏感能力 / 结果外流 / 声明了要人先看的警告（P0 一律拒批）
-  if (needsApproval(assessment)) {
+  // 4) 要拦就拦：敏感能力 / 结果外流 / 声明了要人先看的警告。
+  //    有 grant 的调用走不到这里（P1b 第 2 步已放行）；没 grant → **登记一条待审批**，
+  //    再回灌「等待审批」文案（别重试 / 已通知用户 / 批了同一个调用就会成功）。
+  //
+  //    `!granted` 是承重的一环：第 2 步命中授权时必须真的**放行**（单子 §2.2 判定顺序的第 2 条）。
+  //    少了它，`needsApproval` 照样成立 —— 用户批准了还是被拦，而那条 `once` 授权
+  //    已经在第 2 步被消耗掉，等于批准了个寂寞（这正是本用例钉住的那条）。
+  if (!granted && needsApproval(assessment)) {
+    const reason = pendingReason(assessment);
+    if (backend) {
+      // 登记的参数摘要**已经按评估结论脱敏 + 截断**，与审计行、与模型看到的内容一致。
+      const approval = await backend.registerApproval({
+        tool: tool.name,
+        owner,
+        threadId,
+        risk: assessment.risk ?? tool.risk ?? "safe",
+        reason,
+        args: auditSnapshot(redactResult(args, assessment)),
+      });
+      if (approval) {
+        line(
+          `outcome=awaiting_approval approval=${approval.id} ${where(assessment)} summary=${
+            assessment.summary ?? "-"
+          }`,
+        );
+        emit("blocked", "awaiting_approval", assessment, { reason, args });
+        throw new ToolApprovalPendingError(
+          tool.name,
+          approval.id,
+          pendingApprovalMessage(tool.name, reason),
+        );
+      }
+    }
+    // 没有审批后端（或登记失败）→ P0 语义：直接拒批，理由仍是那句「没有可用的审批入口」。
     line(`outcome=refused ${where(assessment)} summary=${assessment.summary ?? "-"}`);
     emit("blocked", "refused", assessment, { reason: blockedReason(assessment), args });
     throw new Error(
@@ -351,12 +449,14 @@ export async function runToolCall(
     );
   }
 
-  // 4) 放行 → 执行（工具自己的错误原样抛出，本模块不吞）
+  // 5) 放行 → 执行（工具自己的错误原样抛出，本模块不吞）
+  //    审计的 decision 记 `granted:<scope>`，所以复盘时一眼分得出「靠授权放的」还是「本来就能放」。
+  const decision = granted ? `granted:${granted.scope}` : "ok";
   try {
     const raw = await tool.execute(args as never);
-    line(`outcome=ok ${where(assessment)} summary=${assessment.summary ?? "-"}`);
+    line(`outcome=${decision} ${where(assessment)} summary=${assessment.summary ?? "-"}`);
     const redacted = redactResult(raw, assessment);
-    emit("ok", "ok", assessment, { args, result: redacted });
+    emit("ok", decision, assessment, { args, result: redacted });
     return redacted;
   } catch (error) {
     line(
@@ -364,7 +464,7 @@ export async function runToolCall(
         error instanceof Error ? error.message.slice(0, 160) : String(error)
       }`,
     );
-    emit("error", "error", assessment, {
+    emit("error", granted ? decision : "error", assessment, {
       reason: error instanceof Error ? error.message : String(error),
       args,
     });

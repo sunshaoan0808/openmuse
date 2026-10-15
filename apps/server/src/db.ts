@@ -3,6 +3,15 @@ import { dirname } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import pg from "pg";
 import { AppError } from "./errors.ts";
+import {
+  type ApprovalRecord,
+  APPROVAL_DEFAULT_LIMIT,
+  APPROVAL_MAX_LIMIT,
+  type ApprovalQuery,
+  type GrantRecord,
+  normalizeApproval,
+  normalizeGrant,
+} from "./engine/approvals.ts";
 import type { AuditEvent } from "./engine/tool-executor.ts";
 import { backgroundFailure } from "./log.ts";
 
@@ -183,6 +192,113 @@ export class Store {
       );
     }
   }
+  // -------------------------------------------------------------------------
+  // 授权 / 审批（P1b）。同样就是 `records` 表：授权是 `kind='grants'`、审批是 `kind='approvals'`，
+  // 都按 owner 分区 —— 谁的东西只有谁能查、谁能批（REST 层另有 owner 一致性校验）。
+  // -------------------------------------------------------------------------
+
+  /** 写一条授权（批准时产出）。 */
+  async putGrant(grant: GrantRecord): Promise<GrantRecord> {
+    return this.put(grant.owner, "grants", grant);
+  }
+
+  /**
+   * 候选授权：某工具在某 owner 名下的全部授权，**最近的在前**（后批的优先，语义上更接近用户当下的意思）。
+   * 只做 tool 过滤，有效性判定交给 `grantApplies`（纯函数、可注入时钟）——
+   * SQL 里塞一堆 jsonb 条件既难读又难测。
+   */
+  async listGrants(owner: string, tool: string, limit = 50): Promise<GrantRecord[]> {
+    const filter = "owner=$1 AND kind='grants' AND data->>'tool'=$2";
+    const bound = Math.min(Math.max(Math.trunc(limit), 1), 200);
+    try {
+      const result = await this.db.query(
+        `SELECT data FROM records WHERE ${filter} ORDER BY updated_at DESC,id DESC LIMIT $3`,
+        [owner, tool, bound],
+      );
+      return result.rows.map((row) => normalizeGrant(row.data as { id: string }));
+    } catch (error) {
+      return recoverRows<GrantRecord>(
+        "listGrants",
+        error,
+        async () => {
+          const ids = await this.db.query(
+            `SELECT ctid::text AS ctid FROM records WHERE ${filter} ORDER BY updated_at DESC,id DESC LIMIT $3`,
+            [owner, tool, bound],
+          );
+          return (ids.rows as unknown as { ctid: string }[]).map((row) => String(row.ctid));
+        },
+        async (ctid) => {
+          const row = await this.db.query("SELECT data FROM records WHERE ctid=$1", [ctid]);
+          return normalizeGrant(row.rows[0]?.data as { id: string });
+        },
+      );
+    }
+  }
+
+  /**
+   * 消耗一条 `once` 授权（单子 §1：并发下不能放行两次）。
+   *
+   * 用的是**条件 UPDATE**（`data @> '{"consumedAt": null}'`），不是 read-then-write：
+   * 两个并发调用只有一个能把 `consumedAt` 从 null 改成时刻，另一个拿到 null（= 没抢到）。
+   * 授权行必须显式写 `consumedAt: null` —— 字段缺席与「已被消耗」在这个判定里不是一回事。
+   */
+  async consumeGrant(owner: string, id: string, consumedAt: string): Promise<GrantRecord | null> {
+    return this.compareAndSwap<GrantRecord>(
+      owner,
+      "grants",
+      id,
+      { consumedAt: null },
+      { consumedAt },
+    );
+  }
+
+  /** 登记一条待审批（咽喉登记，或测试直接造）。 */
+  async putApproval(approval: ApprovalRecord): Promise<ApprovalRecord> {
+    return this.put(approval.owner, "approvals", approval);
+  }
+
+  /** 取一条审批。取不到（含**别人的**审批 id）一律 null —— REST 据此回 404，不泄露存不存在。 */
+  async getApproval(owner: string, id: string): Promise<ApprovalRecord | null> {
+    const row = await this.get<Partial<ApprovalRecord> & { id: string }>(owner, "approvals", id);
+    return row ? normalizeApproval(row) : null;
+  }
+
+  /**
+   * 审批列表：按 owner 取，`pending` 只看待决的，`all` 全要，**最近的在前**。
+   * 只读：不加锁、不写任何东西。坏行走 `recoverRows` 跳过，与 `listAudit` 同一套降级。
+   */
+  async listApprovals(owner: string, options: ApprovalQuery = {}): Promise<ApprovalRecord[]> {
+    const limit = Math.min(
+      Math.max(Math.trunc(options.limit ?? APPROVAL_DEFAULT_LIMIT), 1),
+      APPROVAL_MAX_LIMIT,
+    );
+    const status = options.status === "all" ? null : "pending";
+    const filter = "owner=$1 AND kind='approvals' AND ($2::text IS NULL OR data->>'status'=$2)";
+    try {
+      const result = await this.db.query(
+        `SELECT data FROM records WHERE ${filter} ORDER BY updated_at DESC,id DESC LIMIT $3`,
+        [owner, status, limit],
+      );
+      return result.rows.map((row) => normalizeApproval(row.data as { id: string }));
+    } catch (error) {
+      return recoverRows<ApprovalRecord>(
+        "listApprovals",
+        error,
+        async () => {
+          const ids = await this.db.query(
+            `SELECT ctid::text AS ctid FROM records WHERE ${filter} ORDER BY updated_at DESC,id DESC LIMIT $3`,
+            [owner, status, limit],
+          );
+          return (ids.rows as unknown as { ctid: string }[]).map((row) => String(row.ctid));
+        },
+        async (ctid) => {
+          const row = await this.db.query("SELECT data FROM records WHERE ctid=$1", [ctid]);
+          return normalizeApproval(row.rows[0]?.data as { id: string });
+        },
+      );
+    }
+  }
+
   async remove(owner: string, kind: string, id: string): Promise<void> {
     await this.db.query("DELETE FROM records WHERE owner=$1 AND kind=$2 AND id=$3", [
       owner,

@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { MessageSchema } from "@ag-ui/core";
 import { CopilotKitIntelligence } from "@copilotkit/runtime/v2";
-import type { Handler } from "hono";
+import type { Context, Handler } from "hono";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
@@ -40,6 +40,15 @@ import { extractTurnTexts, sedimentTurnMemories } from "./engine/memory-sediment
 import { ComputerService, type DockerRunner } from "./computer.ts";
 import { computerRoutes } from "./computer-routes.ts";
 import { assertApiDeploymentConfig, type Config, intelligenceConfigured } from "./config.ts";
+import {
+  APPROVAL_MAX_LIMIT,
+  type ApprovalRecord,
+  isGrantScope,
+} from "./engine/approvals.ts";
+import {
+  getApprovalService,
+  recordApprovalDecision,
+} from "./engine/approval-store.ts";
 import { AUDIT_MAX_LIMIT, type AuditQuery, type Store } from "./db.ts";
 import { DurableAgentRunner } from "./engine/durable-runner.ts";
 import { agentRoutes } from "./engine/routes.ts";
@@ -251,6 +260,9 @@ export async function createApp(
   };
   app.use("/api/*", ownerFromSession);
   app.use("/audit", ownerFromSession);
+  // 审批入口同样挂在裸路径上（单子 §3），带子路径的 approve/deny 也要鉴权。
+  app.use("/approvals", ownerFromSession);
+  app.use("/approvals/*", ownerFromSession);
   /**
    * 链接预览（对标 Muse 的 `HatchLinkPreviewKt`）：只取标题/描述，不抓缩略图。
    *
@@ -371,6 +383,81 @@ export async function createApp(
   // 两条都注册，共用同一个 handler，鉴权口径也一致。
   app.get("/api/audit", readAudit);
   app.get("/audit", readAudit);
+
+  // ---- 审批往返（P1b §3）----
+  //
+  // 取数口径与 `/audit` **逐条一致**：owner 一律取会话里的那个（`c.get("owner")`），
+  // URL/query 里那个 `owner` 只做一致性校验，不一致回 403 —— 否则这条读接口就成了跨用户读审批的后门。
+  const approvalQuerySchema = z.object({
+    owner: z.string().trim().min(1).optional(),
+    status: z.enum(["pending", "all"]).default("pending"),
+    limit: z.coerce.number().int().min(1).max(APPROVAL_MAX_LIMIT).optional(),
+  });
+  /**
+   * 审批后端没接上（库连不上 / 装配失败）时的统一出口 —— 优雅降级，不是 500。
+   * 显式标注 `: never`，下面的 `if (!approvals) …` 才能让 TS 知道它之后不用判空。
+   */
+  const approvalBackendOr503: () => never = () => {
+    throw new AppError("审批服务还没接上，暂时无法处理审批。", 503);
+  };
+  const listApprovalsFor = async (owner: string, url: URL) => {
+    const query = approvalQuerySchema.parse(Object.fromEntries(url.searchParams));
+    if (query.owner && query.owner !== owner) throw new AppError("只能查看自己的审批。", 403);
+    const approvals = getApprovalService();
+    if (!approvals) approvalBackendOr503();
+    return {
+      approvals: await approvals.list(owner, {
+        status: query.status,
+        ...(query.limit ? { limit: query.limit } : {}),
+      }),
+    };
+  };
+  const approveFor = async (owner: string, id: string, body: unknown) => {
+    // scope 自己判而不用 z.enum：非法值要回 **400**（取值错误），不是 zod 那个 422。
+    const { scope } = z.object({ scope: z.unknown().optional() }).parse(body);
+    if (!isGrantScope(scope)) throw new AppError("scope 只能是 once / session / 24h。", 400);
+    const approvals = getApprovalService();
+    if (!approvals) approvalBackendOr503();
+    const result = await approvals.approve(owner, id, scope);
+    // 别人的 id 与不存在的 id 都落到这里：回 404，**不区分**（不泄露这条审批是否存在）。
+    if (!result) throw new AppError("找不到这条待审批（或者它已经被处理过了）。", 404);
+    recordApprovalDecision(owner, "approval_approved", result.approval);
+    return result;
+  };
+  const denyFor = async (owner: string, id: string, body: unknown) => {
+    const { reason } = z
+      .object({ reason: z.string().trim().max(500).optional() })
+      .parse(body);
+    const approvals = getApprovalService();
+    if (!approvals) approvalBackendOr503();
+    const approval: ApprovalRecord | null = await approvals.deny(owner, id, reason);
+    if (!approval) throw new AppError("找不到这条待审批（或者它已经被处理过了）。", 404);
+    recordApprovalDecision(owner, "approval_denied", approval);
+    // 拒绝**不产生任何放行**：响应里只有审批本身，没有 grant 字段。
+    return { approval };
+  };
+  // 单子把路径写作 `/approvals/*`；仓库其余接口都在 `/api/*` 下。两种前缀都挂，动作完全一致。
+  // 三个 handler 用 Hono 的 Context 类型（结构手写类型会因为缺 `json` 方法而不过）；
+  // handler 与路由分开是为了让 `/api/*` 与裸路径两种前缀共用同一份实现。
+  type OwnerContext = Context<{ Variables: { owner: string } }>;
+  const readApprovals = async (c: OwnerContext) =>
+    c.json(await listApprovalsFor(c.get("owner"), new URL(c.req.url)));
+  // 路由是按字面量注册的，但 handler 抽出来之后 TS 不知道 `:id` 一定存在 —— 这里显式收一下。
+  const idOf = (c: OwnerContext): string => {
+    const id = c.req.param("id");
+    if (!id) throw new AppError("缺少审批 id。", 400);
+    return id;
+  };
+  const postApprove = async (c: OwnerContext) =>
+    c.json(await approveFor(c.get("owner"), idOf(c), await c.req.json().catch(() => ({}))));
+  const postDeny = async (c: OwnerContext) =>
+    c.json(await denyFor(c.get("owner"), idOf(c), await c.req.json().catch(() => ({}))));
+  app.get("/api/approvals", readApprovals);
+  app.get("/approvals", readApprovals);
+  app.post("/api/approvals/:id/approve", postApprove);
+  app.post("/approvals/:id/approve", postApprove);
+  app.post("/api/approvals/:id/deny", postDeny);
+  app.post("/approvals/:id/deny", postDeny);
   app.post("/api/drafts", async (c) => {
     const body = emailDraftSchema.extend({ id: z.string().optional() }).parse(await c.req.json());
     const existing = body.id

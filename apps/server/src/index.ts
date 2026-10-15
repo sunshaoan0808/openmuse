@@ -4,6 +4,7 @@ import { createApp } from "./app.ts";
 import type { ChatTurn } from "./chat-turns.ts";
 import { readConfig } from "./config.ts";
 import { createStore } from "./db.ts";
+import { attachApprovalStore } from "./engine/approval-store.ts";
 import { attachAuditStore, flushAuditSink } from "./engine/audit-store.ts";
 import { startTurnResumer } from "./engine/turn-resume.ts";
 
@@ -35,6 +36,12 @@ const db = await createStore({
 // **绝不让审计可用性决定服务起不起来**。
 if (!attachAuditStore(db))
   console.error("[audit-persist] 审计只落控制台，查询接口 /audit 会返回空列表。");
+
+// 审批落库（P1b）：咽喉产出的每条授权决策写成 records 一行（单子 §2.5）。
+// 优雅降级：接不上就只保留控制台那一行，工具直接按 P0「直接拒批」——
+// 那行本来就有（tool-executor.ts 里一字未改），绝不让审批可用性决定服务起不起来。
+if (!attachApprovalStore(db))
+  console.error("[approval-persist] 审批只落控制台，查询接口 /approvals 会返回空列表。");
 await db.recoverInterruptedActions();
 // 上次没跑完的对话轮次：进程已经重启，它们不可能还在跑——标成 interrupted，
 // 免得 App 重连后一直等一条永远不会来的回复。
