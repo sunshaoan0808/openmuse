@@ -271,3 +271,30 @@
       （邮箱未连接但污点照打）→ `save_document` 被拦，库里理由点名 `search_mail`、journal `risk=moderate outcome=awaiting_approval`；
       干净线程 B 同一工具 `ok`（不误伤）。收尾还原干净。
 - ⚠ 派单账：本轮 dsh 跑 66 分钟、**74 次 60s 静默超时（≈37 分钟纯等待）**、重试预算耗尽 exit=1、零产出 → 派单方接手。
+
+### 待办（用户明确：先挂着，不动手）
+
+- [ ] **zen 网关加"整请求总 deadline"**。现状：客户端最坏等待 = (池内重试 + 跨池 fallback 级数) × 首字超时(25s) + 挂起窗口(30s)；日志见过 `[fb:nvidia] stage 1/4` → 病理情况 ≈130~150s（实测有一发 step-5 干等 150s 零字节）。`gateway.js` 里**没有**总预算常量，纯 env 封不了顶；也不能调小 `ZEN_TTFB_TIMEOUT`（健康模型首字实测能到 20s，会被误杀）。
+      建议实现：env 开关 `ZEN_REQUEST_DEADLINE_MS`（默认关闭 → 行为不变），跨阶段生效，超时直接回可读错误；附单测；改 `ZEN_FALLBACK_CHAIN_*` 时必须同步 `FALLBACK_IMAGE_CAP`（网关源码自带约束）。
+      已做的一半（2026-10-15）：`ZEN_HANG_TIMEOUT_S` 900→25（代码下限 30）、`ZEN_HANG_SAME_STATUS_MAX` 12→3，容器已重建 + `(healthy)`。
+
+### 模型策略（2026-10-15 用户指定）
+
+- dsh 默认 → `deepseek-v4.1-flash-free`（流式工具调用探针 OK，22.5s）；**备份顺序**：
+  muse-spark-1.3 → 550B → muse-glimmer-30b → muse-spark-1.2 → nemotron-3-ultra-free → super-120b → north-mini-code → mimo → space-bunny（垫底）。
+  验证：loader `exit=0`/0 告警、`--dump-config` 默认=deepseek、3080 仍 401。备份：`~/.dsh/profiles/web/cordis.patch.yml.bak-before-model-order`。
+- OpenMuse `MODEL` → `deepseek-v4.1-flash-free`（原 550B）；重启后启动日志 `model=deepseek-v4.1-flash-free`，线上真跑一发得 `3 加 4 等于 7。` ✓
+- 网关侧今天已有 `deepseek-v4.1-flash-free` 的 NV/OR 兜底链登记（非本次改动）。
+
+### P2 并行派出（2026-10-15，两棵副本、两条上游路由）
+
+- **P2a · 记忆整理的"代码裁决"**（`docs/任务单-openmuse-P2a.md`）：词表约束（合并不得凭空造词，CJK 按二元组）+
+  删除上限（单次 ≤20%、删后 ≥4 条）+ **用户手写条目永不自动删** + `kind='memory-log'` 可回滚日志（含 `rollbackMemoryLog`）。
+  副本 `/home/ubuntu/openmuse-dsh`、路由 `deepseek-v4.1-flash-free`、任务 `proc_1c9c5bfcc532`。
+- **P2b · 授权升级成"限定能力"**（`docs/任务单-openmuse-P2b.md`）：授权键带 target（`tool:target`）+ 多目标每个都要被覆盖 +
+  带 warning 的调用**只给 once** + 待审批**超时即拒绝** + `GET/DELETE /api/grants` 可撤销（越权 403）。
+  副本 `/home/ubuntu/openmuse-dsh2`、路由 `muse-spark-1.3`（550B 首派撞 `Service temporarily overloaded`、44s 死；探路后换活路由重派）、任务 `proc_a10e9ff557d7`。
+- 两棵树派单前基线均 **661/661**；门禁由派单方在沙箱外自己跑（不采信自报数字）。
+- **还没派**：§4.7 小件（SKILL.md 两段式索引（名字+描述进提示、正文按需加载）、阶梯 the ladder（技能→CLI/MCP→抓页面→浏览器→屏幕）、
+  配额先预留后结算 + 单账号并发上限、日志只打 id 前缀 + 请求关联 id、`next_wake_at` 唤醒契约）；
+  §4.6 多端 seq/cursor 增量同步（**决定做多端之前不动**）。

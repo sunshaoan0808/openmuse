@@ -22,7 +22,19 @@ export class AppError extends Error {
   readonly retryable: boolean;
   constructor(
     message: string,
-    public readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 422 | 429 | 500 | 502 | 503 = 400,
+    public readonly status:
+      | 400
+      | 401
+      | 403
+      | 404
+      | 409
+      | 410
+      | 413
+      | 422
+      | 429
+      | 500
+      | 502
+      | 503 = 400,
     code?: AppErrorCode,
   ) {
     super(message);
@@ -39,6 +51,10 @@ export class AppError extends Error {
               ? "NOT_FOUND"
               : status === 409
                 ? "CONFLICT"
+                // 410 Gone（P2b §2.3：待审批超时作废）没有独立 code，归到 NOT_FOUND ——
+                // 客户端的分支本来就是"这条东西不再可用了"，status 才是它要区分的那个。
+                : status === 410
+                  ? "NOT_FOUND"
                 : status === 413
                   ? "PAYLOAD_TOO_LARGE"
                   : status === 422

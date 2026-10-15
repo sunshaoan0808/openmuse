@@ -47,6 +47,13 @@ export interface GrantRecord {
   /** 只对**这一个工具**生效，不做前缀/通配匹配。 */
   tool: string;
   scope: GrantScope;
+   /**
+   * 授权绑定的**目标**（`web_fetch:example.com` 里的 `example.com`），`null` = 不限定目标。
+   *
+   * P2b §2.1：`null` 的授权**退化为按工具匹配** = 改造前的行为（逐字不变）；
+   * 有值时**只覆盖同目标的调用**，也不覆盖任何"没有目标"的调用（那是另一种调用形状）。
+   */
+   target: string | null;
   /** `once` / `session` 绑定的那次会话；`24h` 恒为 null（owner 内任意线程放行）。 */
   threadId: string | null;
   createdAt: string;
@@ -81,8 +88,20 @@ export interface ApprovalRecord {
   decidedAt: string | null;
   /** 拒绝理由（用户填的）；其它为 null。 */
   denyReason: string | null;
-  /** 批准时写出的那条 grant；其它为 null。 */
+  /** 批准时写出的那条 grant；其它为 null。多目标调用只记第一条，其余同批写入。 */
   grantId: string | null;
+  /** 这次调用涉及的目标（空 = 不限定目标）。多目标调用在这里能看到被要求覆盖的目标集合。 */
+  targets: string[];
+  /**
+   * 这条待审批的**失效时刻**（P2b §2.3）：到点后 `approve` 一律不许放行。
+   * 与授权自己的 `expiresAt` 不是一回事 —— 这里是"人还没答复"的等待期限。
+   */
+  expiresAt: string | null;
+  /**
+   * 登记时那次评估声明的警告（P0 的 `warnings`）。**批准时据此把 scope 强制降为 `once`**（§2.2）：
+   * 支付、密码这类动作"永远别记住"，客户端传 24h 也不放宽。
+   */
+  warnings: string[];
 }
 
 /** 咽喉登记一条待审批时递进来的东西。 */
@@ -94,12 +113,18 @@ export interface ApprovalRequest {
   reason: string;
   /** 参数摘要（咽喉已经打好码、截断过了）。 */
   args: unknown;
+  /** 这次评估声明的警告（原样带进审批记录，供批准时降档用，见 `ApprovalRecord.warnings`）。 */
+  warnings?: string[];
+  /** 这次调用涉及的目标（多目标调用用；供复盘与 REST 展示）。 */
+  targets?: (string | null)[];
 }
 
 /** 判定一次授权是否还有效时需要的东西。 */
 export interface GrantQuery {
   owner: string;
   tool: string;
+  /** 这次调用要去往的目标；调用方没有目标就传 `null`/省略（= 不限定目标）。 */
+  target?: string | null;
   threadId: string | null;
   /** 本次判定的时刻（毫秒）。时钟可注入，测试不必 sleep。 */
   nowMs: number;
@@ -127,6 +152,52 @@ export function grantExpiresAt(scope: GrantScope, createdAtMs: number): string |
   return scope === "24h" ? new Date(createdAtMs + GRANT_24H_MS).toISOString() : null;
 }
 
+/** 待审批的默认等待期限（P2b §2.3）：1 小时没人答复即失效。 */
+export const APPROVAL_TTL_MS = 60 * 60 * 1000;
+
+/** 一条待审批的失效时刻（登记时刻 + TTL）。 */
+export function approvalExpiresAt(requestedAtMs: number): string {
+  return new Date(requestedAtMs + APPROVAL_TTL_MS).toISOString();
+}
+
+/**
+ * 这条待审批**还能被批吗**（纯函数）。方向要记牢：过期只意味着「不许再放行」，
+ * **绝不**意味着「那就放行吧」—— 过期后调用方仍是被拦状态。
+ */
+export function isApprovalExpired(
+  approval: Pick<ApprovalRecord, "expiresAt">,
+  nowMs: number,
+): boolean {
+  if (!approval.expiresAt) return false;
+  return Date.parse(approval.expiresAt) <= nowMs;
+}
+
+/**
+ * 批准时**实际生效**的 scope（P2b §2.2：带警告的调用只给 `once`）。
+ * 支付 / 密码这类动作"永不记住"，所以这里**只降不升**，且由服务端说了算 —— 客户端传 24h 也不放宽。
+ */
+export function downgradeScope(
+  scope: GrantScope,
+  warnings: readonly string[] | null | undefined,
+): GrantScope {
+  return warnings && warnings.length > 0 ? "once" : scope;
+}
+
+/**
+ * 把工具 / 评估声明的目标收成字符串数组：单个字符串、数组、`undefined` 都认，
+ * 非字符串与空白一律丢掉。返回 `[]` = 这次调用**不限定目标**（与改造前一致）。
+ */
+export function normalizeTargets(value: unknown): string[] {
+  const list = Array.isArray(value) ? value : value === undefined || value === null ? [] : [value];
+  const out: string[] = [];
+  for (const item of list) {
+    if (typeof item !== "string") continue;
+    const trimmed = item.trim();
+    if (trimmed && !out.includes(trimmed)) out.push(trimmed);
+  }
+  return out;
+}
+
 /**
  * 一条授权对这次调用**还有效吗**（纯函数，最要紧的一条判定）。
  *
@@ -140,6 +211,9 @@ export function grantExpiresAt(scope: GrantScope, createdAtMs: number): string |
 export function grantApplies(grant: GrantRecord, query: GrantQuery): boolean {
   if (grant.owner !== query.owner) return false;
   if (grant.tool !== query.tool) return false;
+  // 目标匹配（P2b §2.1）：不限定目标的授权放行任何调用（= 改造前的行为）；
+  // 限定目标的授权**只认同一个目标**，且不认"没有目标"的调用 —— 那是另一种调用形状。
+  if (grant.target !== null && grant.target !== (query.target ?? null)) return false;
   if (grant.consumedAt) return false;
   if (grant.expiresAt && Date.parse(grant.expiresAt) <= query.nowMs) return false;
   // 24h：owner 名下任意线程放行 —— 上面已经校验过 owner / 工具 / 未过期。
@@ -193,12 +267,29 @@ export interface ApprovalBackend {
   /**
    * 原子地找一条对这次调用有效的授权（`once` 在这里被消耗）；没有则返回 null。
    * `owner`/`tool`/`threadId` 由咽喉给，取数一律按 owner 分区。
+   *
+   * P2b §2.1：`targets` 是这次调用要去往的目标集合（空 = 不限定目标，按工具匹配 = 改造前行为）。
+   * **多目标调用要求每个目标都被覆盖**，缺一个就返回 null（= 待审批）。
    */
-  acquireGrant(query: { owner: string; tool: string; threadId: string | null }): Promise<
-    GrantRecord | null
-  >;
+  acquireGrant(query: {
+    owner: string;
+    tool: string;
+    threadId: string | null;
+    targets?: string[];
+  }): Promise<GrantRecord | null>;
   /** 登记一条待审批；写库失败返回 null（咽喉据此退回「直接拒批」，不影响工具语义）。 */
   registerApproval(request: ApprovalRequest): Promise<ApprovalRecord | null>;
+  /**
+   * 诊断用（P2b §2.1）：这次调用的哪些目标**还没有**被授权覆盖。
+   * **只读、不消耗任何授权** —— 咽喉在"该拦了"的分支里用它写审批理由，好让人知道漏了哪个目标。
+   * 不实现（可选）就退化成"不点名"。
+   */
+  missingTargets?(query: {
+    owner: string;
+    tool: string;
+    threadId: string | null;
+    targets?: string[];
+  }): Promise<string[]>;
 }
 
 /** 批准的结果（REST 层直接序列化返回）。 */
@@ -219,7 +310,21 @@ export interface ApprovalService extends ApprovalBackend {
   approve(owner: string, id: string, scope: GrantScope): Promise<ApproveResult | null>;
   /** 拒绝：审批置 denied，**不产生任何放行**；审批不存在 / 不是待决 → 返回 null。 */
   deny(owner: string, id: string, reason?: string): Promise<ApprovalRecord | null>;
+  /**
+   * 批准，但把「为什么没成」分出来（P2b §2.3）：REST 要把 404（不存在/已处理）与
+   * 410（已超时）分开回，用 `approve` 的 null 分不出来。
+   */
+  approveChecked(owner: string, id: string, scope: GrantScope): Promise<ApproveOutcome>;
+  /** 该 owner 名下的授权列表（P2b §2.4 可撤销列表用；最近的在前）。 */
+  listGrants(owner: string, limit?: number): Promise<GrantRecord[]>;
+  /** 撤销一条授权。返回是否真的删掉了一条（幂等：删第二次返回 false，调用方按成功处理）。 */
+  revokeGrant(owner: string, id: string): Promise<boolean>;
 }
+
+/** 批准的三态结果：REST 据此回 200 / 404 / 410。 */
+export type ApproveOutcome =
+  | { ok: true; approval: ApprovalRecord; grant: GrantRecord; downgraded: boolean }
+  | { ok: false; reason: "missing" | "not_pending" | "expired" };
 
 /**
  * 把库里可能残缺的授权行补齐成完整形状（与 `normalizeApproval` 同一套规矩）。
@@ -232,6 +337,7 @@ export function normalizeGrant(row: Partial<GrantRecord> & { id: string }): Gran
     owner: typeof row.owner === "string" ? row.owner : "",
     tool: typeof row.tool === "string" ? row.tool : "",
     scope: isGrantScope(row.scope) ? row.scope : "once",
+    target: typeof row.target === "string" ? row.target : null,
     threadId: typeof row.threadId === "string" ? row.threadId : null,
     createdAt: typeof row.createdAt === "string" ? row.createdAt : "",
     expiresAt: typeof row.expiresAt === "string" ? row.expiresAt : null,
@@ -257,5 +363,12 @@ export function normalizeApproval(row: Partial<ApprovalRecord> & { id: string })
     decidedAt: typeof row.decidedAt === "string" ? row.decidedAt : null,
     denyReason: typeof row.denyReason === "string" ? row.denyReason : null,
     grantId: typeof row.grantId === "string" ? row.grantId : null,
+    targets: Array.isArray(row.targets)
+      ? row.targets.filter((item): item is string => typeof item === "string")
+      : [],
+    expiresAt: typeof row.expiresAt === "string" ? row.expiresAt : null,
+    warnings: Array.isArray(row.warnings)
+      ? row.warnings.filter((item): item is string => typeof item === "string")
+      : [],
   };
 }

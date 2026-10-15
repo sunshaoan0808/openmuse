@@ -263,6 +263,9 @@ export async function createApp(
   // 审批入口同样挂在裸路径上（单子 §3），带子路径的 approve/deny 也要鉴权。
   app.use("/approvals", ownerFromSession);
   app.use("/approvals/*", ownerFromSession);
+  // 授权列表 / 撤销同样要鉴权（裸路径 + /api 前缀，与审批一致）。
+  app.use("/grants", ownerFromSession);
+  app.use("/grants/*", ownerFromSession);
   /**
    * 链接预览（对标 Muse 的 `HatchLinkPreviewKt`）：只取标题/描述，不抓缩略图。
    *
@@ -418,11 +421,18 @@ export async function createApp(
     if (!isGrantScope(scope)) throw new AppError("scope 只能是 once / session / 24h。", 400);
     const approvals = getApprovalService();
     if (!approvals) approvalBackendOr503();
-    const result = await approvals.approve(owner, id, scope);
-    // 别人的 id 与不存在的 id 都落到这里：回 404，**不区分**（不泄露这条审批是否存在）。
-    if (!result) throw new AppError("找不到这条待审批（或者它已经被处理过了）。", 404);
-    recordApprovalDecision(owner, "approval_approved", result.approval);
-    return result;
+    const outcome = await approvals.approveChecked(owner, id, scope);
+    // 三态分开回（P2b §2.3）：**超时作废**是 410，与"没有这条 / 已处理过"的 404 不是一回事 ——
+    // 前者要让人知道"这次机会作废了、重新发起吧"，后者只是"找不到"（且不泄露存不存在）。
+    if (!outcome.ok) {
+      if (outcome.reason === "expired") {
+        throw new AppError("这条待审批已经超时作废，请重新发起这次调用。", 410);
+      }
+      throw new AppError("找不到这条待审批（或者它已经被处理过了）。", 404);
+    }
+    recordApprovalDecision(owner, "approval_approved", outcome.approval);
+    // `downgraded` 一并回给客户端：带警告的调用被服务端强制降成 once，界面要如实显示（§2.2）。
+    return { approval: outcome.approval, grant: outcome.grant, downgraded: outcome.downgraded };
   };
   const denyFor = async (owner: string, id: string, body: unknown) => {
     const { reason } = z
@@ -458,6 +468,44 @@ export async function createApp(
   app.post("/approvals/:id/approve", postApprove);
   app.post("/api/approvals/:id/deny", postDeny);
   app.post("/approvals/:id/deny", postDeny);
+
+  // ---- 已授权限的列表与撤销（P2b §2.4）----
+  //
+  // 与审批同一套取数口径：owner 一律取会话里的那个，URL/query 里那个只做一致性校验，
+  // 不一致回 403 —— 否则这就成了"翻别人已被授权的权限"的后门。
+  const grantsFor = async (owner: string, url: URL) => {
+    const query = z
+      .object({
+        owner: z.string().trim().min(1).optional(),
+        limit: z.coerce.number().int().min(1).max(200).optional(),
+      })
+      .parse(Object.fromEntries(url.searchParams));
+    if (query.owner && query.owner !== owner) throw new AppError("只能查看自己的授权。", 403);
+    const approvals = getApprovalService();
+    if (!approvals) approvalBackendOr503();
+    return { grants: await approvals.listGrants(owner, query.limit ?? 50) };
+  };
+  const revokeGrantFor = async (owner: string, id: string) => {
+    const approvals = getApprovalService();
+    if (!approvals) approvalBackendOr503();
+    const removed = await approvals.revokeGrant(owner, id);
+    // 幂等（§2.4）：本来就不存在 / 别人的 / 已经撤过的，一律回成功语义 ——
+    // 调用方只需要知道"它不再生效了"，`removed` 说明这次是不是真删掉一行。
+    return { revoked: true, removed };
+  };
+  const grantIdOf = (c: OwnerContext): string => {
+    const id = c.req.param("id");
+    if (!id) throw new AppError("缺少授权 id。", 400);
+    return id;
+  };
+  const readGrants = async (c: OwnerContext) =>
+    c.json(await grantsFor(c.get("owner"), new URL(c.req.url)));
+  const revokeGrant = async (c: OwnerContext) =>
+    c.json(await revokeGrantFor(c.get("owner"), grantIdOf(c)));
+  app.get("/api/grants", readGrants);
+  app.get("/grants", readGrants);
+  app.delete("/api/grants/:id", revokeGrant);
+  app.delete("/grants/:id", revokeGrant);
   app.post("/api/drafts", async (c) => {
     const body = emailDraftSchema.extend({ id: z.string().optional() }).parse(await c.req.json());
     const existing = body.id

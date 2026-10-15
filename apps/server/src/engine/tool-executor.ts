@@ -30,6 +30,7 @@ import {
 import {
   type ApprovalBackend,
   type GrantRecord,
+  normalizeTargets,
   pendingApprovalMessage,
   pendingReason,
   type RiskLevel,
@@ -63,6 +64,14 @@ export interface ToolPolicy {
   readsPrivate?: boolean;
   /** 会把东西发出去（建号 / 提交表单 / 推远端…）：线程有污点时一律走审批（P1d）。 */
   outward?: boolean;
+  /**
+   * 这次调用要去往的目标（P2b §2.1）—— 如 `web_fetch` 的域名、`shell` 的命令名。
+   *
+   * **必须是同步纯函数**：它在授权判定（第 2 步）就要用，而 `assess()` 排在第 3 步、可以异步。
+   * 目标单独放这里，才可能用一条"限定目标"的授权放行；返回字符串 / 字符串数组 / null。
+   * 不声明 = 这次调用不限定目标（= 改造前的行为）。
+   */
+  targets?: (args: unknown) => unknown;
   assess?: (args: unknown) => ToolAssessment | Promise<ToolAssessment>;
   execute: (args: never) => Promise<unknown>;
 }
@@ -387,9 +396,17 @@ export async function runToolCall(
 
   // 2) 有效 grant 命中 → 直接放行（P1b）。`once` 在这里被**原子**消耗，并发下只能过一个。
   //    grant 命中时**跳过第 3 步的评估** —— 判定顺序是硬要求，第 3 步排在这个命中之后。
+  //
+  //    目标同步取（P2b §2.1）：晚到第 3 步就等于"限定目标的授权"永远匹配不上。
+  const targets = normalizeTargets(tool.targets?.(args));
   const backend = getApprovalBackend();
   const granted: GrantRecord | null = backend
-    ? await backend.acquireGrant({ owner, tool: tool.name, threadId })
+    ? await backend.acquireGrant({
+        owner,
+        tool: tool.name,
+        threadId,
+        ...(targets.length > 0 ? { targets } : {}),
+      })
     : null;
   // 授权命中、且这次是**外发**动作 → 用户的点头覆盖了"用私有数据外发"，清掉污点（once 语义，P1d §2.3）。
   // 放在这里是因为它紧跟授权：只有真的靠授权放行的外发才清，别的路径都不动污点。
@@ -431,8 +448,15 @@ export async function runToolCall(
   //    少了它，`needsApproval` 照样成立 —— 用户批准了还是被拦，而那条 `once` 授权
   //    已经在第 2 步被消耗掉，等于批准了个寂寞（这正是本用例钉住的那条）。
   if (!granted && (needsApproval(assessment) || taintForced)) {
+    // 多目标调用缺哪个目标，理由里**点名**（P2b §2.1）：人不点开参数摘要也该知道漏了什么。
+    // 只读查询，不消耗任何授权；后端没实现就退化成不点名。
+    const missing =
+      targets.length > 1 && backend?.missingTargets
+        ? await backend.missingTargets({ owner, tool: tool.name, threadId, targets })
+        : [];
+    const base = taintForced && taint ? taintReason(taint, tool.name) : pendingReason(assessment);
     const reason =
-      taintForced && taint ? taintReason(taint, tool.name) : pendingReason(assessment);
+      missing.length > 0 ? `${base}（还没有被授权的目标：${missing.join("、")}）` : base;
     if (backend) {
       // 登记的参数摘要**已经按评估结论脱敏 + 截断**，与审计行、与模型看到的内容一致。
       const approval = await backend.registerApproval({
@@ -442,6 +466,9 @@ export async function runToolCall(
         risk: assessment.risk ?? tool.risk ?? "safe",
         reason,
         args: auditSnapshot(redactResult(args, assessment)),
+        // 警告与目标都要带进审批记录：批准时据此把 scope 降成 once（§2.2）、按目标逐条写授权（§2.1）。
+        warnings: assessment.warnings ?? [],
+        targets,
       });
       if (approval) {
         line(

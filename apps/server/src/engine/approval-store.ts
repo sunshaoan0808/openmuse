@@ -17,13 +17,18 @@ import type { Store } from "../db.ts";
 import {
   type ApprovalRecord,
   type ApprovalService,
+  approvalExpiresAt,
   approvalRecordId,
+  type ApproveOutcome,
+  downgradeScope,
   type GrantQuery,
   type GrantRecord,
+  type GrantScope,
   grantApplies,
   grantExpiresAt,
-  type GrantScope,
+  isApprovalExpired,
   normalizeApproval,
+  normalizeGrant,
 } from "./approvals.ts";
 import {
   type AuditEvent,
@@ -64,22 +69,114 @@ function clock(): Pick<GrantQuery, "nowMs" | "instanceId"> {
 
 /** 用 Store 造出完整的服务（咽喉只用到 acquireGrant / registerApproval）。 */
 export function createApprovalService(store: Store): ApprovalService {
+  /**
+   * 批准的实现（`approve` 与 `approveChecked` 共用一份判定，免得两条路日后漂移）。
+   *
+   * 三件事按 P2b 的硬要求排在这里：
+   *   1. **过期即作废**（§2.3）—— 过期只意味着"这次机会没了"，**绝不**是"那就放行吧"；
+   *   2. **带警告只给 once**（§2.2）—— 只降不升，服务端说了算，客户端传 24h 也不放宽；
+   *   3. **多目标各写一条授权**（§2.1）—— 每个目标都要被覆盖才算命中，一条授权只能绑一个目标。
+   */
+  const approveCheckedImpl = async (
+    owner: string,
+    id: string,
+    scope: GrantScope,
+  ): Promise<ApproveOutcome> => {
+    const pending = await store.getApproval(owner, id);
+    // 别人的 id 与不存在的 id 都在这里变成 missing（REST 回 404，不泄露存在性）。
+    if (!pending) return { ok: false, reason: "missing" };
+    if (pending.status !== "pending") return { ok: false, reason: "not_pending" };
+    if (isApprovalExpired(pending, runtime.now())) return { ok: false, reason: "expired" };
+
+    const at = new Date(runtime.now());
+    const effective = downgradeScope(scope, pending.warnings);
+    const downgraded = effective !== scope;
+    const targets: (string | null)[] = pending.targets.length > 0 ? pending.targets : [null];
+    const grants: GrantRecord[] = targets.map((target) => ({
+      id: approvalRecordId(at.toISOString()),
+      owner,
+      tool: pending.tool,
+      target,
+      scope: effective,
+      // `24h` 是 owner 名下任意线程放行，按契约（approvals.ts）恒不绑会话；
+      // `once` / `session` 才继承批准时的那次会话。
+      threadId: effective === "24h" ? null : (pending.threadId ?? null),
+      createdAt: at.toISOString(),
+      expiresAt: grantExpiresAt(effective, at.getTime()),
+      consumedAt: null,
+      instanceId: runtime.instanceId,
+      approvalId: pending.id,
+    }));
+
+    // 先原子地把审批从 pending 翻掉（防并发双批），成功后才落 grant。
+    // 条件 UPDATE 带 `status:'pending'`，两个并发批准只有一个能赢。
+    // 注意写回的是**实际生效**的 scope（被降档时与请求值不同）—— 页面与授权列表要对得上。
+    const approved = await store.compareAndSwap<ApprovalRecord>(
+      owner,
+      "approvals",
+      id,
+      { status: "pending" },
+      {
+        status: "approved",
+        scope: effective,
+        decidedAt: at.toISOString(),
+        grantId: grants[0]?.id ?? null,
+      },
+    );
+    if (!approved) return { ok: false, reason: "not_pending" }; // 别人已经批过/拒过了
+    for (const grant of grants) await store.putGrant(grant);
+    return {
+      ok: true,
+      approval: normalizeApproval(approved),
+      grant: grants[0]!,
+      downgraded,
+    };
+  };
+
   return {
-    async acquireGrant({ owner, tool, threadId }) {
+    async acquireGrant({ owner, tool, threadId, targets }) {
       // 候选按更新时间倒序（最近的在前）；有效性判定交给纯函数 grantApplies。
       const candidates = await store.listGrants(owner, tool, 50);
-      for (const grant of candidates) {
-        if (!grantApplies(grant, { owner, tool, threadId, ...clock() })) continue;
-        if (grant.scope !== "once") return grant; // session / 24h：不消耗
-        // once：原子消耗。拿到 null = 别的并发者先抢到，继续找下一个候选。
+      const clockNow = clock();
+      const wanted: (string | null)[] = targets && targets.length > 0 ? targets : [null];
+
+      // 单目标（含"没有目标"）：这是 P1b 的原始路径，**逐字保留** ——
+      // 逐个候选试，`once` 抢不到（= 并发里别人先消耗）就继续试下一个候选。
+      if (wanted.length === 1) {
+        const target = wanted[0]!;
+        for (const grant of candidates) {
+          if (!grantApplies(grant, { owner, tool, threadId, target, ...clockNow })) continue;
+          if (grant.scope !== "once") return grant; // session / 24h：不消耗
+          const consumed = await store.consumeGrant(
+            owner,
+            grant.id,
+            new Date(runtime.now()).toISOString(),
+          );
+          if (consumed) return consumed;
+        }
+        return null;
+      }
+
+      // 多目标（P2b §2.1）：**每个目标都要有覆盖**才算命中。先整体核验再消耗 ——
+      // 否则"消耗掉前两个才发现第三个没授权"，白烧掉用户的点头。
+      const picks: GrantRecord[] = [];
+      for (const target of wanted) {
+        const hit = candidates.find((grant) =>
+          grantApplies(grant, { owner, tool, threadId, target, ...clockNow }),
+        );
+        if (!hit) return null;
+        picks.push(hit);
+      }
+      for (const grant of picks) {
+        if (grant.scope !== "once") continue;
         const consumed = await store.consumeGrant(
           owner,
           grant.id,
           new Date(runtime.now()).toISOString(),
         );
-        if (consumed) return consumed;
+        if (!consumed) return null; // 有一个没抢到 → 整体不放行（调用方会重新走审批）
       }
-      return null;
+      return picks[0] ?? null;
     },
 
     async registerApproval(request) {
@@ -98,6 +195,9 @@ export function createApprovalService(store: Store): ApprovalService {
         decidedAt: null,
         denyReason: null,
         grantId: null,
+        targets: (request.targets ?? []).filter((item): item is string => typeof item === "string"),
+        expiresAt: approvalExpiresAt(runtime.now()),
+        warnings: request.warnings ?? [],
       };
       try {
         return await store.putApproval(approval);
@@ -112,6 +212,22 @@ export function createApprovalService(store: Store): ApprovalService {
       }
     },
 
+    /**
+     * 诊断：哪些目标还没被覆盖（§2.1）。**只读**，不消耗 —— 咽喉用它写"缺哪个目标"的审批理由。
+     * 判定与 `acquireGrant` 用同一个纯函数，保证"说缺"和"真拦"永远一致。
+     */
+    async missingTargets({ owner, tool, threadId, targets }) {
+      if (!targets || targets.length === 0) return [];
+      const candidates = await store.listGrants(owner, tool, 50);
+      const clockNow = clock();
+      return targets.filter(
+        (target) =>
+          !candidates.some((grant) =>
+            grantApplies(grant, { owner, tool, threadId, target, ...clockNow }),
+          ),
+      );
+    },
+
     list(owner, options) {
       return store.listApprovals(owner, options);
     },
@@ -120,37 +236,35 @@ export function createApprovalService(store: Store): ApprovalService {
       return store.getApproval(owner, id);
     },
 
+    approveChecked(owner, id, scope) {
+      return approveCheckedImpl(owner, id, scope);
+    },
+
     async approve(owner, id, scope) {
-      const pending = await store.getApproval(owner, id);
-      // 只认「本人的 + 待决的」：别人的 id 与不存在的 id 在这里都变成 null（REST 回 404）。
-      if (!pending || pending.status !== "pending") return null;
-      const at = new Date(runtime.now());
-      const grant: GrantRecord = {
-        id: approvalRecordId(at.toISOString()),
-        owner,
-        tool: pending.tool,
-        scope,
-        // `24h` 是 owner 名下任意线程放行，按契约（approvals.ts）恒不绑会话；
-        // `once` / `session` 才继承批准时的那次会话。
-        threadId: scope === "24h" ? null : (pending.threadId ?? null),
-        createdAt: at.toISOString(),
-        expiresAt: grantExpiresAt(scope, at.getTime()),
-        consumedAt: null,
-        instanceId: runtime.instanceId,
-        approvalId: pending.id,
-      };
-      // 先原子地把审批从 pending 翻掉（防并发双批），成功后才落 grant。
-      // 条件 UPDATE 带 `status:'pending'`，两个并发批准只有一个能赢。
-      const approved = await store.compareAndSwap<ApprovalRecord>(
-        owner,
-        "approvals",
-        id,
-        { status: "pending" },
-        { status: "approved", scope, decidedAt: at.toISOString(), grantId: grant.id },
-      );
-      if (!approved) return null; // 别人已经批过/拒过了
-      await store.putGrant(grant);
-      return { approval: normalizeApproval(approved), grant };
+      const outcome = await approveCheckedImpl(owner, id, scope);
+      // 兼容 P1b 的形状：批准成功给 `{approval, grant}`，其余（不存在 / 已处理 / 已过期）一律 null。
+      return outcome.ok ? { approval: outcome.approval, grant: outcome.grant } : null;
+    },
+
+    /**
+     * 该 owner 名下的授权列表（§2.4 可撤销列表）。走通用 `records` 读，坏行跳过，
+     * 与 `listAudit` / `listApprovals` 同一套降级；`target` 一并返回，用户才知道这条授权限定在哪。
+     */
+    async listGrants(owner, limit = 50) {
+      const rows = await store.list<Partial<GrantRecord> & { id: string }>(owner, "grants");
+      return rows
+        .map((row) => normalizeGrant(row))
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+        .slice(0, Math.max(1, Math.min(limit, 200)));
+    },
+
+    /**
+     * 撤销一条授权（§2.4）。按 owner 分区删除 —— 别人的 id 删不到（返回 false），
+     * 幂等：第二次调用同样返回 false，调用方按"已撤销"处理即可。
+     */
+    async revokeGrant(owner, id) {
+      // `take` 会删除并**返回被删掉的那一行**（null = 没删到）。这里只需要"删没删到"这个事实。
+      return (await store.take(owner, "grants", id)) !== null;
     },
 
     async deny(owner, id, reason) {
