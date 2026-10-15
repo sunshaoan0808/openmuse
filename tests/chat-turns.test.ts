@@ -148,6 +148,47 @@ test("没有正文也没有工具调用的空消息不落库", () => {
   assert.deepEqual(assembleTurnMessages(events, "2026-09-30T00:00:00.000Z"), []);
 });
 
+// 空回合曾经被判成 succeeded（网关过载/被掐断时收一个空流），于是续跑器永远不认领它，
+// 界面只显示一条空回复。这一组把「空 = 失败」钉死。
+test("空回合判定：只有开始/结束事件、没有正文与工具调用 ⇒ failed", () => {
+  const events: AgUiLikeEvent[] = [
+    { type: "RUN_STARTED" },
+    { type: "RUN_FINISHED" },
+  ];
+  const outcome = turnOutcome(events);
+  assert.equal(outcome.status, "failed");
+  assert.match(String(outcome.error), /没有返回任何内容/);
+});
+
+test("空回合判定：只吐空白正文字符也算空 ⇒ failed", () => {
+  const events: AgUiLikeEvent[] = [
+    { type: "TEXT_MESSAGE_CONTENT", delta: "   " },
+    { type: "TEXT_MESSAGE_CONTENT", delta: "\n" },
+  ];
+  assert.equal(turnOutcome(events).status, "failed");
+});
+
+test("空回合判定：有正文 ⇒ succeeded", () => {
+  const events: AgUiLikeEvent[] = [{ type: "TEXT_MESSAGE_CONTENT", delta: "好" }];
+  assert.deepEqual(turnOutcome(events), { status: "succeeded" });
+});
+
+test("空回合判定：只发起工具调用（没有正文）仍是成功的中间轮次", () => {
+  const events: AgUiLikeEvent[] = [
+    { type: "TOOL_CALL_START", toolCallId: "t1", toolCallName: "AGUISendStateSnapshot" },
+    { type: "TOOL_CALL_ARGS", toolCallId: "t1", delta: "{}" },
+  ];
+  assert.deepEqual(turnOutcome(events), { status: "succeeded" });
+});
+
+test("空回合判定：RUN_ERROR 优先于正文（哪怕已经吐了一半）", () => {
+  const events: AgUiLikeEvent[] = [
+    { type: "TEXT_MESSAGE_CONTENT", delta: "我先说一半" },
+    { type: "RUN_ERROR", message: "上游连接被重置" },
+  ];
+  assert.deepEqual(turnOutcome(events), { status: "failed", error: "上游连接被重置" });
+});
+
 test("服务端接口：追加是幂等的，且能按游标只取增量", async () => {
   const threadId = "dddd4444-eeee-4fff-8000-111122223333";
   const first = await (

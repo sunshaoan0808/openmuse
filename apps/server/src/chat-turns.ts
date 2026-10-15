@@ -286,16 +286,37 @@ export function assembleTurnMessages(events: AgUiLikeEvent[], now: string): Stor
   });
 }
 
-/** 一轮流结束时判定成败：RUN_ERROR ⇒ failed，否则 succeeded。 */
+/**
+ * 一轮流结束时判定成败。
+ *
+ * - `RUN_ERROR` ⇒ `failed`（原样带出错误消息）；
+ * - 既没吐正文、也没发起任何工具调用 ⇒ **`failed`**：它不是"成功的空回复"，而是上游（网关过载、被掐断、
+ *   流空闲超时…）吞掉了这一轮。判成 `failed` 有两个后果，都是我们要的：界面不再显示一个空回复的成功，
+ *   且 `turn-resume` 的巡检会把它当作"未被回答"的轮次自动续跑（见 `engine/turn-resume.ts`）。
+ * - 只发起工具调用、没有正文（例如只更新应用状态）⇒ 仍算 `succeeded`：那是正常的中间轮次。
+ */
 export function turnOutcome(events: AgUiLikeEvent[]): {
   status: ChatTurn["status"];
   error?: string;
 } {
+  let produced = false;
   for (const event of events) {
-    if (event.type !== "RUN_ERROR") continue;
-    const message = event.message ?? event.error;
-    return { status: "failed", error: typeof message === "string" ? message : "这一轮失败了" };
+    if (event.type === "RUN_ERROR") {
+      const message = event.message ?? event.error;
+      return { status: "failed", error: typeof message === "string" ? message : "这一轮失败了" };
+    }
+    if (
+      (event.type === "TEXT_MESSAGE_CONTENT" || event.type === "TEXT_MESSAGE_CHUNK") &&
+      typeof event.delta === "string" &&
+      event.delta.trim()
+    ) {
+      produced = true;
+      continue;
+    }
+    if (event.type === "TOOL_CALL_START" || event.type === "TOOL_CALL_ARGS") produced = true;
   }
+  if (!produced)
+    return { status: "failed", error: "上游没有返回任何内容，已安排自动续跑" };
   return { status: "succeeded" };
 }
 
