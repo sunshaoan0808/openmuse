@@ -31,6 +31,13 @@ export interface NeutralTool<S extends z.ZodType = z.ZodType> {
   readsPrivate?: boolean;
   /** 会把东西发出去（建号 / 提交表单 / 推远端…）：线程带污点时一律走审批（P1d）。 */
   outward?: boolean;
+  /**
+   * 这次调用要去往的目标（P2b §2.1）—— 如网页工具的域名。
+   *
+   * **必须是同步纯函数**：咽喉在授权判定那一步就要用它（比 `assess()` 更早），
+   * 返回字符串 / 字符串数组 / null。不声明 = 这次调用不限定目标（= 改造前行为）。
+   */
+  targets?: (args: unknown) => unknown;
   /** 逐次评估：看这次调用具体对谁动手、结果会不会流出本机、要不要打码。 */
   assess?: (args: z.output<S>) => ToolAssessment | Promise<ToolAssessment>;
   /**
@@ -100,6 +107,8 @@ function describeResult(result: unknown) {
 export function instrument<S extends z.ZodType>(tool: NeutralTool<S>): NeutralTool<S> {
   return {
     ...tool,
+    // 与 risk / readsPrivate / outward 同一条路：原样透传，咽喉的授权判定才读得到目标。
+    targets: tool.targets,
     execute: async (args) => {
       const started = Date.now();
       const summary = summarize(args);
